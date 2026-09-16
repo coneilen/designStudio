@@ -146,10 +146,12 @@ async function invokeFake<T>(
   }
   if (context.signal.aborted)
     return fakeFailure(context, "CANCELLED", "cancelled");
-  const remaining = Math.min(
-    Date.parse(context.deadline) - context.clock.now(),
-    context.budget.maxDurationMs,
+  const startedAt = context.clock.now();
+  const expiresAt = Math.min(
+    Date.parse(context.deadline),
+    startedAt + context.budget.maxDurationMs,
   );
+  const remaining = expiresAt - startedAt;
   if (!Number.isFinite(remaining) || remaining <= 0)
     return fakeFailure(context, "DEADLINE_EXCEEDED");
   if (Date.parse(context.authorization.expiresAt) <= context.clock.now())
@@ -166,24 +168,44 @@ async function invokeFake<T>(
   if (!options.reply)
     return fakeFailure(context, "PROVIDER_UNAVAILABLE", "unavailable");
   const controller = new AbortController();
+  const deadlineController = new AbortController();
   let cancel: (() => void) | undefined;
-  let timeout: ReturnType<typeof setTimeout> | undefined;
+  let deadlineSleep: Promise<Outcome<T> | undefined> | undefined;
   try {
     const stopped = new Promise<Outcome<T>>((resolve) => {
       cancel = () => {
-        controller.abort();
         resolve(fakeFailure(context, "CANCELLED", "cancelled"));
       };
       context.signal.addEventListener("abort", cancel, { once: true });
-      timeout = setTimeout(() => {
-        controller.abort();
-        resolve(fakeFailure(context, "DEADLINE_EXCEEDED"));
-      }, remaining);
+      if (context.signal.aborted) cancel();
     });
+    deadlineSleep = context.clock
+      .sleep(remaining, deadlineController.signal)
+      .then(
+        () => fakeFailure<T>(context, "DEADLINE_EXCEEDED"),
+        (error: unknown) => {
+          if (
+            deadlineController.signal.aborted &&
+            error instanceof Error &&
+            error.name === "AbortError"
+          )
+            return undefined;
+          throw error;
+        },
+      );
     const result = await Promise.race([
       options.reply({ ...context, signal: controller.signal }),
       stopped,
+      deadlineSleep,
     ]);
+    if (result === undefined)
+      throw new Error("Deadline sleep ended without a provider outcome.");
+    if (result.status === "complete" || result.status === "partial") {
+      if (context.signal.aborted)
+        return fakeFailure(context, "CANCELLED", "cancelled");
+      if (context.clock.now() >= expiresAt)
+        return fakeFailure(context, "DEADLINE_EXCEEDED");
+    }
     if (
       result.projectId !== projectId ||
       result.requestId !== context.requestId
@@ -191,8 +213,10 @@ async function invokeFake<T>(
       return fakeFailure(context, "ARTIFACT_INTEGRITY");
     return result;
   } finally {
-    if (timeout) clearTimeout(timeout);
+    deadlineController.abort();
+    controller.abort();
     if (cancel) context.signal.removeEventListener("abort", cancel);
+    await deadlineSleep;
   }
 }
 

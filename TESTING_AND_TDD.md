@@ -124,3 +124,20 @@ schema/type drift and CI separately checks fixture drift; source/config/tests
 remain covered by Biome and strict TypeScript. Windows local evidence is not a
 hosted CI/macOS run, public-npm restore, live Figma import, font rasterization,
 device capture or M1 acceptance.
+
+### F01 follow-up: injected-clock deadline regression
+
+Coordinator review reproduced a test-utility bug: `invokeFake` calculated the
+remaining duration with the injected clock but expired it with real
+`setTimeout`. Advancing a fake clock past the deadline and releasing a
+schema-valid scripted Figma result could incorrectly return `complete`.
+This was fixed in a separate follow-up commit, not by changing public schemas,
+profiles or deferred production-adapter requirements.
+
+| Step | Actual evidence |
+| --- | --- |
+| RED | `pnpm exec vitest run --project unit packages/contracts/tests/deadlines.test.ts`: exit 1, all 8 new cases failed. Virtual advances of 1,000/1,001 ms and the shorter 100-ms duration budget returned complete; expiration never called the injected sleep. |
+| GREEN | `pnpm exec vitest run --project unit packages/contracts/tests/deadlines.test.ts packages/contracts/tests/providers.test.ts`: exit 0, 17 cases passed; strict `pnpm typecheck` also passed. |
+| Fix | Schedule expiry with `Clock.sleep`, retain the effective absolute deadline, and reject complete/partial replies observed at or after expiry. Cancel and await the deadline sleep, abort remaining scripted work, and remove the caller's cancellation listener on every settled path. Suppress only the expected abort of the owned deadline sleep; unexpected clock/script failures remain errors. |
+| Cleanup coverage | Pending work expires by advancing virtual time without releasing its reply or waiting for wall time. Success/cancellation/script failure drain tracked sleepers; late releases cannot change a cancelled result. An unexpected clock failure is surfaced and remaining scripted work is cancelled. |
+| Integrated gate | Schema and fixture drift checks, lint, strict typecheck, build, 70 unit cases and 3 smoke cases passed: the previous 65-case baseline plus 8 regressions. No dependency, schema, profile or fixture changes. |
