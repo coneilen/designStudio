@@ -19,8 +19,8 @@ Activate **Node 24.21.0** in your current shell, then run from the repository ro
 ```text
 npx --yes pnpm@11.26.0 install --frozen-lockfile
 npx --yes pnpm@11.26.0 lint
-npx --yes pnpm@11.26.0 typecheck
 npx --yes pnpm@11.26.0 build
+npx --yes pnpm@11.26.0 typecheck
 npx --yes pnpm@11.26.0 fixtures:check
 npx --yes pnpm@11.26.0 test:unit
 npx --yes pnpm@11.26.0 test:smoke
@@ -30,6 +30,7 @@ npx --yes pnpm@11.26.0 test:smoke
 and the single committed lockfile. No global installation is required. The smoke
 test requires the build output and runs without Figma, models, devices, browsers,
 credentials, or paid services.
+Build first so cross-package type imports can resolve the published declarations.
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for runtime setup and version rationale,
 [TESTING_AND_TDD.md](TESTING_AND_TDD.md) for acceptance and observed evidence, and

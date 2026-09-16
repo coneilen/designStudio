@@ -76,8 +76,8 @@ prefix each command with `npx --yes pnpm@11.26.0` as in the README.
 | `pnpm install --frozen-lockfile` | Restore exactly the committed dependency graph. |
 | `pnpm lint` | Read-only Biome formatting/static analysis checks. |
 | `pnpm format` | Apply Biome formatting/import fixes to owned code/config; excludes source specifications and feasibility documents. |
-| `pnpm typecheck` | Check TypeScript source, tests, and Vitest configuration without emitting. |
-| `pnpm build` | Check contract generation, then emit contracts and smoke ESM/declarations in ignored `dist` directories. |
+| `pnpm build` | Build registered workspace packages in dependency order, including contract drift checking, into ignored `dist` directories. |
+| `pnpm typecheck` | Check TypeScript source, tests, and Vitest configuration without emitting; run after `build` so public cross-package declarations exist. |
 | `pnpm contracts:generate` / `contracts:check` | Generate or read-only drift-check public contracts from the single JSON Schema source. |
 | `pnpm fixtures:check` | Read-only check of the five authored synthetic foundation cases and byte manifests. |
 | `pnpm test` / `pnpm test:unit` | Run deterministic source-level unit tests once, without a watcher. |
@@ -89,6 +89,22 @@ development-only json-schema-to-typescript `15.0.4` (declaration generation).
 They do not select production rendering/storage/provider libraries or change
 the integrated toolchain pins. No dependency build scripts are enabled.
 See DESIGN_IR.md for refinement/semantic boundaries and schema ownership.
+
+Workspace discovery uses `packages/*`; each new package owns its manifest and
+build script and declares its workspace dependencies. Root build ordering follows
+that dependency graph rather than an expanding hand-maintained package list.
+The public TypeScript consumer fixture at
+`tests/fixtures/consume-contract-types.ts` verifies declaration resolution from
+the package's published entrypoint. It produced the expected TS2307 failure on
+a restored but unbuilt checkout; building declarations before typechecking is
+therefore required in local instructions and CI. The same typecheck passed
+after the dependency-ordered build, alongside the 73 unit/smoke cases.
+
+During parallel package work, root configuration and dependency policy remain
+coordinator-owned. Package authors may generate lockfile deltas for their scoped
+manifest changes; those are integration inputs, not permission to change other
+packages' versions. The coordinator serializes combined lockfile resolution and
+verification. Do not edit shared contract schemas or pinned fixtures independently.
 
 Package scripts are simple executable invocations, not bash/PowerShell command
 strings. Tests resolve Node through `process.execPath`, use argument arrays and
@@ -119,7 +135,7 @@ upstream integrity before release when that registry is reachable.
 
 CI uses SHA-pinned actions, read-only repository permissions, no persisted
 checkout credentials, no secret inputs, and no artifact uploads. It performs a
-frozen install followed by lint, typecheck, build, unit, and offline smoke on
+frozen install followed by lint, dependency-ordered build, typecheck, unit, and offline smoke on
 `windows-latest` and `macos-latest`. The official runner inventory mapped these
 to Windows Server 2025 x64 and macOS 26 arm64 when configured; aliases can move.
 Neither hosted CI nor macOS was executed during this local bootstrap.

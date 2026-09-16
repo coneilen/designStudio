@@ -1,6 +1,5 @@
 packages:
-  - packages/contracts
-  - packages/workspace-smoke
+  - packages/*
 
 engineStrict: true
 pmOnFail: error

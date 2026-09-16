@@ -40,10 +40,10 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Lint and static analysis
         run: pnpm lint
+      - name: Build workspace packages in dependency order
+        run: pnpm build
       - name: Typecheck source and tests
         run: pnpm typecheck
-      - name: Build package
-        run: pnpm build
       - name: Check foundation fixture drift
         run: pnpm fixtures:check
       - name: Unit tests
