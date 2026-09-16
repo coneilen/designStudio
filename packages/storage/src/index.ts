@@ -9,6 +9,7 @@ import {
   type ContractName,
   type ContractTypes,
   type ErrorCode,
+  type ExpectedBase,
   type OperationContext,
   type Outcome,
   parseContract,
@@ -687,6 +688,52 @@ export class LocalStore implements ArtifactStore {
           .get(designId, branch)?.revision ?? null
       );
     });
+  }
+  forkBranch(
+    designId: string,
+    branch: string,
+    base: ExpectedBase,
+    context: OperationContext,
+  ): Promise<Outcome<string>> {
+    return this.snapshot(
+      { designId, branch, base },
+      context,
+      "write",
+      (request) =>
+        this.run(context, "write", async () => {
+          check("StableId", request.designId);
+          check("StableId", request.branch);
+          check("ExpectedBase", request.base);
+          await this.guard(context, "write", "design", request.designId);
+          await this.guard(
+            context,
+            "read",
+            "revision",
+            request.base.expectedBaseRevision,
+          );
+          const revision = this.row(
+            "revisions",
+            request.base.expectedBaseRevision,
+            "Revision",
+          );
+          if (
+            !revision ||
+            revision.designId !== request.designId ||
+            request.base.ifMatch !== `"${revision.content.sha256}"`
+          )
+            throw new StorageError(
+              "CONFLICT",
+              "Fork base must identify an accepted revision with its exact strong If-Match.",
+            );
+          for (const reference of revisionRefs(revision))
+            await this.read(this.artifact(reference), context);
+          this.checkpoint(context);
+          this.db
+            .prepare("INSERT INTO heads VALUES (?,?,?)")
+            .run(request.designId, request.branch, revision.id);
+          return revision.id;
+        }),
+    );
   }
 
   private reviews(designId: string): StoredReview[] {

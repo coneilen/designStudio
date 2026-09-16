@@ -755,5 +755,59 @@ describe.skipIf(process.platform !== "win32" || process.arch !== "x64")(
       ctx.budget.maxOutputBytes = 1;
       expect((await store.backup(ctx)).status).toBe("failed");
     });
+    test("forking an accepted revision creates a CAS-protected alternative without rewriting its source head", async () => {
+      const { store } = await setup();
+      const { rev } = await seed(store);
+      const base = {
+        expectedBaseRevision: rev.id,
+        ifMatch: `"${rev.content.sha256}"`,
+      };
+      expect(
+        value(
+          await store.forkBranch(
+            "design1",
+            "alternative",
+            base,
+            context("fork"),
+          ),
+        ),
+      ).toBe(rev.id);
+      expect(
+        (
+          await store.forkBranch(
+            "design1",
+            "alternative",
+            base,
+            context("duplicate-fork"),
+          )
+        ).status,
+      ).toBe("failed");
+      const outputs = await stage(store, [
+        "alternative",
+        "provenance",
+        "resources",
+      ]);
+      value(
+        await store.commitRevision(
+          {
+            branch: "alternative",
+            base,
+            revision: revision(
+              "rev2",
+              outputs.map((item) => item.artifact),
+              ["rev1"],
+            ),
+            outputs,
+          },
+          context("alternative"),
+        ),
+      );
+      expect(value(await store.getHead("design1", "main", context()))).toBe(
+        "rev1",
+      );
+      expect(
+        value(await store.getHead("design1", "alternative", context())),
+      ).toBe("rev2");
+    });
   },
 );

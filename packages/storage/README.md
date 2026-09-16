@@ -104,6 +104,7 @@ revision/design/job access receives additional object-scoped checks.
 | `commit(outputs, context)` | Implements shared `ArtifactStore`; publishes and verifies bytes, requires durability acknowledgment, then atomically stores artifacts, protected job references and `CommitReceipt`. |
 | `commitRevision({branch, base, revision, outputs}, context)` | Adds immutable revision/parent/lock storage and branch CAS in the same receipt transaction. Null base initializes a new root only; otherwise both expected revision and exact quoted content-hash If-Match must match. |
 | `getRevision`, `getHead`, `getReceipt` | Authorized snapshot/head/receipt access. Receipt retrieval/retry checks actual output bytes. |
+| `forkBranch(designId, branch, base, context)` | Creates an absent alternative head at an exact accepted revision/strong If-Match; never replaces an existing branch or rewrites the source head. Later revisions use normal CAS. |
 | `appendReview`, `listReviews`, `applicableApproval` | Immutable actor-bound append chain; exact context and trusted evidence applicability, never manifest self-assertion. |
 | `pin`, `releasePin`, `collectGarbage` | Policy-authorized bundle/job/legal/cache retention. Immutable revision/review/job receipt references are never cache-evicted. |
 | `recover` | Reports orphan paths and corrupt/missing committed artifacts; discards only stages the mandatory trusted job policy proves abandoned. Unknown stages are retained explicitly. |
