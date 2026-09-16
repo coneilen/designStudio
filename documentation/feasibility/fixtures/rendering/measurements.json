@@ -1,0 +1,735 @@
+{
+  "evidence": "Synthetic DOM/CSS browser capability only; not source-to-preview fidelity or production renderer",
+  "host": {
+    "platform": "win32",
+    "arch": "x64",
+    "release": "10.0.26200",
+    "version": "Windows 11 Enterprise",
+    "cpu": "Intel(R) Core(TM) i9-10900K CPU @ 3.70GHz",
+    "logicalCpus": 20,
+    "memoryBytes": 68479582208,
+    "node": "v22.14.0",
+    "abi": "127",
+    "icu": "76.1"
+  },
+  "tools": {
+    "playwright": "1.63.0",
+    "typescript": "7.0.2",
+    "browser": "153.0.8010.12",
+    "browserProfile": "chromium-headless-shell",
+    "locale": "en-US",
+    "timezone": "UTC",
+    "theme": "light",
+    "color": "forced sRGB; PNG ICC normalization not independently verified",
+    "clock": "2026-09-16T00:00:00Z"
+  },
+  "inputs": {
+    "htmlSha256": "7a0aa13cf30e3c0b5299780e8786e5c9052467decc08171ba8c7a5e3bf517291",
+    "casesSha256": "4c6850eaf0948455a5cd92d5255d8c445236dc488b1acdf2313694a325fed451"
+  },
+  "coldLaunchMs": 129.6246,
+  "measurement": {
+    "bounds": {
+      "screen": {
+        "x": 0,
+        "y": 0,
+        "width": 393,
+        "height": 852,
+        "scrollWidth": 393,
+        "clientWidth": 393,
+        "transform": "none",
+        "transformOrigin": "196.5px 426px",
+        "opacity": "1",
+        "fontFamily": "Arial, sans-serif",
+        "fontWeight": "400"
+      },
+      "settings": {
+        "x": 16,
+        "y": 16,
+        "width": 361,
+        "height": 56,
+        "scrollWidth": 361,
+        "clientWidth": 361,
+        "transform": "none",
+        "transformOrigin": "180.5px 28px",
+        "opacity": "1",
+        "fontFamily": "Arial, sans-serif",
+        "fontWeight": "400"
+      },
+      "fixed": {
+        "x": 24,
+        "y": 32,
+        "width": 24,
+        "height": 24,
+        "scrollWidth": 24,
+        "clientWidth": 24,
+        "transform": "none",
+        "transformOrigin": "12px 12px",
+        "opacity": "1",
+        "fontFamily": "Arial, sans-serif",
+        "fontWeight": "400"
+      },
+      "fill": {
+        "x": 60,
+        "y": 32,
+        "width": 275.65625,
+        "height": 24,
+        "scrollWidth": 276,
+        "clientWidth": 276,
+        "transform": "none",
+        "transformOrigin": "137.828px 12px",
+        "opacity": "1",
+        "fontFamily": "Arial, sans-serif",
+        "fontWeight": "400"
+      },
+      "hug": {
+        "x": 347.65625,
+        "y": 32,
+        "width": 21.34375,
+        "height": 24,
+        "scrollWidth": 21,
+        "clientWidth": 21,
+        "transform": "none",
+        "transformOrigin": "10.6719px 12px",
+        "opacity": "1",
+        "fontFamily": "Arial, sans-serif",
+        "fontWeight": "400"
+      },
+      "equal": {
+        "x": 16,
+        "y": 84,
+        "width": 361,
+        "height": 24,
+        "scrollWidth": 361,
+        "clientWidth": 361,
+        "transform": "none",
+        "transformOrigin": "180.5px 12px",
+        "opacity": "1",
+        "fontFamily": "Arial, sans-serif",
+        "fontWeight": "400"
+      },
+      "fill-a": {
+        "x": 16,
+        "y": 84,
+        "width": 174.5,
+        "height": 24,
+        "scrollWidth": 175,
+        "clientWidth": 175,
+        "transform": "none",
+        "transformOrigin": "87.25px 12px",
+        "opacity": "1",
+        "fontFamily": "Arial, sans-serif",
+        "fontWeight": "400"
+      },
+      "fill-b": {
+        "x": 202.5,
+        "y": 84,
+        "width": 174.5,
+        "height": 24,
+        "scrollWidth": 175,
+        "clientWidth": 175,
+        "transform": "none",
+        "transformOrigin": "87.25px 12px",
+        "opacity": "1",
+        "fontFamily": "Arial, sans-serif",
+        "fontWeight": "400"
+      },
+      "mixed": {
+        "x": 16,
+        "y": 120,
+        "width": 240,
+        "height": 48,
+        "scrollWidth": 240,
+        "clientWidth": 240,
+        "transform": "none",
+        "transformOrigin": "120px 24px",
+        "opacity": "1",
+        "fontFamily": "Arial, sans-serif",
+        "fontWeight": "400"
+      },
+      "plain": {
+        "x": 16,
+        "y": 123,
+        "width": 40.921875,
+        "height": 17,
+        "scrollWidth": 0,
+        "clientWidth": 0,
+        "transform": "none",
+        "transformOrigin": "0px 0px",
+        "opacity": "1",
+        "fontFamily": "Arial, sans-serif",
+        "fontWeight": "400"
+      },
+      "emoji": {
+        "x": 56.921875,
+        "y": 123,
+        "width": 21.96875,
+        "height": 17,
+        "scrollWidth": 0,
+        "clientWidth": 0,
+        "transform": "none",
+        "transformOrigin": "0px 0px",
+        "opacity": "1",
+        "fontFamily": "Arial, sans-serif",
+        "fontWeight": "400"
+      },
+      "bold": {
+        "x": 78.890625,
+        "y": 123,
+        "width": 36.4375,
+        "height": 17,
+        "scrollWidth": 0,
+        "clientWidth": 0,
+        "transform": "none",
+        "transformOrigin": "0px 0px",
+        "opacity": "1",
+        "fontFamily": "Arial, sans-serif",
+        "fontWeight": "700"
+      },
+      "tail": {
+        "x": 16,
+        "y": 123,
+        "width": 233.625,
+        "height": 41,
+        "scrollWidth": 0,
+        "clientWidth": 0,
+        "transform": "none",
+        "transformOrigin": "0px 0px",
+        "opacity": "1",
+        "fontFamily": "Arial, sans-serif",
+        "fontWeight": "400"
+      },
+      "crop": {
+        "x": 16,
+        "y": 180,
+        "width": 100,
+        "height": 100,
+        "scrollWidth": 100,
+        "clientWidth": 100,
+        "transform": "none",
+        "transformOrigin": "50px 50px",
+        "opacity": "1",
+        "fontFamily": "Arial, sans-serif",
+        "fontWeight": "400"
+      },
+      "rotated": {
+        "x": 132,
+        "y": 180,
+        "width": 100,
+        "height": 100,
+        "scrollWidth": 100,
+        "clientWidth": 100,
+        "transform": "matrix(0, 1, -1, 0, 0, 0)",
+        "transformOrigin": "50px 50px",
+        "opacity": "1",
+        "fontFamily": "Arial, sans-serif",
+        "fontWeight": "400"
+      },
+      "components": {
+        "x": 16,
+        "y": 292,
+        "width": 361,
+        "height": 104,
+        "scrollWidth": 361,
+        "clientWidth": 361,
+        "transform": "none",
+        "transformOrigin": "180.5px 52px",
+        "opacity": "1",
+        "fontFamily": "Arial, sans-serif",
+        "fontWeight": "400"
+      },
+      "wifi": {
+        "x": 16,
+        "y": 292,
+        "width": 361,
+        "height": 48,
+        "scrollWidth": 361,
+        "clientWidth": 361,
+        "transform": "none",
+        "transformOrigin": "180.5px 24px",
+        "opacity": "1",
+        "fontFamily": "Arial, sans-serif",
+        "fontWeight": "400"
+      },
+      "wifi:label": {
+        "x": 24,
+        "y": 304,
+        "width": 301,
+        "height": 24,
+        "scrollWidth": 301,
+        "clientWidth": 301,
+        "transform": "none",
+        "transformOrigin": "150.5px 12px",
+        "opacity": "1",
+        "fontFamily": "Arial, sans-serif",
+        "fontWeight": "400"
+      },
+      "wifi:track": {
+        "x": 333,
+        "y": 306,
+        "width": 36,
+        "height": 20,
+        "scrollWidth": 36,
+        "clientWidth": 36,
+        "transform": "none",
+        "transformOrigin": "18px 10px",
+        "opacity": "1",
+        "fontFamily": "Arial, sans-serif",
+        "fontWeight": "400"
+      },
+      "wifi:thumb": {
+        "x": 351,
+        "y": 308,
+        "width": 16,
+        "height": 16,
+        "scrollWidth": 16,
+        "clientWidth": 16,
+        "transform": "none",
+        "transformOrigin": "8px 8px",
+        "opacity": "1",
+        "fontFamily": "Arial, sans-serif",
+        "fontWeight": "400"
+      },
+      "offline": {
+        "x": 16,
+        "y": 348,
+        "width": 361,
+        "height": 48,
+        "scrollWidth": 361,
+        "clientWidth": 361,
+        "transform": "none",
+        "transformOrigin": "180.5px 24px",
+        "opacity": "0.5",
+        "fontFamily": "Arial, sans-serif",
+        "fontWeight": "400"
+      },
+      "offline:label": {
+        "x": 24,
+        "y": 360,
+        "width": 301,
+        "height": 24,
+        "scrollWidth": 301,
+        "clientWidth": 301,
+        "transform": "none",
+        "transformOrigin": "150.5px 12px",
+        "opacity": "1",
+        "fontFamily": "Arial, sans-serif",
+        "fontWeight": "400"
+      },
+      "offline:track": {
+        "x": 333,
+        "y": 362,
+        "width": 36,
+        "height": 20,
+        "scrollWidth": 36,
+        "clientWidth": 36,
+        "transform": "none",
+        "transformOrigin": "18px 10px",
+        "opacity": "1",
+        "fontFamily": "Arial, sans-serif",
+        "fontWeight": "400"
+      },
+      "offline:thumb": {
+        "x": 335,
+        "y": 364,
+        "width": 16,
+        "height": 16,
+        "scrollWidth": 16,
+        "clientWidth": 16,
+        "transform": "none",
+        "transformOrigin": "8px 8px",
+        "opacity": "1",
+        "fontFamily": "Arial, sans-serif",
+        "fontWeight": "400"
+      },
+      "unsupported": {
+        "x": 16,
+        "y": 408,
+        "width": 361,
+        "height": 48,
+        "scrollWidth": 359,
+        "clientWidth": 359,
+        "transform": "none",
+        "transformOrigin": "180.5px 24px",
+        "opacity": "1",
+        "fontFamily": "Arial, sans-serif",
+        "fontWeight": "400"
+      },
+      "overflow": {
+        "x": 16,
+        "y": 468,
+        "width": 100,
+        "height": 24,
+        "scrollWidth": 259,
+        "clientWidth": 100,
+        "transform": "none",
+        "transformOrigin": "50px 12px",
+        "opacity": "1",
+        "fontFamily": "Arial, sans-serif",
+        "fontWeight": "400"
+      },
+      "missing": {
+        "x": 16,
+        "y": 504,
+        "width": 361,
+        "height": 24,
+        "scrollWidth": 361,
+        "clientWidth": 361,
+        "transform": "none",
+        "transformOrigin": "180.5px 12px",
+        "opacity": "1",
+        "fontFamily": "\"P02 Definitely Missing\", Arial, sans-serif",
+        "fontWeight": "400"
+      },
+      "absolute": {
+        "x": 16,
+        "y": 540,
+        "width": 100,
+        "height": 40,
+        "scrollWidth": 100,
+        "clientWidth": 100,
+        "transform": "none",
+        "transformOrigin": "50px 20px",
+        "opacity": "1",
+        "fontFamily": "Arial, sans-serif",
+        "fontWeight": "400"
+      },
+      "absolute-child": {
+        "x": 34,
+        "y": 553,
+        "width": 20,
+        "height": 10,
+        "scrollWidth": 20,
+        "clientWidth": 20,
+        "transform": "none",
+        "transformOrigin": "10px 5px",
+        "opacity": "1",
+        "fontFamily": "Arial, sans-serif",
+        "fontWeight": "400"
+      }
+    },
+    "rangeRects": [
+      {
+        "id": "plain",
+        "text": "Save ",
+        "utf16Start": 0,
+        "utf16End": 5,
+        "rects": [
+          {
+            "x": 16,
+            "y": 123,
+            "width": 40.921875,
+            "height": 17
+          }
+        ]
+      },
+      {
+        "id": "emoji",
+        "text": "💾",
+        "utf16Start": 5,
+        "utf16End": 7,
+        "rects": [
+          {
+            "x": 56.921875,
+            "y": 123,
+            "width": 21.96875,
+            "height": 17
+          }
+        ]
+      },
+      {
+        "id": "bold",
+        "text": " now",
+        "utf16Start": 7,
+        "utf16End": 11,
+        "rects": [
+          {
+            "x": 78.890625,
+            "y": 123,
+            "width": 36.4375,
+            "height": 17
+          }
+        ]
+      },
+      {
+        "id": "tail",
+        "text": " é - Download over Wi-Fi only",
+        "utf16Start": 11,
+        "utf16End": 41,
+        "rects": [
+          {
+            "x": 115.328125,
+            "y": 123,
+            "width": 134.296875,
+            "height": 17
+          },
+          {
+            "x": 16,
+            "y": 147,
+            "width": 71.109375,
+            "height": 17
+          }
+        ]
+      }
+    ],
+    "text": "Save 💾 now é - Download over Wi-Fi only",
+    "utf16Length": 41,
+    "codePointLength": 40,
+    "graphemes": [
+      {
+        "text": "S",
+        "utf16Start": 0
+      },
+      {
+        "text": "a",
+        "utf16Start": 1
+      },
+      {
+        "text": "v",
+        "utf16Start": 2
+      },
+      {
+        "text": "e",
+        "utf16Start": 3
+      },
+      {
+        "text": " ",
+        "utf16Start": 4
+      },
+      {
+        "text": "💾",
+        "utf16Start": 5
+      },
+      {
+        "text": " ",
+        "utf16Start": 7
+      },
+      {
+        "text": "n",
+        "utf16Start": 8
+      },
+      {
+        "text": "o",
+        "utf16Start": 9
+      },
+      {
+        "text": "w",
+        "utf16Start": 10
+      },
+      {
+        "text": " ",
+        "utf16Start": 11
+      },
+      {
+        "text": "é",
+        "utf16Start": 12
+      },
+      {
+        "text": " ",
+        "utf16Start": 14
+      },
+      {
+        "text": "-",
+        "utf16Start": 15
+      },
+      {
+        "text": " ",
+        "utf16Start": 16
+      },
+      {
+        "text": "D",
+        "utf16Start": 17
+      },
+      {
+        "text": "o",
+        "utf16Start": 18
+      },
+      {
+        "text": "w",
+        "utf16Start": 19
+      },
+      {
+        "text": "n",
+        "utf16Start": 20
+      },
+      {
+        "text": "l",
+        "utf16Start": 21
+      },
+      {
+        "text": "o",
+        "utf16Start": 22
+      },
+      {
+        "text": "a",
+        "utf16Start": 23
+      },
+      {
+        "text": "d",
+        "utf16Start": 24
+      },
+      {
+        "text": " ",
+        "utf16Start": 25
+      },
+      {
+        "text": "o",
+        "utf16Start": 26
+      },
+      {
+        "text": "v",
+        "utf16Start": 27
+      },
+      {
+        "text": "e",
+        "utf16Start": 28
+      },
+      {
+        "text": "r",
+        "utf16Start": 29
+      },
+      {
+        "text": " ",
+        "utf16Start": 30
+      },
+      {
+        "text": "W",
+        "utf16Start": 31
+      },
+      {
+        "text": "i",
+        "utf16Start": 32
+      },
+      {
+        "text": "-",
+        "utf16Start": 33
+      },
+      {
+        "text": "F",
+        "utf16Start": 34
+      },
+      {
+        "text": "i",
+        "utf16Start": 35
+      },
+      {
+        "text": " ",
+        "utf16Start": 36
+      },
+      {
+        "text": "o",
+        "utf16Start": 37
+      },
+      {
+        "text": "n",
+        "utf16Start": 38
+      },
+      {
+        "text": "l",
+        "utf16Start": 39
+      },
+      {
+        "text": "y",
+        "utf16Start": 40
+      }
+    ],
+    "fontCheck": {
+      "arial": true,
+      "nonexistent": true
+    },
+    "image": {
+      "naturalWidth": 200,
+      "naturalHeight": 100
+    },
+    "nodeCount": 30,
+    "scroll": {
+      "x": 0,
+      "y": 0
+    },
+    "deviceScaleFactor": 1,
+    "title": "P02 synthetic browser capability input, not DesignIR or Figma"
+  },
+  "platformFonts": {
+    "plain": {
+      "fonts": [
+        {
+          "familyName": "Arial",
+          "postScriptName": "ArialMT",
+          "isCustomFont": false,
+          "glyphCount": 5
+        }
+      ]
+    },
+    "emoji": {
+      "fonts": [
+        {
+          "familyName": "Segoe UI Emoji",
+          "postScriptName": "SegoeUIEmoji",
+          "isCustomFont": false,
+          "glyphCount": 1
+        }
+      ]
+    },
+    "bold": {
+      "fonts": [
+        {
+          "familyName": "Arial",
+          "postScriptName": "Arial-BoldMT",
+          "isCustomFont": false,
+          "glyphCount": 4
+        }
+      ]
+    },
+    "tail": {
+      "fonts": [
+        {
+          "familyName": "Arial",
+          "postScriptName": "ArialMT",
+          "isCustomFont": false,
+          "glyphCount": 28
+        }
+      ]
+    },
+    "missing": {
+      "fonts": [
+        {
+          "familyName": "Arial",
+          "postScriptName": "ArialMT",
+          "isCustomFont": false,
+          "glyphCount": 18
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "file": "capture-0.png",
+      "sha256": "eccf299430f12cbf45aa976f8b331b3bb9ae969cad44dbe3c49440b65784b1cc",
+      "bytes": 15375
+    },
+    {
+      "file": "capture-1.png",
+      "sha256": "eccf299430f12cbf45aa976f8b331b3bb9ae969cad44dbe3c49440b65784b1cc",
+      "bytes": 15375
+    },
+    {
+      "file": "capture-2.png",
+      "sha256": "eccf299430f12cbf45aa976f8b331b3bb9ae969cad44dbe3c49440b65784b1cc",
+      "bytes": 15375
+    }
+  ],
+  "checks": {
+    "parent": true,
+    "fixed": true,
+    "rowFill": true,
+    "equalFill": true,
+    "utf16": true,
+    "images": true,
+    "expansion": true,
+    "overflowObserved": true,
+    "contentCoordinates": true,
+    "repeatCapture": true,
+    "pageErrors": true
+  },
+  "errors": []
+}

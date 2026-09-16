@@ -1,0 +1,89 @@
+{
+  "kind": "p02-exploratory-evidence-provenance",
+  "recordedDate": "2026-09-16",
+  "planningCommit": "1a723018e27be043ec67085684ea28a1c9ef9d72",
+  "sourceExactEvidence": false,
+  "productionContract": false,
+  "approvedGolden": false,
+  "hashing": "SHA-256 of exact UTF-8 file bytes with LF line endings; fixture-local .gitattributes preserves these bytes across host checkouts",
+  "inputs": [
+    {
+      "file": "synthetic.html",
+      "sha256": "7a0aa13cf30e3c0b5299780e8786e5c9052467decc08171ba8c7a5e3bf517291",
+      "provenance": "ai-generated",
+      "description": "Original synthetic HTML/CSS, inline four-color SVG stripes and literal text; not imported DesignIR or Figma",
+      "rights": "No third-party design/image source used; no font binaries embedded; no separate repository-wide license grant created"
+    },
+    {
+      "file": "cases.json",
+      "sha256": "4c6850eaf0948455a5cd92d5255d8c445236dc488b1acdf2313694a325fed451",
+      "provenance": "ai-generated",
+      "description": "Fixture-only variant/slot input, UTF-16 ranges and authored unsupported-feature diagnostic; not a public schema"
+    }
+  ],
+  "derivedEvidence": [
+    {
+      "file": "measurements.json",
+      "sha256": "ccb5fc38c6277e46118456af301f31ae3632671e72b0799da00ccacdd25fb508",
+      "provenance": "measured-synthetic-browser",
+      "description": "DOM bounds, text ranges, actual platform font names, transforms and repeated screenshot hashes; no independent source reference"
+    },
+    {
+      "file": "metrics.json",
+      "sha256": "e2a9a0281e52cc7b01a85264eab44feaef1746ba8668ea6789d2574ad7002829",
+      "provenance": "measured-synthetic-browser",
+      "description": "Opaque screenshot pixel samples, tiny missing-toggle negative and metric boundary counterexample; not production validation"
+    },
+    {
+      "file": "host-evidence.json",
+      "sha256": "49c35529def2bdcaf784d700830b72205b125f3de732fb798e0e0dc4c375ff09",
+      "provenance": "measured-local-host",
+      "description": "Four exact installed-font identifiers inspected without copying fonts; built-in SQLite file-backed smoke test"
+    }
+  ],
+  "scratchEvidence": {
+    "directory": "C:\\Users\\coneilen\\.copilot\\session-state\\b0399124-6e01-4a7d-b7eb-93845312342c\\files\\p02-rendering",
+    "files": [
+      { "file": "package-lock.json", "sha256": "9d737cdc7e1f25c5c9a6cfb546c884b7593afde32aa77c9a50952da397d58a24" },
+      { "file": "probe.ts", "sha256": "0eeca2cfa04c6770430b20cb6a108489170d18aec42f9c28ad5038c0190cf98d" },
+      { "file": "metrics.mjs", "sha256": "44ad76471ec50c5b91c7e322b6127224a0e02d34ecf57b496824760738e8c475" },
+      { "file": "host-probe.mjs", "sha256": "4960403439dc57203e5526d039cb20c806762c15f9bda8833fc228fb44aa82f7" }
+    ],
+    "screenshots": {
+      "files": ["output\\capture-0.png", "output\\capture-1.png", "output\\capture-2.png"],
+      "eachSha256": "eccf299430f12cbf45aa976f8b331b3bb9ae969cad44dbe3c49440b65784b1cc",
+      "eachBytes": 15375,
+      "negativeFile": "output\\missing-toggle.png",
+      "rights": "Rasterized synthetic fixture text only; not font files or a bitmap-font extraction"
+    },
+    "policy": "Disposable harness, dependencies, browsers, database and PNGs are session artifacts, not production packages or committed golden files"
+  },
+  "browser": {
+    "playwright": "1.63.0",
+    "profile": "chromium-headless-shell",
+    "version": "153.0.8010.12",
+    "revision": "1243",
+    "host": "win32-x64",
+    "executableSha256": "addfa79abb060e1e514e155ed745d4bf96140bca402735958bb4e223aea0b98c",
+    "downloadUrl": "https://cdn.playwright.dev/builds/cft/153.0.8010.12/win64/chrome-headless-shell-win64.zip",
+    "rights": "Downloaded for the local probe; shipping requires complete applicable browser and third-party notices",
+    "notice": "LICENSE.headless_shell, 2300816 bytes"
+  },
+  "dependencies": [
+    { "name": "playwright", "version": "1.63.0", "license": "Apache-2.0", "tested": true },
+    { "name": "playwright-core", "version": "1.63.0", "license": "Apache-2.0", "tested": true },
+    { "name": "typescript", "version": "7.0.2", "license": "Apache-2.0", "tested": true },
+    { "name": "@types/node", "version": "22.13.10", "license": "MIT", "tested": true },
+    { "name": "pngjs", "version": "7.0.0", "license": "MIT", "tested": true },
+    { "name": "pixelmatch", "version": "7.2.0", "license": "ISC", "tested": true, "purpose": "Counterexample only; not recommended as the spec channel predicate" },
+    { "name": "ssim.js", "version": "3.5.0", "license": "MIT", "tested": false, "purpose": "Optional diagnostic candidate, not installed" },
+    { "name": "better-sqlite3", "version": "13.0.3", "license": "MIT", "tested": false, "purpose": "Native packaging alternative metadata, not installed" }
+  ],
+  "blockedEvidence": [
+    "No authorized real Figma input, source screenshot, component library or source-to-preview score",
+    "No installed-font redistribution grant; no font copied or embedded",
+    "No actual macOS render, common-font parity or packaged clean-host execution",
+    "No renderer execution on proposed Node 24.21.0",
+    "No 500-expanded-node/10-MiB performance run or production handoff compiler"
+  ]
+}

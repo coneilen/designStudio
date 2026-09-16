@@ -1,0 +1,74 @@
+{
+  "evidence": "Synthetic opaque-sRGB probe, not a production validator",
+  "libraries": {
+    "pngjs": "7.0.0",
+    "pixelmatch": "7.2.0"
+  },
+  "samples": {
+    "cropLeft": [
+      0,
+      255,
+      0,
+      255
+    ],
+    "cropRight": [
+      0,
+      0,
+      255,
+      255
+    ],
+    "rotatedTop": [
+      0,
+      255,
+      0,
+      255
+    ],
+    "rotatedBottom": [
+      0,
+      0,
+      255,
+      255
+    ]
+  },
+  "boundary": [
+    {
+      "delta": 15,
+      "maxChannelChanged": 0,
+      "pixelmatchChanged": 0
+    },
+    {
+      "delta": 16,
+      "maxChannelChanged": 0,
+      "pixelmatchChanged": 0
+    },
+    {
+      "delta": 17,
+      "maxChannelChanged": 1,
+      "pixelmatchChanged": 0
+    }
+  ],
+  "global": {
+    "changed": 642,
+    "pixels": 334836,
+    "fraction": 0.001917356556642655
+  },
+  "critical": {
+    "changed": 642,
+    "pixels": 720,
+    "fraction": 0.8916666666666667
+  },
+  "criticalRegion": {
+    "x": 333,
+    "y": 306,
+    "width": 36,
+    "height": 20,
+    "scrollWidth": 36,
+    "clientWidth": 36,
+    "transform": "none",
+    "transformOrigin": "18px 10px",
+    "opacity": "1",
+    "fontFamily": "Arial, sans-serif",
+    "fontWeight": "400"
+  },
+  "pixelmatchChanged": 635
+}

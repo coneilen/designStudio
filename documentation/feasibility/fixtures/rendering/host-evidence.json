@@ -1,0 +1,116 @@
+{
+  "fonts": [
+    {
+      "file": "arial.ttf",
+      "bytes": 1045720,
+      "sha256": "b3658eadae55e682b5f69eb64c439c1ecc8f196c0bb8d4756d145d13bc86476a",
+      "names": [
+        {
+          "nameId": 1,
+          "value": "Arial"
+        },
+        {
+          "nameId": 2,
+          "value": "Regular"
+        },
+        {
+          "nameId": 5,
+          "value": "Version 7.06"
+        },
+        {
+          "nameId": 6,
+          "value": "ArialMT"
+        }
+      ],
+      "os2FsType": 8,
+      "rights": "Installed-font inspection/use only; not copied, converted, embedded or cleared for redistribution"
+    },
+    {
+      "file": "arialbd.ttf",
+      "bytes": 989780,
+      "sha256": "e8f4e3baf6cc35fed6fcce3a540e8b39e8f6cda1d22a28f2ec8f526fef7a43f5",
+      "names": [
+        {
+          "nameId": 1,
+          "value": "Arial"
+        },
+        {
+          "nameId": 2,
+          "value": "Bold"
+        },
+        {
+          "nameId": 5,
+          "value": "Version 7.06"
+        },
+        {
+          "nameId": 6,
+          "value": "Arial-BoldMT"
+        }
+      ],
+      "os2FsType": 8,
+      "rights": "Installed-font inspection/use only; not copied, converted, embedded or cleared for redistribution"
+    },
+    {
+      "file": "segoeui.ttf",
+      "bytes": 959752,
+      "sha256": "8134dbcd09e7b123c9a7f229d49cffbcb01352cc72ea5e1076b65d0dca9f73cd",
+      "names": [
+        {
+          "nameId": 1,
+          "value": "Segoe UI"
+        },
+        {
+          "nameId": 2,
+          "value": "Regular"
+        },
+        {
+          "nameId": 5,
+          "value": "Version 5.71"
+        },
+        {
+          "nameId": 6,
+          "value": "SegoeUI"
+        }
+      ],
+      "os2FsType": 8,
+      "rights": "Installed-font inspection/use only; not copied, converted, embedded or cleared for redistribution"
+    },
+    {
+      "file": "seguiemj.ttf",
+      "bytes": 12934920,
+      "sha256": "451df9bb5546055af625ff86aa72695df43e8e170b4c6c1316fe44e9c7a22f7c",
+      "names": [
+        {
+          "nameId": 1,
+          "value": "Segoe UI Emoji"
+        },
+        {
+          "nameId": 2,
+          "value": "Regular"
+        },
+        {
+          "nameId": 5,
+          "value": "Version 1.70"
+        },
+        {
+          "nameId": 6,
+          "value": "SegoeUIEmoji"
+        }
+      ],
+      "os2FsType": 8,
+      "rights": "Installed-font inspection/use only; not copied, converted, embedded or cleared for redistribution"
+    }
+  ],
+  "sqlite": {
+    "runtime": "v22.14.0",
+    "implementation": "node:sqlite",
+    "sqliteVersion": "3.47.2",
+    "journalMode": "wal",
+    "transactionCommitAndRollback": true,
+    "reopenedCommittedRow": true,
+    "integrity": "ok",
+    "pathCase": "Windows path containing a space and U+00E9",
+    "bytes": 8192,
+    "limitations": "No crash, concurrent-writer, migration, backup or macOS test; API emits experimental warning on Node 22.14.0"
+  }
+}
