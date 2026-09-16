@@ -280,8 +280,20 @@ export function resolveDesign(
           "warning",
         ),
       );
+    const artifactHashes = new Map<string, string>();
+    function registerIdentity(reference: ArtifactReference) {
+      const existing = artifactHashes.get(reference.id);
+      if (existing !== undefined && existing !== reference.sha256)
+        fail(
+          "ARTIFACT_INTEGRITY",
+          `Conflicting artifact identity ${reference.id}`,
+        );
+      artifactHashes.set(reference.id, reference.sha256);
+    }
+    registerIdentity({ id: lock.snapshotId, sha256: lock.sha256 });
     const artifacts = new Map<string, Artifact>();
     function add(artifact: Artifact) {
+      registerIdentity(artifact);
       const existing = artifacts.get(artifact.id);
       if (existing && canonicalDigest(existing) !== canonicalDigest(artifact))
         fail(
@@ -292,12 +304,7 @@ export function resolveDesign(
     }
     const references = new Map<string, ArtifactReference>();
     const addReference = (reference: ArtifactReference) => {
-      const existing = references.get(reference.id);
-      if (existing && existing.sha256 !== reference.sha256)
-        fail(
-          "ARTIFACT_INTEGRITY",
-          `Conflicting dependency reference ${reference.id}`,
-        );
+      registerIdentity(reference);
       references.set(reference.id, structuredClone(reference));
     };
     function evidenceReferences(node: DesignIR["root"]) {

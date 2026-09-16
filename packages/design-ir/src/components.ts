@@ -367,15 +367,20 @@ export function expandComponents(
   const used = new Map<string, ComponentReference>();
   let count = 0;
   const identities = new Set<string>();
+  const authoredSlotRoots = new Set<string>();
   function visit(
     input: DesignNode,
     depth: number,
     componentStack: string[],
+    componentDepth: number,
   ): DesignNode {
     if (depth > limits.maxDepth)
       limitFail("DEPTH_LIMIT", depth, limits.maxDepth);
+    const definitionStack = authoredSlotRoots.delete(input.id)
+      ? []
+      : componentStack;
     if (input.type === "component")
-      return instance(input, depth, componentStack);
+      return instance(input, depth, definitionStack, componentDepth);
     if ("bindings" in input && input.bindings?.length)
       fail(
         "COMPONENT_PROPERTY_INVALID",
@@ -391,7 +396,7 @@ export function expandComponents(
     const node = structuredClone(input);
     if ("children" in node)
       node.children = node.children.map((child) =>
-        visit(child, depth + 1, componentStack),
+        visit(child, depth + 1, definitionStack, componentDepth),
       );
     return node;
   }
@@ -399,6 +404,7 @@ export function expandComponents(
     input: ComponentNode,
     depth: number,
     stack: string[],
+    componentDepth: number,
   ): DesignNode {
     const componentKey = key(input.componentReference);
     if (stack.includes(componentKey))
@@ -406,8 +412,8 @@ export function expandComponents(
         "DEPENDENCY_CYCLE",
         `Instance dependency cycle: ${input.componentReference.id}`,
       );
-    if (stack.length >= limits.maxDepth)
-      limitFail("DEPTH_LIMIT", stack.length + 1, limits.maxDepth);
+    if (componentDepth >= limits.maxDepth)
+      limitFail("DEPTH_LIMIT", componentDepth + 1, limits.maxDepth);
     const definition = definitions.get(componentKey);
     const record: InstanceExpansion = {
       instanceId: input.id,
@@ -527,6 +533,8 @@ export function expandComponents(
             node.id = namespaceId(input.id, ["slot", slot.name, node.id]);
           }
           record.slotIds[slot.name]?.push(child.id);
+          // Authored slot trees are finite input, not recursive definition edges.
+          authoredSlotRoots.add(child.id);
         }
         const anchorId = record.localIds[slot.targetNodeId];
         const anchor = [...localNodes.values()].find(
@@ -570,10 +578,15 @@ export function expandComponents(
     if (input.transform) expansion.transform = structuredClone(input.transform);
     semantics(expansion, input);
     instances.push(record);
-    return visit(expansion, depth, [...stack, componentKey]);
+    return visit(
+      expansion,
+      depth,
+      [...stack, componentKey],
+      componentDepth + 1,
+    );
   }
   return {
-    root: visit(root, 1, []),
+    root: visit(root, 1, [], 0),
     instances,
     components: [...used.values()],
     mappingDiagnostics,

@@ -61,6 +61,9 @@ Verified snapshot bytes do not verify all referenced bytes, font use, rights,
 source truth, authorization or approval. `dependencyBytes(artifact, bytes)`
 checks a dependency's exact length/SHA256 and returns a defensive copy. Raw
 filesystem confinement, signatures, decoding and font checks belong to F04/F05.
+Closure identity checks share one artifact-ID/hash table across the snapshot,
+descriptors and references. Conflicting hashes fail with `ARTIFACT_INTEGRITY`
+regardless of insertion order, even when the snapshot bytes themselves are valid.
 
 Successful semantic resolution yields `needs-review`, never `ready`.
 Renderability, exportability and implementation readiness are not promoted.
@@ -170,6 +173,10 @@ semantics supply defaults, expansion semantics refine them, and explicit
 instance semantics override them. Root instance layout/paint overrides preserve
 unspecified definition fields. Unsupported semantic destinations fail, rather
 than being discarded.
+Finite authored slot trees may nest the same component/version. Crossing an
+authored slot root starts a new definition-recursion path without resetting global
+expanded-node, tree-depth or component-depth budgets. Declared recursive resource
+graphs still fail; slot namespacing is unchanged.
 
 Code mappings are preserved and validated as declarations, never rendered or
 executed. An unresolved mapping does not block a complete visual expansion.
