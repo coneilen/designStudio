@@ -1,0 +1,28 @@
+{
+  "name": "design-studio",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.26.0",
+  "engines": {
+    "node": "24.21.0",
+    "pnpm": "11.26.0"
+  },
+  "scripts": {
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "pnpm --filter @design-studio/workspace-smoke build",
+    "test": "vitest run --project unit",
+    "test:unit": "vitest run --project unit",
+    "test:smoke": "vitest run --project smoke"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.12",
+    "@design-studio/workspace-smoke": "workspace:*",
+    "@types/node": "24.13.4",
+    "typescript": "7.0.2",
+    "vite": "8.2.2",
+    "vitest": "4.1.11"
+  }
+}

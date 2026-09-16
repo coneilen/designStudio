@@ -1,0 +1,12 @@
+packages:
+  - packages/workspace-smoke
+
+engineStrict: true
+pmOnFail: error
+verifyDepsBeforeRun: error
+saveExact: true
+strictPeerDependencies: true
+autoInstallPeers: false
+storeDir: .pnpm-store
+cacheDir: .cache/pnpm
+allowBuilds: {}
