@@ -141,3 +141,19 @@ profiles or deferred production-adapter requirements.
 | Fix | Schedule expiry with `Clock.sleep`, retain the effective absolute deadline, and reject complete/partial replies observed at or after expiry. Cancel and await the deadline sleep, abort remaining scripted work, and remove the caller's cancellation listener on every settled path. Suppress only the expected abort of the owned deadline sleep; unexpected clock/script failures remain errors. |
 | Cleanup coverage | Pending work expires by advancing virtual time without releasing its reply or waiting for wall time. Success/cancellation/script failure drain tracked sleepers; late releases cannot change a cancelled result. An unexpected clock failure is surfaced and remaining scripted work is cancelled. |
 | Integrated gate | Schema and fixture drift checks, lint, strict typecheck, build, 70 unit cases and 3 smoke cases passed: the previous 65-case baseline plus 8 regressions. No dependency, schema, profile or fixture changes. |
+
+### Integration follow-up: workspace dependency test discovery
+
+After adding a dependent workspace package, the coordinator observed that the
+unit project's custom `exclude` replaced Vitest's defaults. The collector
+traversed `packages/host/node_modules/@design-studio/contracts/tests` and ran
+65 contract cases again through the workspace link. Earlier multi-package
+execution totals therefore included duplicate cases, not additional coverage.
+
+`tests/test-discovery.smoke.test.ts` invokes the actual unit collector in a
+bounded child process and rejects any collected `node_modules` path. It failed
+RED with the linked contract tests before the configuration fix. The unit
+project now extends `configDefaults.exclude` with its smoke-test exclusion,
+preserving default dependency-directory protection. The collector regression
+then passed GREEN, followed by build, strict typecheck, lint and 117 distinct
+unit/smoke cases on the current F01 plus early-F04 integration.

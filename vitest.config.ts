@@ -1,4 +1,4 @@
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
@@ -8,7 +8,7 @@ export default defineConfig({
           name: "unit",
           environment: "node",
           include: ["packages/**/*.test.ts"],
-          exclude: ["packages/**/*.smoke.test.ts"],
+          exclude: [...configDefaults.exclude, "packages/**/*.smoke.test.ts"],
         },
       },
       {
