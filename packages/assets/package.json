@@ -1,0 +1,32 @@
+{
+  "name": "@design-studio/assets",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": "24.21.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@design-studio/contracts": "workspace:*",
+    "ipaddr.js": "2.2.0",
+    "pngjs": "7.0.0",
+    "sax": "1.4.1"
+  },
+  "devDependencies": {
+    "@types/pngjs": "6.0.5",
+    "@types/sax": "1.2.7"
+  }
+}
