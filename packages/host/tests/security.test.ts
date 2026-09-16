@@ -1,5 +1,9 @@
-import { syntheticContext } from "@design-studio/contracts/testing";
+import {
+  createFakeClock,
+  syntheticContext,
+} from "@design-studio/contracts/testing";
 import { expect, it } from "vitest";
+import { HostBoundaryError } from "../src/guards.js";
 import {
   decideEgress,
   LocalSessionAuthenticator,
@@ -186,6 +190,24 @@ it("never returns callback secrets or unredacted callback errors", async () => {
     throw new Error("test-secret-not-real");
   });
   expect(JSON.stringify(failure)).not.toContain("test-secret-not-real");
+  for (const consumer of [
+    async (secret: Uint8Array) => [...secret],
+    async () => ({ "test-secret-not-real": "leaked key" }),
+    async () => {
+      throw new HostBoundaryError("INTERNAL_ERROR", "test-secret-not-real");
+    },
+  ]) {
+    const result = await store.use<unknown>(reference, context, consumer);
+    expect(result.status).toBe("failed");
+    expect(JSON.stringify(result)).not.toContain("test-secret-not-real");
+  }
+  expect(
+    await store.use(
+      reference,
+      { ...context, budget: { ...context.budget, maxOutputBytes: 2 } },
+      async () => "oversized",
+    ),
+  ).toMatchObject({ error: { code: "OUTPUT_LIMIT" } });
 });
 
 it("denies egress by default, separates policy from evidence and enforces provider/data classes", () => {
@@ -225,4 +247,48 @@ it("denies egress by default, separates policy from evidence and enforces provid
   expect(
     decideEgress(context, { ...request, providerId: "other" }, policy).allowed,
   ).toBe(false);
+});
+it("expires credential callback lifetime under the contract fake clock and wipes late backend results", async () => {
+  const clock = createFakeClock(Date.now());
+  const context = syntheticContext({
+    clock,
+    budget: { ...syntheticContext().budget, maxDurationMs: 5 },
+  });
+  context.authorization.grants.push({
+    resourceKind: "credential",
+    resourceId: "secret_one",
+    operations: ["credential-use"],
+  });
+  const reference = {
+    id: "secret_one",
+    providerId: "provider_one",
+    store: "configured-secure-store",
+  } as const;
+  let resolveRead: ((secret: Uint8Array) => void) | undefined;
+  const store = new ScopedCredentialStore({
+    projectId: context.projectId,
+    authority: () => true,
+    references: [reference],
+    redactor: new Redactor(),
+    backend: {
+      store: reference.store,
+      capability: "native-binding",
+      read: () =>
+        new Promise((resolve) => {
+          resolveRead = resolve;
+        }),
+    },
+  });
+  let called = false;
+  const use = store.use(reference, context, async () => {
+    called = true;
+    return "safe";
+  });
+  clock.advance(5);
+  expect(await use).toMatchObject({ error: { code: "DEADLINE_EXCEEDED" } });
+  const late = Uint8Array.of(1, 2, 3);
+  resolveRead?.(late);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(late).toEqual(Uint8Array.of(0, 0, 0));
+  expect(called).toBe(false);
 });

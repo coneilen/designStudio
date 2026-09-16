@@ -8,6 +8,7 @@ import type {
 } from "@design-studio/contracts";
 import {
   assertProviderContract,
+  createFakeClock,
   syntheticContext,
 } from "@design-studio/contracts/testing";
 import { afterAll, beforeAll, expect, it } from "vitest";
@@ -72,6 +73,16 @@ function request(index: number): ProcessRequest {
     shell: false,
   };
 }
+it("snapshots process requests before asynchronous executable validation", async () => {
+  const { runner } = setup();
+  const input = request(0);
+  const running = runner.run(input, syntheticContext());
+  input.args = scripts[1] ?? [];
+  expect(await running).toMatchObject({
+    status: "complete",
+    value: { exitCode: 0 },
+  });
+});
 it("returns binary stdout/stderr and preserves Windows-style arguments without a shell", async () => {
   const { runner } = setup();
   const result = await runner.run(request(0), syntheticContext());
@@ -165,3 +176,42 @@ it("runs the shared provider contract driver against real controlled children", 
     pending,
   });
 });
+it("applies a virtual deadline to an already running owned child without changing fake-clock semantics", async () => {
+  const { runner } = setup();
+  const clock = createFakeClock(Date.now());
+  const running = runner.run(
+    { ...request(2), timeoutMs: 1000 },
+    syntheticContext({ clock }),
+  );
+  await expect
+    .poll(() => runner.activeProcessCount, { timeout: 4000, interval: 10 })
+    .toBe(1);
+  clock.advance(999);
+  expect(runner.activeProcessCount).toBe(1);
+  clock.advance(1);
+  expect(await running).toMatchObject({ error: { code: "DEADLINE_EXCEEDED" } });
+  expect(runner.activeProcessCount).toBe(0);
+});
+it("terminates an already running child on real deadline and cancellation, not just preflight expiry", async () => {
+  const { runner } = setup();
+  const timed = runner.run(
+    { ...request(2), timeoutMs: 2000 },
+    syntheticContext(),
+  );
+  await expect
+    .poll(() => runner.activeProcessCount, { timeout: 1800, interval: 10 })
+    .toBe(1);
+  expect(await timed).toMatchObject({ error: { code: "DEADLINE_EXCEEDED" } });
+  expect(runner.activeProcessCount).toBe(0);
+  const controller = new AbortController();
+  const cancelled = runner.run(
+    request(2),
+    syntheticContext({ signal: controller.signal }),
+  );
+  await expect
+    .poll(() => runner.activeProcessCount, { timeout: 4000, interval: 10 })
+    .toBe(1);
+  controller.abort();
+  expect(await cancelled).toMatchObject({ status: "cancelled" });
+  expect(runner.activeProcessCount).toBe(0);
+}, 10_000);

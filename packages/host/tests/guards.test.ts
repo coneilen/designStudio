@@ -98,4 +98,11 @@ describe("trusted scoped context", () => {
     ).rejects.toThrow();
     await clock.sleep(1, new AbortController().signal);
   });
+  it("rejects context budgets above conservative trusted ceilings before allocation", () => {
+    const context = syntheticContext();
+    context.budget.maxInputBytes *= 1000;
+    expect(() => new OperationGuard(context, scope, authority)).toThrow(
+      /budget|limit/i,
+    );
+  });
 });

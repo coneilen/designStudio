@@ -5,7 +5,7 @@ import {
   lstat,
   mkdir,
   open,
-  readdir,
+  opendir,
   realpath,
   rmdir,
   unlink,
@@ -13,6 +13,7 @@ import {
 import path from "node:path";
 import {
   type Artifact,
+  type Budget,
   type FileRequest,
   type FileSystemBoundary,
   type OperationContext,
@@ -33,11 +34,27 @@ export interface ProjectRoot {
   access: "read" | "read-write";
   /** Caller attests no untrusted concurrent writers or directory replacement. */
   trustedExclusiveAccess: true;
+  /** Explicit ownership of the blobs/<sha256> namespace, including crash orphans. */
+  managedBlobs?: boolean;
 }
 export interface ProjectFileSystemOptions {
   projectId: string;
   authority: Authority;
   roots: readonly ProjectRoot[];
+  budgetLimits?: Readonly<Budget>;
+  authorizeRemoval?: (
+    artifact: Artifact,
+    context: OperationContext,
+  ) => Promise<boolean>;
+  authorizePublicationRecovery?: (
+    artifact: Artifact,
+    stagingId: string,
+    context: OperationContext,
+  ) => Promise<boolean>;
+}
+export interface ManagedInventory {
+  stagedIds: string[];
+  publishedArtifacts: Artifact[];
 }
 interface Root extends ProjectRoot {
   identity: Stats;
@@ -53,6 +70,7 @@ interface Pending {
   requestId: string;
   sessionId: string;
   busy: boolean;
+  publishedDestination?: string;
 }
 const sha256 = (bytes: Uint8Array) =>
   createHash("sha256").update(bytes).digest("hex");
@@ -121,6 +139,26 @@ async function io<T>(operation: () => Promise<T>): Promise<T> {
       { cause: error },
     );
   }
+}
+
+async function boundedEntries(
+  directory: string,
+  maxEntries = 20_000,
+  guard?: OperationGuard,
+): Promise<string[]> {
+  return io(async () => {
+    const entries: string[] = [];
+    for await (const entry of await opendir(directory)) {
+      guard?.check();
+      if (entries.length >= maxEntries)
+        throw new HostBoundaryError(
+          "OUTPUT_LIMIT",
+          "Directory entry limit exceeded.",
+        );
+      entries.push(entry.name);
+    }
+    return entries.sort();
+  });
 }
 
 export class ProjectFileSystem implements FileSystemBoundary {
@@ -220,6 +258,8 @@ export class ProjectFileSystem implements FileSystemBoundary {
         operation,
       },
       this.options.authority,
+      undefined,
+      this.options.budgetLimits,
     );
     const root = this.roots.get(rootId);
     if (
@@ -255,7 +295,7 @@ export class ProjectFileSystem implements FileSystemBoundary {
     let current = root.path;
     const segments = relative.split("/");
     for (const [index, segment] of segments.entries()) {
-      const entries = await io(() => readdir(current));
+      const entries = await boundedEntries(current);
       const aliases = entries.filter(
         (entry) =>
           entry.normalize("NFC").toLowerCase() === segment.toLowerCase(),
@@ -291,6 +331,7 @@ export class ProjectFileSystem implements FileSystemBoundary {
     absolute: string,
     guard: OperationGuard,
     expected?: Stats,
+    allowedLinks = 1,
   ): Promise<Uint8Array> {
     return io(async () => {
       const handle = await open(
@@ -301,7 +342,7 @@ export class ProjectFileSystem implements FileSystemBoundary {
         const before = await handle.stat();
         if (
           !before.isFile() ||
-          before.nlink !== 1 ||
+          before.nlink !== allowedLinks ||
           (expected && !sameFile(expected, before))
         )
           throw new HostBoundaryError(
@@ -348,28 +389,37 @@ export class ProjectFileSystem implements FileSystemBoundary {
     });
   }
   read(
-    request: FileRequest,
+    input: FileRequest,
     context: OperationContext,
   ): Promise<Outcome<Uint8Array>> {
-    return this.execute(context, async () => {
+    return boundary(context, async () => {
+      if (!validateContract("FileRequest", input).success)
+        throw new HostBoundaryError("PATH_FORBIDDEN", "Invalid file request.");
+      const request = structuredClone(input);
       const { root, guard } = this.guard(
         request.artifactRootId,
         context,
         "read",
       );
-      const absolute = await this.resolve(root, request.path);
-      const result = await this.readBytes(absolute, guard);
-      await this.resolve(root, request.path);
-      guard.check();
-      return result;
+      return this.serial(async () => {
+        guard.check();
+        const absolute = await this.resolve(root, request.path);
+        const result = await this.readBytes(absolute, guard);
+        await this.resolve(root, request.path);
+        guard.check();
+        return result;
+      });
     });
   }
   stage(
-    request: FileRequest,
+    input: FileRequest,
     bytes: Uint8Array,
     context: OperationContext,
   ): Promise<Outcome<StagedArtifact>> {
-    return this.execute(context, async () => {
+    return boundary(context, async () => {
+      if (!validateContract("FileRequest", input).success)
+        throw new HostBoundaryError("PATH_FORBIDDEN", "Invalid file request.");
+      const request = structuredClone(input);
       const { root, guard } = this.guard(
         request.artifactRootId,
         context,
@@ -377,61 +427,69 @@ export class ProjectFileSystem implements FileSystemBoundary {
       );
       guard.consume("input", bytes.byteLength);
       guard.consume("output", bytes.byteLength);
-      await this.resolve(root, request.path, true);
-      guard.check();
-      if (!root.staging) {
-        const directory = path.join(root.path, `.host-${randomUUID()}`);
-        await io(() => mkdir(directory, { mode: 0o700 }));
-        root.staging = { path: directory, identity: await lstat(directory) };
-      }
-      await this.checkStaging(root);
-      const stagingId = randomUUID();
-      const absolute = path.join(root.staging.path, stagingId);
       const owned = Uint8Array.from(bytes);
-      const artifact: Artifact = {
-        id: `sha256_${sha256(owned)}`,
-        path: request.path,
-        mediaType: "application/octet-stream",
-        byteLength: owned.byteLength,
-        sha256: sha256(owned),
-      };
-      if (!validateContract("Artifact", artifact).success)
-        throw new HostBoundaryError(
-          "INVALID_INPUT",
-          "Invalid artifact metadata.",
-        );
-      const handle = await io(() => open(absolute, "wx", 0o600));
-      let identity: Stats;
-      try {
-        await io(() => handle.writeFile(owned));
-        await io(() => handle.sync());
-        identity = await handle.stat();
-      } catch (error) {
-        await handle.close();
-        await io(() => unlink(absolute));
-        throw error;
-      }
-      await handle.close();
-      const staged = { stagingId, artifact };
-      this.pending.set(stagingId, {
-        root,
-        staged: structuredClone(staged),
-        path: absolute,
-        identity,
-        projectId: context.projectId,
-        actorId: context.authorization.actorId,
-        sessionId: context.authorization.sessionId,
-        requestId: context.requestId,
-        busy: false,
-      });
-      try {
+      return this.serial(async () => {
         guard.check();
-      } catch (error) {
-        await io(() => unlink(absolute));
-        this.pending.delete(stagingId);
-        throw error;
-      }
-      return staged;
+        if (root.managedBlobs && request.path !== `blobs/${sha256(owned)}`)
+          throw new HostBoundaryError(
+            "ARTIFACT_INTEGRITY",
+            "Managed blob path must match the exact bytes hash.",
+          );
+        await this.resolve(root, request.path, true);
+        guard.check();
+        if (!root.staging) {
+          const directory = path.join(root.path, `.host-${randomUUID()}`);
+          await io(() => mkdir(directory, { mode: 0o700 }));
+          root.staging = { path: directory, identity: await lstat(directory) };
+        }
+        await this.checkStaging(root);
+        const stagingId = randomUUID();
+        const absolute = path.join(root.staging.path, stagingId);
+        const artifact: Artifact = {
+          id: `sha256_${sha256(owned)}`,
+          path: request.path,
+          mediaType: "application/octet-stream",
+          byteLength: owned.byteLength,
+          sha256: sha256(owned),
+        };
+        if (!validateContract("Artifact", artifact).success)
+          throw new HostBoundaryError(
+            "INVALID_INPUT",
+            "Invalid artifact metadata.",
+          );
+        const handle = await io(() => open(absolute, "wx", 0o600));
+        let identity: Stats;
+        try {
+          await io(() => handle.writeFile(owned));
+          await io(() => handle.sync());
+          identity = await handle.stat();
+        } catch (error) {
+          await handle.close();
+          await io(() => unlink(absolute));
+          throw error;
+        }
+        await handle.close();
+        const staged = { stagingId, artifact };
+        this.pending.set(stagingId, {
+          root,
+          staged: structuredClone(staged),
+          path: absolute,
+          identity,
+          projectId: context.projectId,
+          actorId: context.authorization.actorId,
+          sessionId: context.authorization.sessionId,
+          requestId: context.requestId,
+          busy: false,
+        });
+        try {
+          guard.check();
+        } catch (error) {
+          await io(() => unlink(absolute));
+          this.pending.delete(stagingId);
+          throw error;
+        }
+        return staged;
+      });
     });
   }
   private async checkStaging(root: Root): Promise<void> {
@@ -477,10 +535,16 @@ export class ProjectFileSystem implements FileSystemBoundary {
     return { pending, guard };
   }
   publish(
-    staged: StagedArtifact,
+    input: StagedArtifact,
     context: OperationContext,
   ): Promise<Outcome<Artifact>> {
     return this.execute(context, async () => {
+      if (!validateContract("Artifact", input.artifact).success)
+        throw new HostBoundaryError(
+          "ARTIFACT_INTEGRITY",
+          "Invalid staged artifact.",
+        );
+      const staged = structuredClone(input);
       const { pending, guard } = this.own(staged.stagingId, context);
       if (
         !validateContract("Artifact", staged.artifact).success ||
@@ -497,6 +561,18 @@ export class ProjectFileSystem implements FileSystemBoundary {
       pending.busy = true;
       try {
         await this.checkStaging(pending.root);
+        if (pending.publishedDestination) {
+          await this.resolve(pending.root, staged.artifact.path);
+          await this.finishPublishedPair(
+            pending.path,
+            pending.publishedDestination,
+            pending.staged.artifact,
+            guard,
+            pending.identity,
+          );
+          this.pending.delete(staged.stagingId);
+          return structuredClone(pending.staged.artifact);
+        }
         const bytes = await this.readBytes(
           pending.path,
           guard,
@@ -517,9 +593,26 @@ export class ProjectFileSystem implements FileSystemBoundary {
         guard.check();
         // Same-filesystem hard-link publication is atomic and never replaces an existing file.
         await io(() => link(pending.path, destination));
-        await io(() => unlink(pending.path));
+        pending.publishedDestination = destination;
+        await this.finishPublishedPair(
+          pending.path,
+          destination,
+          pending.staged.artifact,
+          guard,
+          pending.identity,
+          false,
+        );
         this.pending.delete(staged.stagingId);
         return structuredClone(pending.staged.artifact);
+      } catch (error) {
+        if (pending.publishedDestination)
+          throw new HostBoundaryError(
+            "OUTPUT_UNCERTAIN",
+            "Destination is visible but publication cleanup is incomplete; retry/reconcile the exact owned pair.",
+            false,
+            { cause: error },
+          );
+        throw error;
       } finally {
         pending.busy = false;
       }
@@ -555,6 +648,301 @@ export class ProjectFileSystem implements FileSystemBoundary {
   }
   close(): Promise<void> {
     return this.serial(() => this.cleanup());
+  }
+  /** Atomic visibility with file fsync; directory-entry power-loss durability is not established. */
+  readonly publicationDurability =
+    "file-flushed-atomic-visibility-not-power-loss-durable" as const;
+  ensurePublicationDurable(
+    rootId: string,
+    artifacts: readonly Artifact[],
+    context: OperationContext,
+  ): Promise<Outcome<{ durable: true }>> {
+    return this.execute(context, async () => {
+      const { guard } = this.guard(rootId, context, "write");
+      if (
+        !artifacts.length ||
+        artifacts.length > context.budget.maxExpandedNodes
+      )
+        throw new HostBoundaryError(
+          "INVALID_INPUT",
+          "Durability verification requires a bounded nonempty artifact set.",
+        );
+      for (const artifact of artifacts) {
+        if (!validateContract("Artifact", artifact).success)
+          throw new HostBoundaryError(
+            "ARTIFACT_INTEGRITY",
+            "Invalid artifact in durability request.",
+          );
+        portableRelativePath(artifact.path);
+        guard.consume("input", Buffer.byteLength(JSON.stringify(artifact)));
+      }
+      throw new HostBoundaryError(
+        "UNSUPPORTED_FEATURE",
+        "File data was flushed during staging, but host directory-entry power-loss durability is unverified; durable database references require a verified native flush adapter.",
+        true,
+      );
+    });
+  }
+  private async finishPublishedPair(
+    stagePath: string,
+    destination: string,
+    artifact: Artifact,
+    guard: OperationGuard,
+    expected?: Stats,
+    verifyBytes = true,
+  ): Promise<void> {
+    const stage = await io(() => lstat(stagePath));
+    const published = await io(() => lstat(destination));
+    if (
+      stage.isSymbolicLink() ||
+      published.isSymbolicLink() ||
+      !stage.isFile() ||
+      stage.nlink !== 2 ||
+      published.nlink !== 2 ||
+      !sameFile(stage, published) ||
+      (expected && !sameFile(stage, expected))
+    )
+      throw new HostBoundaryError(
+        "ARTIFACT_INTEGRITY",
+        "Publication recovery requires exactly the known stage/destination inode pair.",
+      );
+    if (verifyBytes) {
+      const bytes = await this.readBytes(stagePath, guard, stage, 2);
+      if (
+        bytes.byteLength !== artifact.byteLength ||
+        sha256(bytes) !== artifact.sha256
+      )
+        throw new HostBoundaryError(
+          "ARTIFACT_INTEGRITY",
+          "Publication recovery bytes do not match the expected artifact.",
+        );
+    }
+    const current = await io(() => lstat(destination));
+    if (
+      !sameFile(stage, current) ||
+      current.nlink !== 2 ||
+      current.isSymbolicLink()
+    )
+      throw new HostBoundaryError(
+        "ARTIFACT_INTEGRITY",
+        "Publication destination changed during recovery.",
+      );
+    guard.check();
+    await io(() => unlink(stagePath));
+  }
+  reconcilePublication(
+    rootId: string,
+    artifact: Artifact,
+    stagingId: string,
+    context: OperationContext,
+  ): Promise<Outcome<Artifact>> {
+    return this.execute(context, async () => {
+      const { root, guard } = this.guard(rootId, context, "write");
+      if (
+        !root.managedBlobs ||
+        !this.options.authorizePublicationRecovery ||
+        !(await this.options.authorizePublicationRecovery(
+          artifact,
+          stagingId,
+          context,
+        ))
+      )
+        throw new HostBoundaryError(
+          "FORBIDDEN",
+          "Historical publication recovery requires an explicit trusted reservation.",
+        );
+      if (
+        !validateContract("Artifact", artifact).success ||
+        artifact.id !== `sha256_${artifact.sha256}` ||
+        artifact.path !== `blobs/${artifact.sha256}` ||
+        artifact.mediaType !== "application/octet-stream" ||
+        !/^[0-9a-f-]{36}$/.test(stagingId)
+      )
+        throw new HostBoundaryError(
+          "ARTIFACT_INTEGRITY",
+          "Invalid recovery identity.",
+        );
+      if (this.pending.has(stagingId))
+        throw new HostBoundaryError(
+          "CONFLICT",
+          "Current-instance publications must be retried by their owning operation.",
+        );
+      await this.checkRoot(root);
+      const destination = await this.resolve(root, artifact.path);
+      const matches: string[] = [];
+      let inspected = 0;
+      for (const entry of await boundedEntries(root.path, 20_000, guard)) {
+        if (!/^\.host-[0-9a-f-]{36}$/.test(entry)) continue;
+        const directory = path.join(root.path, entry);
+        const stats = await io(() => lstat(directory));
+        if (!stats.isDirectory() || stats.isSymbolicLink())
+          throw new HostBoundaryError(
+            "PATH_FORBIDDEN",
+            "Historical staging path is not a real directory.",
+          );
+        const names = await boundedEntries(
+          directory,
+          20_000 - inspected,
+          guard,
+        );
+        inspected += names.length;
+        if (names.includes(stagingId))
+          matches.push(path.join(directory, stagingId));
+      }
+      const stagePath = matches[0];
+      if (matches.length !== 1 || !stagePath)
+        throw new HostBoundaryError(
+          "ARTIFACT_INTEGRITY",
+          "Historical staging identity is missing or ambiguous.",
+        );
+      await this.finishPublishedPair(stagePath, destination, artifact, guard);
+      return structuredClone(artifact);
+    });
+  }
+  inventory(
+    rootId: string,
+    context: OperationContext,
+    maxEntries: number,
+  ): Promise<Outcome<ManagedInventory>> {
+    return this.execute(context, async () => {
+      const { root, guard } = this.guard(rootId, context, "write");
+      if (!root.managedBlobs)
+        throw new HostBoundaryError(
+          "FORBIDDEN",
+          "Root is not explicitly provisioned for managed blob maintenance.",
+        );
+      if (
+        !Number.isSafeInteger(maxEntries) ||
+        maxEntries <= 0 ||
+        maxEntries > 20_000
+      )
+        throw new HostBoundaryError(
+          "INVALID_INPUT",
+          "Inventory requires a finite entry bound from 1 to 20000.",
+        );
+      await this.checkRoot(root);
+      let remaining = maxEntries;
+      const list = async (directory: string) => {
+        const entries = await boundedEntries(directory, remaining, guard);
+        remaining -= entries.length;
+        return entries;
+      };
+      const result: ManagedInventory = {
+        stagedIds: [],
+        publishedArtifacts: [],
+      };
+      const rootEntries = await list(root.path);
+      for (const entry of rootEntries) {
+        if (entry === "blobs") {
+          const directory = await this.resolve(root, "blobs");
+          for (const name of await list(directory)) {
+            if (!/^[0-9a-f]{64}$/.test(name))
+              throw new HostBoundaryError(
+                "ARTIFACT_INTEGRITY",
+                "Managed namespace contains a non-hash blob.",
+              );
+            const relative = `blobs/${name}`;
+            const absolute = await this.resolve(root, relative);
+            const bytes = await this.readBytes(absolute, guard);
+            if (sha256(bytes) !== name)
+              throw new HostBoundaryError(
+                "ARTIFACT_INTEGRITY",
+                "Managed blob content does not match its path.",
+              );
+            result.publishedArtifacts.push({
+              id: `sha256_${name}`,
+              path: relative,
+              sha256: name,
+              byteLength: bytes.byteLength,
+              mediaType: "application/octet-stream",
+            });
+          }
+        } else if (/^\.host-[0-9a-f-]{36}$/.test(entry)) {
+          const directory = path.join(root.path, entry);
+          const stat = await io(() => lstat(directory));
+          if (!stat.isDirectory() || stat.isSymbolicLink())
+            throw new HostBoundaryError(
+              "PATH_FORBIDDEN",
+              "Historical staging entry is not a real directory.",
+            );
+          for (const name of await list(directory)) {
+            if (
+              !/^[0-9a-f-]{36}$/.test(name) ||
+              result.stagedIds.includes(name)
+            )
+              throw new HostBoundaryError(
+                "ARTIFACT_INTEGRITY",
+                "Historical staging ID is invalid or duplicated.",
+              );
+            const file = await io(() => lstat(path.join(directory, name)));
+            if (!file.isFile() || file.isSymbolicLink() || file.nlink !== 1)
+              throw new HostBoundaryError(
+                "PATH_FORBIDDEN",
+                "Historical stage is not an exclusively linked file.",
+              );
+            result.stagedIds.push(name);
+          }
+        }
+      }
+      await this.checkRoot(root);
+      guard.check();
+      return result;
+    });
+  }
+  removeUnreferenced(
+    rootId: string,
+    artifact: Artifact,
+    context: OperationContext,
+  ): Promise<Outcome<{ removed: true }>> {
+    return this.execute(context, async () => {
+      const { root, guard } = this.guard(rootId, context, "write");
+      if (!root.managedBlobs || !this.options.authorizeRemoval)
+        throw new HostBoundaryError(
+          "FORBIDDEN",
+          "Managed-root removal requires an explicit reference-safe reservation.",
+        );
+      if (
+        !validateContract("Artifact", artifact).success ||
+        artifact.path !== `blobs/${artifact.sha256}` ||
+        artifact.id !== `sha256_${artifact.sha256}` ||
+        artifact.mediaType !== "application/octet-stream"
+      )
+        throw new HostBoundaryError(
+          "ARTIFACT_INTEGRITY",
+          "Removal metadata is not an exact managed-blob identity.",
+        );
+      if (!(await this.options.authorizeRemoval(artifact, context)))
+        throw new HostBoundaryError(
+          "FORBIDDEN",
+          "No active reference-safe removal reservation.",
+        );
+      guard.check();
+      const absolute = await this.resolve(root, artifact.path);
+      const before = await io(() => lstat(absolute));
+      const bytes = await this.readBytes(absolute, guard, before);
+      if (
+        bytes.byteLength !== artifact.byteLength ||
+        sha256(bytes) !== artifact.sha256
+      )
+        throw new HostBoundaryError(
+          "ARTIFACT_INTEGRITY",
+          "Removal bytes do not match the expected artifact.",
+        );
+      await this.resolve(root, artifact.path);
+      const after = await io(() => lstat(absolute));
+      if (
+        !sameFile(before, after) ||
+        after.nlink !== 1 ||
+        after.isSymbolicLink()
+      )
+        throw new HostBoundaryError(
+          "PATH_FORBIDDEN",
+          "Removal target identity changed.",
+        );
+      guard.check();
+      await io(() => unlink(absolute));
+      return { removed: true };
+    });
   }
   private async cleanup(): Promise<void> {
     if ([...this.pending.values()].some((pending) => pending.busy))

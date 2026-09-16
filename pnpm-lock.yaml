@@ -54,6 +54,9 @@ importers:
       '@design-studio/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@napi-rs/keyring':
+        specifier: 2.0.0
+        version: 2.0.0
 
   packages/workspace-smoke: {}
 
@@ -125,6 +128,87 @@ packages:
 
   '@jsdevtools/ono@7.1.3':
     resolution: {integrity: sha1-nfA7vXxpalxYiFw0qgbaQchUN5Y=}
+
+  '@napi-rs/keyring-darwin-arm64@2.0.0':
+    resolution: {integrity: sha1-0qxcqvZaAWdjBRQWE3vupTg6mYk=}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@napi-rs/keyring-darwin-x64@2.0.0':
+    resolution: {integrity: sha1-fuJUnYaIv79RQyMZ5mRa1NCFRGE=}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [darwin]
+
+  '@napi-rs/keyring-freebsd-x64@2.0.0':
+    resolution: {integrity: sha1-PHH2tzaeW3jShr/UiXZChQGTPZA=}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [freebsd]
+
+  '@napi-rs/keyring-linux-arm-gnueabihf@2.0.0':
+    resolution: {integrity: sha1-AOpTgispZGJ4JnvVJIx/EqvrrqE=}
+    engines: {node: '>= 10'}
+    cpu: [arm]
+    os: [linux]
+
+  '@napi-rs/keyring-linux-arm64-gnu@2.0.0':
+    resolution: {integrity: sha1-4YW4/8B8z1/9picYD5RTryO7u64=}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@napi-rs/keyring-linux-arm64-musl@2.0.0':
+    resolution: {integrity: sha1-1fERKJ6sjVXNb/m6VJ3brTaPiXo=}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [linux]
+    libc: [musl]
+
+  '@napi-rs/keyring-linux-riscv64-gnu@2.0.0':
+    resolution: {integrity: sha1-6+npxJbIUJDrAus+UiHIt+/rwUM=}
+    engines: {node: '>= 10'}
+    cpu: [riscv64]
+    os: [linux]
+    libc: [glibc]
+
+  '@napi-rs/keyring-linux-x64-gnu@2.0.0':
+    resolution: {integrity: sha1-3hI0wrjMkzmTTndlcuc20Bdp8SA=}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@napi-rs/keyring-linux-x64-musl@2.0.0':
+    resolution: {integrity: sha1-7sAdXjhyzCZe8rtj8abey+dbbNY=}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+
+  '@napi-rs/keyring-win32-arm64-msvc@2.0.0':
+    resolution: {integrity: sha1-ULKyQkRb6Pr6euLc2hI+7n5u+uQ=}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [win32]
+
+  '@napi-rs/keyring-win32-ia32-msvc@2.0.0':
+    resolution: {integrity: sha1-vIWIxTDL/D1VejmXery+NlJk7gk=}
+    engines: {node: '>= 10'}
+    cpu: [ia32]
+    os: [win32]
+
+  '@napi-rs/keyring-win32-x64-msvc@2.0.0':
+    resolution: {integrity: sha1-4fKMOFU2oBBVpAIHzPgvCNUug5Y=}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [win32]
+
+  '@napi-rs/keyring@2.0.0':
+    resolution: {integrity: sha1-8YXU9JxjK5LLXQQvX7fAsfXy6h4=}
+    engines: {node: '>= 10'}
 
   '@oxc-project/types@0.149.0':
     resolution: {integrity: sha1-MowdGUA5gBmchpZ2hx257UaTL/g=}
@@ -765,6 +849,57 @@ snapshots:
   '@jridgewell/sourcemap-codec@1.6.0': {}
 
   '@jsdevtools/ono@7.1.3': {}
+
+  '@napi-rs/keyring-darwin-arm64@2.0.0':
+    optional: true
+
+  '@napi-rs/keyring-darwin-x64@2.0.0':
+    optional: true
+
+  '@napi-rs/keyring-freebsd-x64@2.0.0':
+    optional: true
+
+  '@napi-rs/keyring-linux-arm-gnueabihf@2.0.0':
+    optional: true
+
+  '@napi-rs/keyring-linux-arm64-gnu@2.0.0':
+    optional: true
+
+  '@napi-rs/keyring-linux-arm64-musl@2.0.0':
+    optional: true
+
+  '@napi-rs/keyring-linux-riscv64-gnu@2.0.0':
+    optional: true
+
+  '@napi-rs/keyring-linux-x64-gnu@2.0.0':
+    optional: true
+
+  '@napi-rs/keyring-linux-x64-musl@2.0.0':
+    optional: true
+
+  '@napi-rs/keyring-win32-arm64-msvc@2.0.0':
+    optional: true
+
+  '@napi-rs/keyring-win32-ia32-msvc@2.0.0':
+    optional: true
+
+  '@napi-rs/keyring-win32-x64-msvc@2.0.0':
+    optional: true
+
+  '@napi-rs/keyring@2.0.0':
+    optionalDependencies:
+      '@napi-rs/keyring-darwin-arm64': 2.0.0
+      '@napi-rs/keyring-darwin-x64': 2.0.0
+      '@napi-rs/keyring-freebsd-x64': 2.0.0
+      '@napi-rs/keyring-linux-arm-gnueabihf': 2.0.0
+      '@napi-rs/keyring-linux-arm64-gnu': 2.0.0
+      '@napi-rs/keyring-linux-arm64-musl': 2.0.0
+      '@napi-rs/keyring-linux-riscv64-gnu': 2.0.0
+      '@napi-rs/keyring-linux-x64-gnu': 2.0.0
+      '@napi-rs/keyring-linux-x64-musl': 2.0.0
+      '@napi-rs/keyring-win32-arm64-msvc': 2.0.0
+      '@napi-rs/keyring-win32-ia32-msvc': 2.0.0
+      '@napi-rs/keyring-win32-x64-msvc': 2.0.0
 
   '@oxc-project/types@0.149.0': {}
 

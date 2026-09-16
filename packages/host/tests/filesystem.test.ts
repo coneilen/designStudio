@@ -84,6 +84,26 @@ it("accepts portable spaces and preserves nested path identity", () => {
     "assets/my image.bin",
   );
 });
+it("snapshots staged bytes before asynchronous path validation", async () => {
+  const bytes = Uint8Array.of(42);
+  const staging = files.stage(
+    { artifactRootId: "output", path: "snapshot.bin" },
+    bytes,
+    context,
+  );
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  bytes[0] = 99;
+  const staged = value(await staging);
+  value(await files.publish(staged, context));
+  expect(
+    value(
+      await files.read(
+        { artifactRootId: "output", path: "snapshot.bin" },
+        context,
+      ),
+    ),
+  ).toEqual(Uint8Array.of(42));
+});
 it("reads bounded binary and publishes atomically under a distinct output root", async () => {
   const bytes = Uint8Array.from([0, 255, 13, 10, 128]);
   await writeFile(path.join(temporary, "input", "source.bin"), bytes);

@@ -4,6 +4,7 @@ import { constants } from "node:fs";
 import { access, lstat, open, realpath } from "node:fs/promises";
 import path from "node:path";
 import {
+  type Budget,
   type LocatedTool,
   type OperationContext,
   type Outcome,
@@ -36,14 +37,19 @@ export interface ToolLocatorOptions {
   projectId: string;
   authority: Authority;
   tools: readonly ApprovedTool[];
+  budgetLimits?: Readonly<Budget>;
 }
 export class ConfiguredToolLocator implements ToolLocator {
   private readonly tools = new Map<string, ApprovedTool>();
   readonly projectId: string;
   readonly authority: Authority;
+  private readonly budgetLimits: Readonly<Budget> | undefined;
   constructor(options: ToolLocatorOptions) {
     this.projectId = options.projectId;
     this.authority = options.authority;
+    this.budgetLimits = options.budgetLimits
+      ? Object.freeze({ ...options.budgetLimits })
+      : undefined;
     for (const tool of options.tools) {
       if (
         !validateContract("StableId", tool.id).success ||
@@ -90,6 +96,7 @@ export class ConfiguredToolLocator implements ToolLocator {
       },
       this.authority,
       timeoutMs,
+      this.budgetLimits,
     );
   }
   async approved(
@@ -202,21 +209,22 @@ export class BoundedProcessRunner implements ProcessRunner {
     return this.active.size;
   }
   async run(
-    request: ProcessRequest,
+    input: ProcessRequest,
     context: OperationContext,
   ): Promise<Outcome<ProcessResult>> {
     const outcome = await boundary(context, async () => {
+      if (!validateContract("ProcessRequest", input).success)
+        throw new HostBoundaryError(
+          "INVALID_INPUT",
+          "Invalid process request; argument arrays and shell:false are required.",
+        );
+      const request = structuredClone(input);
       const started = context.clock.now();
       const guard = this.locator.guard(
         request.toolId,
         context,
         request.timeoutMs,
       );
-      if (!validateContract("ProcessRequest", request).success)
-        throw new HostBoundaryError(
-          "INVALID_INPUT",
-          "Invalid process request; argument arrays and shell:false are required.",
-        );
       guard.consume("input", Buffer.byteLength(JSON.stringify(request)));
       const tool = await this.locator.approved(request.toolId, context, guard);
       if (

@@ -6,6 +6,7 @@ import {
 } from "node:crypto";
 import type {
   AuthorizationContext,
+  Budget,
   Clock,
   CredentialReference,
   CredentialStore,
@@ -229,7 +230,7 @@ export class Redactor {
 
 export interface NativeCredentialBackend {
   readonly store: Exclude<CredentialReference["store"], "test-fake">;
-  readonly capability: "verified-native";
+  readonly capability: "verified-native" | "native-binding";
   /** Returns exclusively owned bytes; caller zeroes them after use. No enumeration. */
   read(
     reference: CredentialReference,
@@ -242,6 +243,7 @@ export interface CredentialStoreOptions {
   references: readonly CredentialReference[];
   redactor: Redactor;
   backend?: NativeCredentialBackend;
+  budgetLimits?: Readonly<Budget>;
 }
 function secretInValue(
   value: unknown,
@@ -250,8 +252,20 @@ function secretInValue(
 ): boolean {
   if (typeof value === "string") return redactor.containsSecret(value);
   if (value instanceof Uint8Array)
-    return redactor.containsSecret(Buffer.from(value).toString("base64"));
-  if (value === null || typeof value !== "object") return false;
+    return (
+      redactor.containsSecret(Buffer.from(value).toString("utf8")) ||
+      redactor.containsSecret(Buffer.from(value).toString("base64"))
+    );
+  if (
+    Array.isArray(value) &&
+    value.every((item) => Number.isInteger(item) && item >= 0 && item <= 255) &&
+    redactor.containsSecret(Buffer.from(value).toString("utf8"))
+  )
+    return true;
+  if (value === null || value === undefined || typeof value === "boolean")
+    return false;
+  if (typeof value === "number") return !Number.isFinite(value);
+  if (typeof value !== "object") return true;
   if (visited.has(value)) return true;
   visited.add(value);
   const prototype = Object.getPrototypeOf(value);
@@ -261,8 +275,9 @@ function secretInValue(
     prototype !== null
   )
     return true;
-  return Object.values(Object.getOwnPropertyDescriptors(value)).some(
-    (descriptor) =>
+  return Object.entries(Object.getOwnPropertyDescriptors(value)).some(
+    ([key, descriptor]) =>
+      redactor.containsSecret(key) ||
       !("value" in descriptor) ||
       secretInValue(descriptor.value, redactor, visited),
   );
@@ -273,11 +288,17 @@ export class ScopedCredentialStore implements CredentialStore {
     this.references = structuredClone(options.references);
   }
   use<T>(
-    reference: CredentialReference,
+    input: CredentialReference,
     context: OperationContext,
     consumer: (secret: Uint8Array) => Promise<T>,
   ): Promise<Outcome<T>> {
     return boundary(context, async () => {
+      if (!validateContract("CredentialReference", input).success)
+        throw new HostBoundaryError(
+          "INVALID_INPUT",
+          "Invalid credential reference.",
+        );
+      const reference = structuredClone(input);
       const guard = new OperationGuard(
         context,
         {
@@ -287,6 +308,8 @@ export class ScopedCredentialStore implements CredentialStore {
           operation: "credential-use",
         },
         this.options.authority,
+        undefined,
+        this.options.budgetLimits,
       );
       if (
         !validateContract("CredentialReference", reference).success ||
@@ -310,7 +333,7 @@ export class ScopedCredentialStore implements CredentialStore {
         );
       if (
         backend.store !== reference.store ||
-        backend.capability !== "verified-native"
+        !["verified-native", "native-binding"].includes(backend.capability)
       )
         throw new HostBoundaryError(
           "PROVIDER_UNAVAILABLE",
@@ -341,12 +364,23 @@ export class ScopedCredentialStore implements CredentialStore {
               "FORBIDDEN",
               "Credential callback attempted to return secret material.",
             );
+          guard.consume(
+            "output",
+            value instanceof Uint8Array
+              ? value.byteLength
+              : Buffer.byteLength(JSON.stringify(value) ?? ""),
+          );
           guard.check();
           return value;
         })();
         return await Promise.race([work, cancelled]);
       } catch (error) {
-        if (error instanceof HostBoundaryError) throw error;
+        if (error instanceof HostBoundaryError)
+          throw new HostBoundaryError(
+            error.code,
+            `Credential use failed (${error.code}); sensitive details withheld.`,
+            error.unavailable,
+          );
         throw new HostBoundaryError(
           "INTERNAL_ERROR",
           "Credential backend or consumer failed; sensitive details withheld.",

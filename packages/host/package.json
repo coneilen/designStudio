@@ -20,6 +20,7 @@
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@design-studio/contracts": "workspace:*"
+    "@design-studio/contracts": "workspace:*",
+    "@napi-rs/keyring": "2.0.0"
   }
 }

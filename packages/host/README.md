@@ -15,11 +15,16 @@ unexpired and unrevoked.
 
 `OperationScope` has `projectId`, optional `actorId`, `resourceKind`,
 `resourceId`, and `operation` (the latter fields use contract types).
-`OperationGuard(context, scope, authority, timeoutMs?)` preserves an absolute
+`OperationGuard(context, scope, authority, timeoutMs?, budgetLimits?)` preserves an absolute
 deadline capped by request, session and duration budget; `check()` revalidates
 authority and cancellation; `consume("input" | "output", bytes)` counts
 cumulatively; `watch()` provides a deadline/cancel signal and async `close()`.
-Always close a watch in `finally`. `SystemClock` uses epoch milliseconds and
+The default trusted ceilings are `DEFAULT_BUDGETS`, not arbitrary request
+numbers. Requests exceeding them fail before allocation. Host adapter options
+accept an explicit, validated `budgetLimits` configuration for approved larger
+limits. Pure `authorizeOperation` validates context/grants; allocation-owning
+services must additionally use `OperationGuard` or their own trusted budget
+accounting. Always close a watch in `finally`. `SystemClock` uses epoch milliseconds and
 abortable, overflow-safe timer chunks. Inject the contract fake clock for
 deterministic tests; do not substitute it for production.
 
@@ -61,6 +66,12 @@ this instance, project, actor, session and request. `publish(staged, context)`
 verifies those identities, exact metadata and actual bytes, then atomically
 links on the same filesystem without replacing an existing destination and
 removes its staging link. Existing destinations conflict, even with equal bytes.
+If link succeeds but stage unlink fails, the result is `interrupted` /
+`OUTPUT_UNCERTAIN`: the destination is visible, not rolled back. Retry the exact
+owned `publish` to verify original inode, exactly two links, metadata and bytes,
+then remove only its staging link. Unknown links never receive this exception
+to the ordinary single-link read rule. Do not use `close`/`discard` to bypass
+an interrupted publication; reconcile it first.
 No caller-visible partial file is published. `discard` removes only an owned
 unpublished stage. `close()` cleans only this instance's private staging files;
 never existing project data. Mutation/read operations serialize per instance.
@@ -70,6 +81,52 @@ Published paths round-trip without assuming the input and artifact roots match:
 `read({artifactRootId: "artifacts", path: published.path}, context)`.
 The root ID is retained by the caller alongside the contract artifact; it is
 not secretly prefixed into `Artifact.path`.
+
+### Managed blobs, recovery and durability
+
+`ProjectRoot.managedBlobs: true` explicitly provisions the `blobs/<sha256>`
+namespace as application-owned, including crash orphans. Stage paths must match
+the exact supplied bytes. `inventory(rootId, context, maxEntries)` bounds all
+listed directory entries (1..20,000), rehashes published blobs within cumulative
+byte/time budgets, and returns `{stagedIds, publishedArtifacts}`. Historical
+stage IDs are evidence, not authorization to discard them. Corrupt/link-aliased
+blobs fail explicitly. An unreconciled two-link publication blocks ordinary
+inventory/read until explicit recovery.
+
+`removeUnreferenced(rootId, artifact, context)` requires the configured
+`authorizeRemoval(artifact, context): Promise<boolean>` reservation callback,
+exact managed metadata and current hash/size/inode. There is no default permit.
+F03 owns reference protection and cross-instance serialization; its adapter
+should consult `store.hasRemovalReservation` without re-entering its queue.
+F04 does not infer unreferenced status from a path or inventory entry.
+
+After restart, `reconcilePublication(rootId, artifact, stagingId, context)`
+requires a separate `authorizePublicationRecovery` callback from trusted
+recovery policy. It proves a unique historical staging name, real managed
+destination, exact expected hash/length and the same two-link inode pair before
+unlinking that specific staging link. It neither removes historical directories
+nor grants general cleanup. Current-instance stages must use owned `publish`.
+
+`publicationDurability` is explicitly
+`file-flushed-atomic-visibility-not-power-loss-durable`. Staging calls file
+`fsync`; **directory-entry persistence across power loss is not established**.
+`ensurePublicationDurable(rootId, artifacts, context)` validates scope/input
+then reports `unavailable` / `UNSUPPORTED_FEATURE` on the current adapter.
+F03 must not create a power-loss-durable commit receipt from this result.
+No callback injection is represented as a working native flush implementation.
+
+Bounded native feasibility checked the official
+[MoveFileExW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw),
+[FlushFileBuffers](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-flushfilebuffers)
+and [CreateFileW caching](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew#caching-behavior)
+documentation. `MOVEFILE_WRITE_THROUGH` is `0x8`, not reserved `0x10`; its explicit
+copy/delete flush language does not establish the current same-volume hard-link
+protocol. Write-through file handles document NTFS metadata/rename flushing,
+suggesting a future same-handle no-replace rename adapter, but the end-to-end
+guarantee and package binding remain unverified. Koffi 3.2.1 has exact optional
+Windows prebuilds but also a wrapper install script; fswin 3.25.1108 metadata
+did not establish the required write-through API. Neither was installed or
+executed. No volume flush, administrative access or global change was attempted.
 
 ## Process and tools
 
@@ -108,10 +165,28 @@ Do not persist these tokens to browser storage, logs, URLs or CLI arguments.
 
 `ScopedCredentialStore` requires a configured project/provider/reference
 allowlist, trusted authorization and `Redactor`. No backend means explicit
-unavailable, never plaintext fallback. The injected native backend port is not
-itself proof of a Windows/macOS vault integration. Only trusted callback code
+unavailable, never plaintext fallback. `NapiCredentialBackend({entries})` is
+a real, lazy Windows Credential Manager/macOS Keychain read path using pinned
+`@napi-rs/keyring` 2.0.0 and its exact optional platform packages. Each entry
+maps one contract credential reference to configured service/account; the adapter
+uses only `AsyncEntry.getSecret(signal)`, never enumeration, password strings,
+provisioning, deletion, CLI tools or plaintext fallback. Its capability label
+is `native-binding`, not evidence of a successful live vault lookup.
+
+`nativeVaultCapability()` loads the module without constructing an entry.
+The Windows x64 prebuilt module loaded on Node 24.21.0 with install scripts
+disabled and no compiler; missing binding/unsupported host remains explicit.
+Injected-native tests exercise the byte API, missing entry, error and abort
+paths. **No actual user's vault was read or modified.** Windows live access,
+locked/permission prompts and all macOS native execution remain unverified.
+The package is MIT; retain its notices and native dependency notices when
+distributing. No dependency build-policy exception is needed for the tested
+prebuilt path.
+
+Only trusted callback code
 may receive secret bytes; returned plain data is checked for known-secret
-leakage and callback failures conceal sensitive details. Borrowed bytes are
+leakage (including nested keys, byte arrays and encodings), finite output bounds,
+and callback failures conceal sensitive details even for typed errors. Borrowed bytes are
 zeroed on success, failure and timeout. JavaScript cannot erase immutable strings,
 native copies or a malicious consumer's copies; this is lifetime hygiene, not
 a cryptographic erasure or arbitrary callback sandbox guarantee.
@@ -130,7 +205,12 @@ permission for an arbitrary adapter to send content. No transmission occurs here
 From the root: build before typecheck; tests are co-located under `tests/`.
 Focused tests first failed for missing modules, then passed with implementations.
 A concurrent first-stage regression separately failed before serialization
-was added. Tests use synthetic contexts and freshly owned temporary directories,
+was added. Additional observed RED/GREEN regressions cover post-link unlink
+failure/recovery, overlarge caller budgets, secret arrays/keys/typed errors,
+and mutation of process arguments or staged bytes during asynchronous checks.
+Virtual deadlines use the unmodified contract fake clock; real deadline and
+cancellation cases wait until an owned subprocess is running before stopping it.
+Tests use synthetic contexts and freshly owned temporary directories,
 binary fixtures, the exact running Node executable and trusted test scripts.
 The shared contract driver exercises the real runner/locator failures.
 No real user credentials, devices, source repositories or model calls are used.

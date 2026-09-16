@@ -1,7 +1,9 @@
 import { setTimeout as delay } from "node:timers/promises";
 import {
   type AuthorizationContext,
+  type Budget,
   type Clock,
+  DEFAULT_BUDGETS,
   type ErrorCode,
   type Operation,
   type OperationContext,
@@ -97,13 +99,21 @@ export class OperationGuard {
   readonly expiresAt: number;
   private input = 0;
   private output = 0;
+  private readonly limits: Readonly<Budget>;
   constructor(
     readonly context: OperationContext,
     private readonly scope: OperationScope,
     private readonly authority: Authority,
     timeoutMs = context.budget.maxDurationMs,
+    limits: Readonly<Budget> = DEFAULT_BUDGETS,
   ) {
     authorizeOperation(context, scope, authority);
+    if (!validateContract("Budget", limits).success)
+      throw new HostBoundaryError(
+        "INVALID_INPUT",
+        "Invalid trusted budget limits.",
+      );
+    this.limits = Object.freeze({ ...limits });
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0)
       throw new HostBoundaryError(
         "INVALID_INPUT",
@@ -119,6 +129,12 @@ export class OperationGuard {
   }
   check(): void {
     authorizeOperation(this.context, this.scope, this.authority);
+    for (const key of Object.keys(this.limits) as (keyof Budget)[])
+      if (this.context.budget[key] > this.limits[key])
+        throw new HostBoundaryError(
+          "POLICY_FAILED",
+          "Request budget exceeds trusted host limit.",
+        );
     if (this.context.clock.now() >= this.expiresAt)
       throw new HostBoundaryError(
         "DEADLINE_EXCEEDED",
@@ -217,9 +233,11 @@ export async function boundary<T>(
       status:
         error.code === "CANCELLED"
           ? "cancelled"
-          : error.unavailable
-            ? "unavailable"
-            : "failed",
+          : error.code === "OUTPUT_UNCERTAIN" || error.code === "INTERRUPTED"
+            ? "interrupted"
+            : error.unavailable
+              ? "unavailable"
+              : "failed",
       error: {
         code: error.code,
         message: error.message,
