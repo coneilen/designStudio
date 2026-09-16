@@ -43,6 +43,12 @@ importers:
         specifier: 15.0.4
         version: 15.0.4
 
+  packages/design-ir:
+    dependencies:
+      '@design-studio/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+
   packages/host:
     dependencies:
       '@design-studio/contracts':

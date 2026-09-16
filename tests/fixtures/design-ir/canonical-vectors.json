@@ -1,0 +1,22 @@
+[
+  {
+    "name": "numeric-looking-keys",
+    "input": { "2": 2, "10": 10, "a": 1 },
+    "canonical": "{\"10\":10,\"2\":2,\"a\":1}"
+  },
+  {
+    "name": "nested-order",
+    "input": { "z": [{ "b": 2, "a": 1 }, false], "a": null },
+    "canonical": "{\"a\":null,\"z\":[{\"a\":1,\"b\":2},false]}"
+  },
+  {
+    "name": "number-boundaries",
+    "input": [0, 1e-7, 0.000001, 1e21, 100000000000000000000],
+    "canonical": "[0,1e-7,0.000001,1e+21,100000000000000000000]"
+  },
+  {
+    "name": "escaping",
+    "input": ["line\nbreak", "\"quoted\"", "back\\slash"],
+    "canonical": "[\"line\\nbreak\",\"\\\"quoted\\\"\",\"back\\\\slash\"]"
+  }
+]
