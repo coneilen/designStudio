@@ -1,0 +1,983 @@
+{
+  "schemaVersion": "1.0",
+  "id": "provenance_component-variants-slots",
+  "projectId": "project_synthetic",
+  "designId": "design_component-variants-slots",
+  "nodes": {
+    "variants-root": {
+      "/id": {
+        "id": "provenance_component-variants-slots_0",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/type": {
+        "id": "provenance_component-variants-slots_1",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/layout/width": {
+        "id": "provenance_component-variants-slots_2",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/layout/height": {
+        "id": "provenance_component-variants-slots_3",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/layout/spacing": {
+        "id": "provenance_component-variants-slots_4",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      }
+    },
+    "variant-off": {
+      "/id": {
+        "id": "provenance_component-variants-slots_5",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/type": {
+        "id": "provenance_component-variants-slots_6",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/layout/width": {
+        "id": "provenance_component-variants-slots_7",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/layout/height": {
+        "id": "provenance_component-variants-slots_8",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/componentReference/id": {
+        "id": "provenance_component-variants-slots_9",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/componentReference/version": {
+        "id": "provenance_component-variants-slots_10",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/properties/title/type": {
+        "id": "provenance_component-variants-slots_11",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/properties/title/value": {
+        "id": "provenance_component-variants-slots_12",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/properties/checked/type": {
+        "id": "provenance_component-variants-slots_13",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/properties/checked/value": {
+        "id": "provenance_component-variants-slots_14",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/properties/disabled/type": {
+        "id": "provenance_component-variants-slots_15",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/properties/disabled/value": {
+        "id": "provenance_component-variants-slots_16",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/variant": {
+        "id": "provenance_component-variants-slots_17",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/accessibility/role": {
+        "id": "provenance_component-variants-slots_18",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/accessibility/label": {
+        "id": "provenance_component-variants-slots_19",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/accessibility/state/checked": {
+        "id": "provenance_component-variants-slots_20",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/accessibility/state/disabled": {
+        "id": "provenance_component-variants-slots_21",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/accessibility/evidence": {
+        "id": "provenance_component-variants-slots_22",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/behavior/status": {
+        "id": "provenance_component-variants-slots_23",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/behavior/critical": {
+        "id": "provenance_component-variants-slots_24",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/behavior/intent": {
+        "id": "provenance_component-variants-slots_25",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/behavior/stateField": {
+        "id": "provenance_component-variants-slots_26",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/behavior/value/type": {
+        "id": "provenance_component-variants-slots_27",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/behavior/value/value": {
+        "id": "provenance_component-variants-slots_28",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/behavior/simulatedOnly": {
+        "id": "provenance_component-variants-slots_29",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      }
+    },
+    "variant-on": {
+      "/id": {
+        "id": "provenance_component-variants-slots_30",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/type": {
+        "id": "provenance_component-variants-slots_31",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/layout/width": {
+        "id": "provenance_component-variants-slots_32",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/layout/height": {
+        "id": "provenance_component-variants-slots_33",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/componentReference/id": {
+        "id": "provenance_component-variants-slots_34",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/componentReference/version": {
+        "id": "provenance_component-variants-slots_35",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/properties/title/type": {
+        "id": "provenance_component-variants-slots_36",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/properties/title/value": {
+        "id": "provenance_component-variants-slots_37",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/properties/checked/type": {
+        "id": "provenance_component-variants-slots_38",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/properties/checked/value": {
+        "id": "provenance_component-variants-slots_39",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/properties/disabled/type": {
+        "id": "provenance_component-variants-slots_40",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/properties/disabled/value": {
+        "id": "provenance_component-variants-slots_41",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/variant": {
+        "id": "provenance_component-variants-slots_42",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/accessibility/role": {
+        "id": "provenance_component-variants-slots_43",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/accessibility/label": {
+        "id": "provenance_component-variants-slots_44",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/accessibility/state/checked": {
+        "id": "provenance_component-variants-slots_45",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/accessibility/state/disabled": {
+        "id": "provenance_component-variants-slots_46",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/accessibility/evidence": {
+        "id": "provenance_component-variants-slots_47",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/behavior/status": {
+        "id": "provenance_component-variants-slots_48",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/behavior/critical": {
+        "id": "provenance_component-variants-slots_49",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/behavior/intent": {
+        "id": "provenance_component-variants-slots_50",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/behavior/stateField": {
+        "id": "provenance_component-variants-slots_51",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/behavior/value/type": {
+        "id": "provenance_component-variants-slots_52",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/behavior/value/value": {
+        "id": "provenance_component-variants-slots_53",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/behavior/simulatedOnly": {
+        "id": "provenance_component-variants-slots_54",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      }
+    },
+    "slot-badge": {
+      "/id": {
+        "id": "provenance_component-variants-slots_55",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/type": {
+        "id": "provenance_component-variants-slots_56",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/shape": {
+        "id": "provenance_component-variants-slots_57",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/layout/width": {
+        "id": "provenance_component-variants-slots_58",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/layout/height": {
+        "id": "provenance_component-variants-slots_59",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/appearance/fill/token": {
+        "id": "provenance_component-variants-slots_60",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      }
+    },
+    "variant-disabled": {
+      "/id": {
+        "id": "provenance_component-variants-slots_61",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/type": {
+        "id": "provenance_component-variants-slots_62",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/layout/width": {
+        "id": "provenance_component-variants-slots_63",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/layout/height": {
+        "id": "provenance_component-variants-slots_64",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/componentReference/id": {
+        "id": "provenance_component-variants-slots_65",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/componentReference/version": {
+        "id": "provenance_component-variants-slots_66",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/properties/title/type": {
+        "id": "provenance_component-variants-slots_67",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/properties/title/value": {
+        "id": "provenance_component-variants-slots_68",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/properties/checked/type": {
+        "id": "provenance_component-variants-slots_69",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/properties/checked/value": {
+        "id": "provenance_component-variants-slots_70",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/properties/disabled/type": {
+        "id": "provenance_component-variants-slots_71",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/properties/disabled/value": {
+        "id": "provenance_component-variants-slots_72",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/variant": {
+        "id": "provenance_component-variants-slots_73",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/accessibility/role": {
+        "id": "provenance_component-variants-slots_74",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/accessibility/label": {
+        "id": "provenance_component-variants-slots_75",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/accessibility/state/checked": {
+        "id": "provenance_component-variants-slots_76",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/accessibility/state/disabled": {
+        "id": "provenance_component-variants-slots_77",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/accessibility/evidence": {
+        "id": "provenance_component-variants-slots_78",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/behavior/status": {
+        "id": "provenance_component-variants-slots_79",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/behavior/critical": {
+        "id": "provenance_component-variants-slots_80",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/behavior/intent": {
+        "id": "provenance_component-variants-slots_81",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/behavior/stateField": {
+        "id": "provenance_component-variants-slots_82",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/behavior/value/type": {
+        "id": "provenance_component-variants-slots_83",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/behavior/value/value": {
+        "id": "provenance_component-variants-slots_84",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/behavior/simulatedOnly": {
+        "id": "provenance_component-variants-slots_85",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_component-variants-slots"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      }
+    }
+  },
+  "evidence": [
+    {
+      "id": "evidence_component-variants-slots",
+      "artifact": {
+        "id": "source_component-variants-slots",
+        "sha256": "11f6a7ca7709f8d71e29f22dda9d267fdcd39f567dc5efdb8743c4b20f575ec0"
+      },
+      "kind": "synthetic-authored"
+    },
+    {
+      "id": "evidence_resources",
+      "artifact": {
+        "id": "resource_authorship",
+        "sha256": "0c95793ba451636bffccae35f17b51ccca0ec6a80eb6f414fd3a10864e405214"
+      },
+      "kind": "synthetic-authored"
+    }
+  ],
+  "history": []
+}

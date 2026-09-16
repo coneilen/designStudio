@@ -81,3 +81,46 @@ Windows job, macOS job, public-npm frozen restore, and other CPU architectures
 remain unverified. Review the registry/SHA-1 provenance limitation in
 DEVELOPMENT.md at G0; do not interpret CI YAML or a local mirror restore as an
 upstream supply-chain or macOS acceptance result.
+
+## F01 foundation acceptance and observed TDD
+
+F01 was authorized under the Windows-first synthetic-foundation G0 exception
+on integration base `5a8ea5d79f74f11edadb03d1afdd84dfa25b8ee9`. It preserves the
+F00 harness. Acceptance covers synchronized schemas/types, strict authoring and
+artifact shapes, scoped fake-provider behavior, exact fixture byte identities,
+and public built-package imports. It does not claim semantic resolution,
+rendering, comparison, source import, real host adapters or implementation
+readiness. DESIGN_IR.md and exported `SEMANTIC_CASES` assign those checks to
+their owning later packages without fake successful semantic results.
+
+All commands used the pinned Node 24.21.0/pnpm 11.26.0 toolchain and worktree-
+scoped cache/state/store. The previously verified portable Node was executed
+read-only; no other checkout was edited.
+
+| Step | Actual command/result on Windows |
+| --- | --- |
+| Acceptance RED | `pnpm exec vitest run --project unit packages/contracts/tests`: exit 1, three suites fail because `src/index.js` / `src/testing.js` do not exist. Tests were written first. |
+| First boundary GREEN | Boundary/provider selectors: 41 tests pass; complete first fixture gate: 43 tests pass. |
+| Focused artifact RED | `... artifacts.test.ts`: three expected failures for handoff path/media refinements, async accepted/completed distinction, and an initially assumed font version. Actual public font name table established 1.003, not 1.001. |
+| Host-boundary RED | Provider/artifact selectors: new filesystem/credential/clock/fake completion exports absent and invalid calendar date accepted; expected failures recorded before behavior. |
+| Refactor/GREEN | Named recursive JSON arrays/objects and derived all-definition generation root fixed the generator's circular alias/unreachable types without weakening schema unions or strict typing. All 54 contract tests passed. |
+| Package RED | Contract smoke before build: exit 1 `ERR_MODULE_NOT_FOUND` for `packages/contracts/dist/index.js`. An earlier attempt was blocked by pnpm's stale dependency-state guard while the portable lock restore was being updated; that was not counted as behavior RED. |
+| Portable restore | Manifest-only resolution through the existing canonical trusted mirror emitted zero explicit tarball URLs; a frozen restore succeeded. No integrity/URL editing, global config changes or TLS weakening. |
+| Process regression RED | A scripted nonzero process exit incorrectly retained `complete`; the focused provider test failed before fixing the fake boundary to report `PROCESS_FAILED` or `OUTPUT_LIMIT`. A misplaced nested-test attempt was corrected first and is not counted as behavior RED. |
+| Resource-scope regression RED | The reusable provider harness exposed same-ID wrong-resource-kind grants reaching unavailable instead of forbidden in all three fakes. Fixed the test boundary to match resource kind, ID and operation together; production authorization remains F04. |
+| Persisted-byte RED | Comparing staged Git blobs to the fixture manifest caught automatic line-ending normalization of the synthetic MIT license. Marked both license resources byte-preserved in fixture-local attributes and re-staged; every staged resource/license hash then matched. |
+| Integrated gate | `contracts:generate`, `fixtures:check`, `lint`, `typecheck`, `build`, `test:unit`, `test:smoke`: all exit 0. 36 generated contract outputs and 26 fixture outputs checked; 60 files passed Biome; 62 unit tests (57 contracts + 5 F00) and 3 built-process smoke tests (1 contracts + 2 F00) passed. |
+
+The five foundation cases and 19 public-artifact shape examples are deliberately
+authored, not copies of the P02 probe or confidential product data. ABeeZee
+Regular is unmodified OFL-1.1 font data with a pinned public source commit,
+actual metadata, byte hash and full license. Fixture tests check all declared
+bytes and referenced component/token/asset/font identities; they do not execute
+a general dependency resolver. No browser golden was generated.
+
+Generated schema/type files and generated fixture JSON use deterministic
+generator formatting rather than independent Biome rewriting. Build checks
+schema/type drift and CI separately checks fixture drift; source/config/tests
+remain covered by Biome and strict TypeScript. Windows local evidence is not a
+hosted CI/macOS run, public-npm restore, live Figma import, font rasterization,
+device capture or M1 acceptance.

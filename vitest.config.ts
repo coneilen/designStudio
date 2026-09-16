@@ -8,13 +8,14 @@ export default defineConfig({
           name: "unit",
           environment: "node",
           include: ["packages/**/*.test.ts"],
+          exclude: ["packages/**/*.smoke.test.ts"],
         },
       },
       {
         test: {
           name: "smoke",
           environment: "node",
-          include: ["tests/**/*.smoke.test.ts"],
+          include: ["tests/**/*.smoke.test.ts", "packages/**/*.smoke.test.ts"],
           testTimeout: 10_000,
         },
       },

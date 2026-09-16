@@ -1,0 +1,6 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://design-studio.invalid/schemas/1.0/component-snapshot.schema.json",
+  "$ref": "foundation.schema.json#/definitions/ComponentSnapshot",
+  "$comment": "Generated from foundation.schema.json. Do not edit."
+}

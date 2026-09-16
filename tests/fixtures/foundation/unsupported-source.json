@@ -1,0 +1,16 @@
+{
+  "origin": "synthetic-authored",
+  "feature": "complex-mask-and-backdrop-blur",
+  "bounds": {
+    "x": 16,
+    "y": 16,
+    "width": 120,
+    "height": 80,
+    "unit": "design-unit"
+  },
+  "requestedMask": {
+    "kind": "nonrectangular-composite",
+    "backdropBlur": 12
+  },
+  "purpose": "Preserved evidence; no visual or editable implementation is supplied."
+}

@@ -6,7 +6,14 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!!documentation", "!!pnpm-lock.yaml"]
+    "includes": [
+      "**",
+      "!!documentation",
+      "!!pnpm-lock.yaml",
+      "!!packages/contracts/src/generated.ts",
+      "!!packages/contracts/src/*.generated.ts",
+      "!!tests/fixtures/foundation/*.json"
+    ]
   },
   "formatter": {
     "enabled": true,

@@ -1,0 +1,215 @@
+{
+  "schemaVersion": "1.0",
+  "projectId": "project_synthetic",
+  "designId": "design_component-variants-slots",
+  "screen": {
+    "id": "screen_component-variants-slots",
+    "name": "component-variants-slots",
+    "viewport": {
+      "width": 393,
+      "height": 852,
+      "unit": "design-unit"
+    },
+    "capture": {
+      "bounds": {
+        "x": 0,
+        "y": 0,
+        "width": 393,
+        "height": 852,
+        "unit": "design-unit"
+      },
+      "scrollOffset": {
+        "x": 0,
+        "y": 0
+      },
+      "insets": {
+        "top": 0,
+        "right": 0,
+        "bottom": 0,
+        "left": 0
+      },
+      "systemBars": "excluded"
+    }
+  },
+  "resources": {
+    "snapshotId": "resources_synthetic",
+    "sha256": "0bb106f87cc8293727acee68c32d4a5bd83d44690ab1020b6301bdbaf6c502d9",
+    "componentRegistryRevision": "1",
+    "tokenRegistryRevision": "1",
+    "selectedModes": {
+      "core": "light"
+    }
+  },
+  "root": {
+    "id": "variants-root",
+    "type": "column",
+    "layout": {
+      "width": "fill",
+      "height": "fill",
+      "spacing": 12
+    },
+    "children": [
+      {
+        "id": "variant-off",
+        "type": "component",
+        "layout": {
+          "width": "fill",
+          "height": "hug"
+        },
+        "componentReference": {
+          "id": "settings-toggle-row",
+          "version": "1"
+        },
+        "properties": {
+          "title": {
+            "type": "string",
+            "value": "Unselected option"
+          },
+          "checked": {
+            "type": "boolean",
+            "value": false
+          },
+          "disabled": {
+            "type": "boolean",
+            "value": false
+          }
+        },
+        "variant": "off",
+        "slots": {},
+        "accessibility": {
+          "role": "toggle",
+          "label": "Unselected option",
+          "state": {
+            "checked": false,
+            "disabled": false
+          },
+          "evidence": "declared-intent"
+        },
+        "behavior": {
+          "status": "declared",
+          "critical": false,
+          "intent": "update-demo-state",
+          "stateField": "variant-off",
+          "value": {
+            "type": "boolean",
+            "value": false
+          },
+          "simulatedOnly": true
+        }
+      },
+      {
+        "id": "variant-on",
+        "type": "component",
+        "layout": {
+          "width": "fill",
+          "height": "hug"
+        },
+        "componentReference": {
+          "id": "settings-toggle-row",
+          "version": "1"
+        },
+        "properties": {
+          "title": {
+            "type": "string",
+            "value": "Selected option"
+          },
+          "checked": {
+            "type": "boolean",
+            "value": true
+          },
+          "disabled": {
+            "type": "boolean",
+            "value": false
+          }
+        },
+        "variant": "on",
+        "slots": {
+          "trailing": [
+            {
+              "id": "slot-badge",
+              "type": "shape",
+              "shape": "ellipse",
+              "layout": {
+                "width": 8,
+                "height": 8
+              },
+              "appearance": {
+                "fill": {
+                  "token": "color.accent"
+                }
+              }
+            }
+          ]
+        },
+        "accessibility": {
+          "role": "toggle",
+          "label": "Selected option",
+          "state": {
+            "checked": true,
+            "disabled": false
+          },
+          "evidence": "declared-intent"
+        },
+        "behavior": {
+          "status": "declared",
+          "critical": false,
+          "intent": "update-demo-state",
+          "stateField": "variant-on",
+          "value": {
+            "type": "boolean",
+            "value": true
+          },
+          "simulatedOnly": true
+        }
+      },
+      {
+        "id": "variant-disabled",
+        "type": "component",
+        "layout": {
+          "width": "fill",
+          "height": "hug"
+        },
+        "componentReference": {
+          "id": "settings-toggle-row",
+          "version": "1"
+        },
+        "properties": {
+          "title": {
+            "type": "string",
+            "value": "Disabled selected option"
+          },
+          "checked": {
+            "type": "boolean",
+            "value": true
+          },
+          "disabled": {
+            "type": "boolean",
+            "value": true
+          }
+        },
+        "variant": "disabled-on",
+        "slots": {},
+        "accessibility": {
+          "role": "toggle",
+          "label": "Disabled selected option",
+          "state": {
+            "checked": true,
+            "disabled": true
+          },
+          "evidence": "declared-intent"
+        },
+        "behavior": {
+          "status": "declared",
+          "critical": false,
+          "intent": "update-demo-state",
+          "stateField": "variant-disabled",
+          "value": {
+            "type": "boolean",
+            "value": true
+          },
+          "simulatedOnly": true
+        }
+      }
+    ]
+  }
+}

@@ -18,6 +18,17 @@ or handoff readiness. It is not the first shared product-schema package, a CLI,
 an executable locator, or a production host adapter. The root has development
 dependencies only; the harness has no external runtime dependencies.
 
+## Implemented boundary: F01
+
+`@design-studio/contracts` is an independent shared dependency: one authoritative
+draft-07 JSON Schema graph generates public schemas and TypeScript types.
+Strict JSON/YAML shape validation does not resolve dependencies or confer
+readiness. Provider/host interfaces and opt-in labeled test fakes allow later
+packages to build independently; no production adapter is included.
+Five original synthetic fixture cases include pinned OFL font and authored
+image bytes. See DESIGN_IR.md for profile, authority, ownership and deferred
+semantic cases. Downstream packages depend on contracts, never vice versa.
+
 The remaining architecture is **planned**, based on specification sections 4.4,
 33/33A/34, 37, and 49-56. None of the following capabilities is shipped by F00.
 

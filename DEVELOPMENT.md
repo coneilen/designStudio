@@ -4,7 +4,7 @@
 
 Ratified against published package metadata and local execution on 2026-09-16.
 Root `package.json` owns development dependencies; `pnpm-workspace.yaml` names
-the only workspace package and enables strict engines/peers, exact saved versions,
+the workspace-smoke and contracts packages and enables strict engines/peers, exact saved versions,
 and explicit dependency-build approval. Automatic package-manager switching and
 automatic installs before scripts are disabled in favor of explicit errors.
 
@@ -77,9 +77,18 @@ prefix each command with `npx --yes pnpm@11.26.0` as in the README.
 | `pnpm lint` | Read-only Biome formatting/static analysis checks. |
 | `pnpm format` | Apply Biome formatting/import fixes to owned code/config; excludes source specifications and feasibility documents. |
 | `pnpm typecheck` | Check TypeScript source, tests, and Vitest configuration without emitting. |
-| `pnpm build` | Emit the smoke package's ESM JavaScript and declarations in its ignored `dist`. |
+| `pnpm build` | Check contract generation, then emit contracts and smoke ESM/declarations in ignored `dist` directories. |
+| `pnpm contracts:generate` / `contracts:check` | Generate or read-only drift-check public contracts from the single JSON Schema source. |
+| `pnpm fixtures:check` | Read-only check of the five authored synthetic foundation cases and byte manifests. |
 | `pnpm test` / `pnpm test:unit` | Run deterministic source-level unit tests once, without a watcher. |
 | `pnpm test:smoke` | Import built output in a separate Node process; run after `build`. |
+
+F01's exact package-local dependencies are Ajv `8.17.1` (strict draft-07 shape
+validation), YAML `2.8.1` (bounded YAML authoring/duplicate-key detection), and
+development-only json-schema-to-typescript `15.0.4` (declaration generation).
+They do not select production rendering/storage/provider libraries or change
+the integrated toolchain pins. No dependency build scripts are enabled.
+See DESIGN_IR.md for refinement/semantic boundaries and schema ownership.
 
 Package scripts are simple executable invocations, not bash/PowerShell command
 strings. Tests resolve Node through `process.execPath`, use argument arrays and

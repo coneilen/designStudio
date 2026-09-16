@@ -1,0 +1,72 @@
+{
+  "schemaVersion": "1.0",
+  "projectId": "project_synthetic",
+  "designId": "design_unsupported-feature",
+  "readiness": "blocked",
+  "assessments": [
+    {
+      "stage": "schema-valid",
+      "status": "pass",
+      "diagnosticIds": []
+    },
+    {
+      "stage": "dependency-resolved",
+      "status": "not-evaluated",
+      "diagnosticIds": []
+    },
+    {
+      "stage": "renderable",
+      "status": "not-evaluated",
+      "diagnosticIds": []
+    },
+    {
+      "stage": "exportable",
+      "status": "not-evaluated",
+      "diagnosticIds": []
+    },
+    {
+      "stage": "implementation-ready",
+      "status": "not-evaluated",
+      "diagnosticIds": []
+    }
+  ],
+  "diagnostics": [
+    {
+      "schemaVersion": "1.0",
+      "id": "diagnostic_unsupported-feature",
+      "code": "UNSUPPORTED_FEATURE",
+      "severity": "error",
+      "message": "Unsupported authored mask has preserved raw evidence, not an editable subtree.",
+      "operations": [
+        "render",
+        "editable-export",
+        "handoff"
+      ],
+      "nodeIds": [
+        "unsupported-root"
+      ],
+      "evidenceIds": [
+        "evidence_unsupported-feature"
+      ],
+      "recovery": "Review a supported editable redesign; do not flatten a control, text or screen."
+    }
+  ],
+  "losses": [
+    {
+      "id": "loss_complex_mask",
+      "nodeId": "unsupported-mask",
+      "pointer": "/feature",
+      "support": "unsupported",
+      "reason": "Complex mask/backdrop effects are outside M1 exact support.",
+      "operations": [
+        "render",
+        "editable-export"
+      ],
+      "recovery": "Keep raw evidence and request supported redesign or an explicit decorative-only exception.",
+      "evidenceIds": [
+        "evidence_unsupported_raw"
+      ]
+    }
+  ],
+  "waiverEventIds": []
+}

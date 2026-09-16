@@ -1,0 +1,89 @@
+{
+  "origin": "synthetic-authored-not-figma",
+  "fixtureId": "image-crop-transform",
+  "description": "Explicit source-pixel crop and independent 90-degree local affine transform.",
+  "acceptedAt": "2026-09-16T00:00:00Z",
+  "root": {
+    "id": "image-root",
+    "type": "column",
+    "layout": {
+      "width": "fill",
+      "height": "fill",
+      "spacing": 12
+    },
+    "children": [
+      {
+        "id": "crop-image",
+        "type": "image",
+        "layout": {
+          "width": 100,
+          "height": 100
+        },
+        "assetId": "asset_stripes",
+        "fit": "crop",
+        "crop": {
+          "x": 50,
+          "y": 0,
+          "width": 100,
+          "height": 100,
+          "unit": "pixel"
+        },
+        "transform": {
+          "matrix": [
+            1,
+            0,
+            0,
+            1,
+            0,
+            0
+          ],
+          "origin": {
+            "x": 0,
+            "y": 0
+          }
+        },
+        "accessibility": {
+          "role": "image",
+          "label": "Synthetic center green and blue stripes",
+          "evidence": "declared-intent"
+        }
+      },
+      {
+        "id": "rotated-image",
+        "type": "image",
+        "layout": {
+          "width": 100,
+          "height": 100
+        },
+        "assetId": "asset_stripes",
+        "fit": "crop",
+        "crop": {
+          "x": 50,
+          "y": 0,
+          "width": 100,
+          "height": 100,
+          "unit": "pixel"
+        },
+        "transform": {
+          "matrix": [
+            0,
+            1,
+            -1,
+            0,
+            0,
+            0
+          ],
+          "origin": {
+            "x": 50,
+            "y": 50
+          }
+        },
+        "accessibility": {
+          "role": "image",
+          "label": "Synthetic center green and blue stripes",
+          "evidence": "declared-intent"
+        }
+      }
+    ]
+  }
+}

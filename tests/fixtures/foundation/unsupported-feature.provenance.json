@@ -1,0 +1,248 @@
+{
+  "schemaVersion": "1.0",
+  "id": "provenance_unsupported-feature",
+  "projectId": "project_synthetic",
+  "designId": "design_unsupported-feature",
+  "nodes": {
+    "unsupported-root": {
+      "/id": {
+        "id": "provenance_unsupported-feature_0",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_unsupported-feature"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/type": {
+        "id": "provenance_unsupported-feature_1",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_unsupported-feature"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/layout/width": {
+        "id": "provenance_unsupported-feature_2",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_unsupported-feature"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/layout/height": {
+        "id": "provenance_unsupported-feature_3",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_unsupported-feature"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/layout/spacing": {
+        "id": "provenance_unsupported-feature_4",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_unsupported-feature"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      }
+    },
+    "unsupported-mask": {
+      "/id": {
+        "id": "provenance_unsupported-feature_5",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_unsupported-feature"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/type": {
+        "id": "provenance_unsupported-feature_6",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_unsupported-feature"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/layout/width": {
+        "id": "provenance_unsupported-feature_7",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_unsupported-feature"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/layout/height": {
+        "id": "provenance_unsupported-feature_8",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_unsupported-feature"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/feature": {
+        "id": "provenance_unsupported-feature_9",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_unsupported-feature"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/reason": {
+        "id": "provenance_unsupported-feature_10",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_unsupported-feature"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/evidenceStatus": {
+        "id": "provenance_unsupported-feature_11",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_unsupported-feature"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/metadata/rawSource/id": {
+        "id": "provenance_unsupported-feature_12",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_unsupported-feature"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/metadata/rawSource/sha256": {
+        "id": "provenance_unsupported-feature_13",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_unsupported-feature"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/metadata/sourceAbsoluteBounds/x": {
+        "id": "provenance_unsupported-feature_14",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_unsupported-feature"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/metadata/sourceAbsoluteBounds/y": {
+        "id": "provenance_unsupported-feature_15",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_unsupported-feature"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/metadata/sourceAbsoluteBounds/width": {
+        "id": "provenance_unsupported-feature_16",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_unsupported-feature"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/metadata/sourceAbsoluteBounds/height": {
+        "id": "provenance_unsupported-feature_17",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_unsupported-feature"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/metadata/sourceAbsoluteBounds/unit": {
+        "id": "provenance_unsupported-feature_18",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_unsupported-feature"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      }
+    }
+  },
+  "evidence": [
+    {
+      "id": "evidence_unsupported-feature",
+      "artifact": {
+        "id": "source_unsupported-feature",
+        "sha256": "0936991f83be899fe3a23901520fdcf09e0f50d67ea62bd32375996ce662960d"
+      },
+      "kind": "synthetic-authored"
+    },
+    {
+      "id": "evidence_resources",
+      "artifact": {
+        "id": "resource_authorship",
+        "sha256": "0c95793ba451636bffccae35f17b51ccca0ec6a80eb6f414fd3a10864e405214"
+      },
+      "kind": "synthetic-authored"
+    },
+    {
+      "id": "evidence_unsupported_raw",
+      "artifact": {
+        "id": "source_unsupported",
+        "sha256": "4486c69719ac419db30afa27826f1cb0774ada1ac86e22f215cbfc4867167dd6"
+      },
+      "kind": "synthetic-authored"
+    }
+  ],
+  "history": []
+}

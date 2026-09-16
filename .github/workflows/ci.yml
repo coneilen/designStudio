@@ -44,6 +44,8 @@ jobs:
         run: pnpm typecheck
       - name: Build package
         run: pnpm build
+      - name: Check foundation fixture drift
+        run: pnpm fixtures:check
       - name: Unit tests
         run: pnpm test:unit
       - name: Offline package smoke

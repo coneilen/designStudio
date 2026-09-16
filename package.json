@@ -12,13 +12,17 @@
     "lint": "biome check .",
     "format": "biome check --write .",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "build": "pnpm --filter @design-studio/workspace-smoke build",
+    "build": "pnpm --filter @design-studio/contracts build && pnpm --filter @design-studio/workspace-smoke build",
+    "contracts:generate": "pnpm --filter @design-studio/contracts generate",
+    "contracts:check": "pnpm --filter @design-studio/contracts check:generated",
+    "fixtures:check": "node tests/fixtures/foundation/generate.mjs --check",
     "test": "vitest run --project unit",
     "test:unit": "vitest run --project unit",
     "test:smoke": "vitest run --project smoke"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.12",
+    "@design-studio/contracts": "workspace:*",
     "@design-studio/workspace-smoke": "workspace:*",
     "@types/node": "24.13.4",
     "typescript": "7.0.2",

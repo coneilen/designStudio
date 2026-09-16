@@ -1,0 +1,320 @@
+{
+  "schemaVersion": "1.0",
+  "id": "foundation_fixtures_v1",
+  "provenance": "Original synthetic authored fixture structures, not P02 DOM probes or real Figma/app content. ABeeZee font unmodified from pinned public OFL source; every other generated asset/structure MIT. Schema-only examples never confer approval or render/capture proof.",
+  "files": [
+    {
+      "id": "font_abeezee_regular",
+      "path": "assets/ABeeZee-Regular.ttf",
+      "mediaType": "font/ttf",
+      "byteLength": 46016,
+      "sha256": "2901c8df256648cc2bb2e3afb381cb8d28e65ed3dbe11de20695ae4d5ffdeda9"
+    },
+    {
+      "id": "license_ofl",
+      "path": "assets/OFL.txt",
+      "mediaType": "text/plain",
+      "byteLength": 4516,
+      "sha256": "f0376d04eb58fb19e9f1690a99a1eb37380ad0246f7d503f2abd8e8a74ed12be"
+    },
+    {
+      "id": "license_synthetic",
+      "path": "LICENSE.txt",
+      "mediaType": "text/plain",
+      "byteLength": 1330,
+      "sha256": "0d93b98a7219472df0761b797fa3a488520a77ee5e4abcaf6d5747dee102dfb4"
+    },
+    {
+      "id": "fixture_assets_stripes_png",
+      "path": "assets/stripes.png",
+      "mediaType": "image/png",
+      "byteLength": 504,
+      "sha256": "0074ca9803f951ff777598b3a162c19cbea0a7b829e86f0d53340ad87643281d"
+    },
+    {
+      "id": "fixture_resource_authorship_json",
+      "path": "resource-authorship.json",
+      "mediaType": "application/json",
+      "byteLength": 851,
+      "sha256": "0c95793ba451636bffccae35f17b51ccca0ec6a80eb6f414fd3a10864e405214"
+    },
+    {
+      "id": "fixture_resources_json",
+      "path": "resources.json",
+      "mediaType": "application/json",
+      "byteLength": 24119,
+      "sha256": "0bb106f87cc8293727acee68c32d4a5bd83d44690ab1020b6301bdbaf6c502d9"
+    },
+    {
+      "id": "fixture_unsupported_source_json",
+      "path": "unsupported-source.json",
+      "mediaType": "application/json",
+      "byteLength": 366,
+      "sha256": "4486c69719ac419db30afa27826f1cb0774ada1ac86e22f215cbfc4867167dd6"
+    },
+    {
+      "id": "fixture_settings_screen_source_json",
+      "path": "settings-screen.source.json",
+      "mediaType": "application/json",
+      "byteLength": 4379,
+      "sha256": "917c498c00a39befcc1012557cfc92114a4ea83a43107386f0eb538f38ea3d87"
+    },
+    {
+      "id": "fixture_settings_screen_design_json",
+      "path": "settings-screen.design.json",
+      "mediaType": "application/json",
+      "byteLength": 5061,
+      "sha256": "8f6ef59bde42a0a062a3f31a1dc7f414a1fe32a78aa32adf5979b288de6c5813"
+    },
+    {
+      "id": "fixture_settings_screen_provenance_json",
+      "path": "settings-screen.provenance.json",
+      "mediaType": "application/json",
+      "byteLength": 32073,
+      "sha256": "38311c4eb89557f0bda3d76b35653a615a33da5718bf682c8a42aded04503b35"
+    },
+    {
+      "id": "fixture_settings_screen_diagnostics_json",
+      "path": "settings-screen.diagnostics.json",
+      "mediaType": "application/json",
+      "byteLength": 1292,
+      "sha256": "7c7c2fdcaea955017c8fe9584118eecae015243e9bff74297e4444c171d12bf0"
+    },
+    {
+      "id": "fixture_mixed_styled_text_source_json",
+      "path": "mixed-styled-text.source.json",
+      "mediaType": "application/json",
+      "byteLength": 2420,
+      "sha256": "895e914705d085a6d10ad89f720924d715e8bb93f4b9d8471c496f01e05ceb29"
+    },
+    {
+      "id": "fixture_mixed_styled_text_design_json",
+      "path": "mixed-styled-text.design.json",
+      "mediaType": "application/json",
+      "byteLength": 3116,
+      "sha256": "e5e331e600f740f92ab4836917ed06c0f71675f52693e9185ba97ab76ee91227"
+    },
+    {
+      "id": "fixture_mixed_styled_text_provenance_json",
+      "path": "mixed-styled-text.provenance.json",
+      "mediaType": "application/json",
+      "byteLength": 18779,
+      "sha256": "1b688cf0daa102042e34bf03fa594affedbc3e47921ed1e1dc5687d6a2dc6639"
+    },
+    {
+      "id": "fixture_mixed_styled_text_diagnostics_json",
+      "path": "mixed-styled-text.diagnostics.json",
+      "mediaType": "application/json",
+      "byteLength": 1296,
+      "sha256": "2f641faa03a81e376c9b367cdac1912c5cc2cf4707e3b106f0fbc253da721ba3"
+    },
+    {
+      "id": "fixture_image_crop_transform_source_json",
+      "path": "image-crop-transform.source.json",
+      "mediaType": "application/json",
+      "byteLength": 1897,
+      "sha256": "240c159ae4a95571090a3aaea6956d449474a2e7a2a091d341944dccb75f1ce3"
+    },
+    {
+      "id": "fixture_image_crop_transform_design_json",
+      "path": "image-crop-transform.design.json",
+      "mediaType": "application/json",
+      "byteLength": 2598,
+      "sha256": "bbaefcec93fe6e76f553a4d25c59b0997df05c31b5cbb43fa9140e7a981776f2"
+    },
+    {
+      "id": "fixture_image_crop_transform_provenance_json",
+      "path": "image-crop-transform.provenance.json",
+      "mediaType": "application/json",
+      "byteLength": 17501,
+      "sha256": "d1131d50a7866c49317d1828c343da4ee166bfb9caa32fb01e487206f58daf4c"
+    },
+    {
+      "id": "fixture_image_crop_transform_diagnostics_json",
+      "path": "image-crop-transform.diagnostics.json",
+      "mediaType": "application/json",
+      "byteLength": 1304,
+      "sha256": "3ba4cd5a77b54efef32229ff416ab9dd16a1f458171dae1e21f1c7623e0d0d36"
+    },
+    {
+      "id": "fixture_component_variants_slots_source_json",
+      "path": "component-variants-slots.source.json",
+      "mediaType": "application/json",
+      "byteLength": 4364,
+      "sha256": "11f6a7ca7709f8d71e29f22dda9d267fdcd39f567dc5efdb8743c4b20f575ec0"
+    },
+    {
+      "id": "fixture_component_variants_slots_design_json",
+      "path": "component-variants-slots.design.json",
+      "mediaType": "application/json",
+      "byteLength": 5069,
+      "sha256": "f128944318f073e79dd3fe6d90bf37e0a78302501106e27bf010c3a1818ae26b"
+    },
+    {
+      "id": "fixture_component_variants_slots_provenance_json",
+      "path": "component-variants-slots.provenance.json",
+      "mediaType": "application/json",
+      "byteLength": 31317,
+      "sha256": "9e12cc5b9491f3fd7d1fe65a847abb6da9688e8fc2aaa093d609f945af0e112a"
+    },
+    {
+      "id": "fixture_component_variants_slots_diagnostics_json",
+      "path": "component-variants-slots.diagnostics.json",
+      "mediaType": "application/json",
+      "byteLength": 1319,
+      "sha256": "7e5ef8f79629e9f7d7e6533ede7212d0ceeeab55d96283c6d0e434c80401a022"
+    },
+    {
+      "id": "fixture_unsupported_feature_source_json",
+      "path": "unsupported-feature.source.json",
+      "mediaType": "application/json",
+      "byteLength": 1102,
+      "sha256": "0936991f83be899fe3a23901520fdcf09e0f50d67ea62bd32375996ce662960d"
+    },
+    {
+      "id": "fixture_unsupported_feature_design_json",
+      "path": "unsupported-feature.design.json",
+      "mediaType": "application/json",
+      "byteLength": 1797,
+      "sha256": "03966357c9df29476917b85ee0c94a0de11e811623ac4138d4837ba6d27cc429"
+    },
+    {
+      "id": "fixture_unsupported_feature_provenance_json",
+      "path": "unsupported-feature.provenance.json",
+      "mediaType": "application/json",
+      "byteLength": 7509,
+      "sha256": "73eb5e878062a672bd35e4356cd5fb6dd3ab18f359e1b0365f4872c17469e566"
+    },
+    {
+      "id": "fixture_unsupported_feature_diagnostics_json",
+      "path": "unsupported-feature.diagnostics.json",
+      "mediaType": "application/json",
+      "byteLength": 1787,
+      "sha256": "4e0300e489d40d8ebf7732b62294f21d5e7fd3f6ccbd3b491099b35c58ba017a"
+    },
+    {
+      "id": "fixture_contract_examples_json",
+      "path": "contract-examples.json",
+      "mediaType": "application/json",
+      "byteLength": 72977,
+      "sha256": "600d472281bb2674f44bf68189bc073bda6e0478cf1e33a60ab43e36d4ba393a"
+    }
+  ],
+  "cases": [
+    {
+      "id": "settings-screen",
+      "design": "settings-screen.design.json",
+      "resources": "resources.json",
+      "provenance": "settings-screen.provenance.json",
+      "diagnostics": "settings-screen.diagnostics.json",
+      "semanticExpectations": [
+        {
+          "id": "case_settings-screen",
+          "owner": "F02",
+          "requirement": "Typed visual components and tokens; no target application or behavior implementation.",
+          "expected": "Resolve declared closure, stable IDs, typed values and layout without hidden dependencies.",
+          "evidence": "contract-only-not-executed"
+        },
+        {
+          "id": "render_settings-screen",
+          "owner": "F06",
+          "requirement": "Use pinned font/image bytes; record profile, bounds, transforms and losses.",
+          "expected": "Exercise the fixed static case with no network, font synthesis or implicit fallback.",
+          "evidence": "contract-only-not-executed"
+        }
+      ]
+    },
+    {
+      "id": "mixed-styled-text",
+      "design": "mixed-styled-text.design.json",
+      "resources": "resources.json",
+      "provenance": "mixed-styled-text.provenance.json",
+      "diagnostics": "mixed-styled-text.diagnostics.json",
+      "semanticExpectations": [
+        {
+          "id": "case_mixed-styled-text",
+          "owner": "F02",
+          "requirement": "Half-open UTF-16 styled ranges; all runs use only provided normal 400 face.",
+          "expected": "Resolve declared closure, stable IDs, typed values and layout without hidden dependencies.",
+          "evidence": "contract-only-not-executed"
+        },
+        {
+          "id": "render_mixed-styled-text",
+          "owner": "F06",
+          "requirement": "Use pinned font/image bytes; record profile, bounds, transforms and losses.",
+          "expected": "Exercise the fixed static case with no network, font synthesis or implicit fallback.",
+          "evidence": "contract-only-not-executed"
+        }
+      ]
+    },
+    {
+      "id": "image-crop-transform",
+      "design": "image-crop-transform.design.json",
+      "resources": "resources.json",
+      "provenance": "image-crop-transform.provenance.json",
+      "diagnostics": "image-crop-transform.diagnostics.json",
+      "semanticExpectations": [
+        {
+          "id": "case_image-crop-transform",
+          "owner": "F02",
+          "requirement": "Explicit source-pixel crop and independent 90-degree local affine transform.",
+          "expected": "Resolve declared closure, stable IDs, typed values and layout without hidden dependencies.",
+          "evidence": "contract-only-not-executed"
+        },
+        {
+          "id": "render_image-crop-transform",
+          "owner": "F06",
+          "requirement": "Use pinned font/image bytes; record profile, bounds, transforms and losses.",
+          "expected": "Exercise the fixed static case with no network, font synthesis or implicit fallback.",
+          "evidence": "contract-only-not-executed"
+        }
+      ]
+    },
+    {
+      "id": "component-variants-slots",
+      "design": "component-variants-slots.design.json",
+      "resources": "resources.json",
+      "provenance": "component-variants-slots.provenance.json",
+      "diagnostics": "component-variants-slots.diagnostics.json",
+      "semanticExpectations": [
+        {
+          "id": "case_component-variants-slots",
+          "owner": "F02",
+          "requirement": "Checked versus disabled, definition-local node identity and named trailing slot.",
+          "expected": "Resolve declared closure, stable IDs, typed values and layout without hidden dependencies.",
+          "evidence": "contract-only-not-executed"
+        },
+        {
+          "id": "render_component-variants-slots",
+          "owner": "F06",
+          "requirement": "Use pinned font/image bytes; record profile, bounds, transforms and losses.",
+          "expected": "Exercise the fixed static case with no network, font synthesis or implicit fallback.",
+          "evidence": "contract-only-not-executed"
+        }
+      ]
+    },
+    {
+      "id": "unsupported-feature",
+      "design": "unsupported-feature.design.json",
+      "resources": "resources.json",
+      "provenance": "unsupported-feature.provenance.json",
+      "diagnostics": "unsupported-feature.diagnostics.json",
+      "semanticExpectations": [
+        {
+          "id": "case_unsupported-feature",
+          "owner": "F02",
+          "requirement": "Preserved authored source, no image crop fallback or invented editable children.",
+          "expected": "Unsupported preserved; strict editable export blocked.",
+          "evidence": "contract-only-not-executed"
+        },
+        {
+          "id": "render_unsupported-feature",
+          "owner": "F06",
+          "requirement": "Use pinned font/image bytes; record profile, bounds, transforms and losses.",
+          "expected": "Explicit inspection placeholder or typed unsupported result; no exact render claim.",
+          "evidence": "contract-only-not-executed"
+        }
+      ]
+    }
+  ]
+}
