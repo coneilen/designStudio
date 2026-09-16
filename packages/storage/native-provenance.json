@@ -1,0 +1,17 @@
+{
+  "package": "better-sqlite3",
+  "version": "12.8.0",
+  "license": "MIT",
+  "packageShasum": "ec9ccd4a426a35f3b9355c147af6c92a6ddd6862",
+  "node": "24.21.0",
+  "abi": "137",
+  "platform": "win32",
+  "arch": "x64",
+  "url": "https://github.com/WiseLibs/better-sqlite3/releases/download/v12.8.0/better-sqlite3-v12.8.0-node-v137-win32-x64.tar.gz",
+  "archiveBytes": 1028637,
+  "archiveSha256": "cf91c2200c721b717a0562ecb399f60575566c5507e72426c96fb85ad2dd3d57",
+  "archiveDigestSource": "GitHub release asset digest, retrieved 2026-09-16",
+  "entry": "build/Release/better_sqlite3.node",
+  "binarySha256": "194c049b8781c3ca39f7e12b4f4a47c79027502b366151404ae8847fe6e2a9a1",
+  "binaryDigestSource": "Locally measured after published-archive SHA256 verification; not a separate upstream signature"
+}
