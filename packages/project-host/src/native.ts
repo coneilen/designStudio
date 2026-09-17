@@ -13,6 +13,7 @@ export interface Lease {
   close(): void;
 }
 export interface ReadLease extends Lease {
+  readonly byteLength: number;
   read(buffer: Buffer): number;
 }
 export interface InstallationEntry extends Lease {
@@ -584,9 +585,28 @@ async function load(): Promise<Native> {
       );
     }
     let closed = false;
+    let byteLength: number;
+    try {
+      const info = Buffer.alloc(52);
+      if (!getInfo(handle, info))
+        throw failure("GetFileInformationByHandle(length)");
+      byteLength = Number(
+        (BigInt(info.readUInt32LE(32)) << 32n) | BigInt(info.readUInt32LE(36)),
+      );
+      if (!Number.isSafeInteger(byteLength))
+        refuse("Native file length exceeds safe integer bounds.");
+    } catch (error) {
+      return preserving(
+        () => {
+          throw error;
+        },
+        () => close(handle),
+      );
+    }
     return {
       handle,
       identity,
+      byteLength,
       read(buffer) {
         if (
           closed ||

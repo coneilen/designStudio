@@ -36,6 +36,7 @@ export interface FixtureInstallationLease {
   readonly paths: FixtureInstallationPaths;
   readonly identity: string;
   recheck(): Promise<void>;
+  checkCurrent(): Promise<void>;
   close(): Promise<void>;
 }
 interface ReleasePolicy {
@@ -196,6 +197,7 @@ async function verifyTree(
   root: string,
   files: readonly InventoryFile[],
   sid?: string,
+  hashBytes = true,
 ): Promise<Verified> {
   const leases: ReadLease[] = [];
   try {
@@ -228,7 +230,9 @@ async function verifyTree(
           )
         : native.pinRead(filename, false);
       leases.push(lease);
-      checkHash(lease, file);
+      if (lease.byteLength !== file.bytes)
+        refuse("Installation file length differs from the reviewed release.");
+      if (hashBytes) checkHash(lease, file);
     }
     return {
       files: files.map((file) => physical(root, file.path)),
@@ -547,45 +551,53 @@ export async function verifyInstalledRoot(
     let closed = false;
     let closing = false;
     const state = { files: held.files, root, live: true, guards: 0 };
+    const checkpoint = async (hashBytes: boolean): Promise<void> => {
+      if (closed || closing || native.principal() !== sid)
+        refuse("Installation lease is closed or principal changed.");
+      const checked = await verifyTree(
+        native,
+        root,
+        allFiles(meta),
+        sid,
+        hashBytes,
+      );
+      await withLeases(checked.leases, async () => {
+        if (
+          checked.identities.length !== held.identities.length ||
+          checked.identities.some(
+            (identity, index) =>
+              !held.identities[index] ||
+              !same(identity, held.identities[index]),
+          ) ||
+          !(await boundedFile(receiptPath, 4096)).equals(receiptBytes)
+        )
+          refuse("Installation identity/registration changed.");
+        for (const ancestor of parent.leases) {
+          const check = native.inspect(
+            ancestor.identity.path,
+            ancestor.identity.path !== receiptPath,
+            ancestor.identity.path.startsWith(
+              path.join(native.localAppData(), "DesignStudio"),
+            )
+              ? sid
+              : undefined,
+          );
+          await withLeases([check], async () => {
+            if (!same(check.identity, ancestor.identity))
+              refuse("Installation ancestor changed.");
+          });
+        }
+        if (closed || closing)
+          refuse("Installation lease closed during recheck.");
+        if (native.principal() !== sid)
+          refuse("Native principal changed during installation recheck.");
+      });
+    };
     const lease: FixtureInstallationLease = Object.freeze({
       paths: paths(root),
       identity: meta.identity,
-      async recheck() {
-        if (closed || closing || native.principal() !== sid)
-          refuse("Installation lease is closed or principal changed.");
-        const checked = await verifyTree(native, root, allFiles(meta), sid);
-        await withLeases(checked.leases, async () => {
-          if (
-            checked.identities.length !== held.identities.length ||
-            checked.identities.some(
-              (identity, index) =>
-                !held.identities[index] ||
-                !same(identity, held.identities[index]),
-            ) ||
-            !(await boundedFile(receiptPath, 4096)).equals(receiptBytes)
-          )
-            refuse("Installation identity/registration changed.");
-          for (const ancestor of parent.leases) {
-            const check = native.inspect(
-              ancestor.identity.path,
-              ancestor.identity.path !== receiptPath,
-              ancestor.identity.path.startsWith(
-                path.join(native.localAppData(), "DesignStudio"),
-              )
-                ? sid
-                : undefined,
-            );
-            await withLeases([check], async () => {
-              if (!same(check.identity, ancestor.identity))
-                refuse("Installation ancestor changed.");
-            });
-          }
-          if (closed || closing)
-            refuse("Installation lease closed during recheck.");
-          if (native.principal() !== sid)
-            refuse("Native principal changed during installation recheck.");
-        });
-      },
+      recheck: () => checkpoint(true),
+      checkCurrent: () => checkpoint(false),
       async close() {
         if (closed) return;
         if (state.guards)

@@ -1,4 +1,11 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import {
+  link,
+  mkdir,
+  readFile,
+  rename,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 import { expect, test, vi } from "vitest";
 import {
@@ -106,6 +113,182 @@ async function ownedInstallation(
   });
 }
 const windows = test.skipIf(process.platform !== "win32");
+windows(
+  "checkCurrent keeps all fresh native checks but skips only continuously pinned file reads",
+  async () => {
+    await ownedInstallation(async (root) => {
+      const release = await candidate(root);
+      const entry = await installCandidate(
+        release.root,
+        release.manifest,
+        release.bootstrap,
+      );
+      const native = await loadNative();
+      const real = native.pinInstallation.bind(native);
+      let reads = 0;
+      const visits: string[] = [];
+      const ancestors: string[] = [];
+      const inspect = native.inspect.bind(native);
+      const inspectSpy = vi
+        .spyOn(native, "inspect")
+        .mockImplementation((...args) => {
+          ancestors.push(args[0]);
+          return inspect(...args);
+        });
+      const spy = vi
+        .spyOn(native, "pinInstallation")
+        .mockImplementation((...args) => {
+          visits.push(args[0]);
+          const pin = real(...args);
+          return {
+            ...pin,
+            read(buffer) {
+              reads++;
+              return pin.read(buffer);
+            },
+          };
+        });
+      const lease = await verifyInstalledRoot(
+        path.dirname(path.dirname(entry)),
+      );
+      try {
+        expect(reads).toBeGreaterThan(0);
+        reads = 0;
+        visits.length = 0;
+        ancestors.length = 0;
+        await lease.recheck();
+        expect(reads).toBeGreaterThan(0);
+        const fullPaths = [...visits];
+        const fullAncestors = [...ancestors];
+        reads = 0;
+        visits.length = 0;
+        ancestors.length = 0;
+        await lease.checkCurrent();
+        expect(reads).toBe(0);
+        expect(visits).toEqual(fullPaths);
+        expect(ancestors).toEqual(fullAncestors);
+        await expect(
+          writeFile(lease.paths.cliEntry, "tamper"),
+        ).rejects.toThrow();
+        await expect(
+          rename(lease.paths.cliEntry, `${lease.paths.cliEntry}.replaced`),
+        ).rejects.toThrow();
+        const alias = path.join(root, "owned-hardlink-alias");
+        await expect(link(lease.paths.cliEntry, alias)).rejects.toThrow();
+        await Promise.all(
+          Array.from({ length: 9 }, () => lease.checkCurrent()),
+        );
+        expect(reads).toBe(0);
+        const pending = lease.checkCurrent();
+        await lease.close();
+        await expect(pending).rejects.toThrow(/closed/);
+        await expect(lease.checkCurrent()).rejects.toThrow(/closed/);
+      } finally {
+        await lease.close();
+        spy.mockRestore();
+        inspectSpy.mockRestore();
+      }
+    });
+  },
+);
+
+windows(
+  "checkCurrent detects fresh namespace registration and ACL tamper despite retained byte pins",
+  async () => {
+    await ownedInstallation(async (root) => {
+      const release = await candidate(root);
+      const entry = await installCandidate(
+        release.root,
+        release.manifest,
+        release.bootstrap,
+      );
+      const installed = path.dirname(path.dirname(entry));
+      const lease = await verifyInstalledRoot(installed);
+      try {
+        const receipt = path.join(path.dirname(installed), "registration.json");
+        const bytes = await readFile(receipt);
+        await writeFile(receipt, Buffer.concat([bytes, Buffer.of(32)]));
+        await expect(lease.checkCurrent()).rejects.toThrow(
+          /registration changed/,
+        );
+        await writeFile(receipt, bytes);
+        await weakenTestAcl(root, installed, false, true);
+        const extra = path.join(installed, "unexpected.js");
+        await writeFile(extra, "unexpected");
+        await weakenTestAcl(root, installed, false, true, true);
+        await expect(lease.checkCurrent()).rejects.toThrow(/extra/);
+        await weakenTestAcl(root, installed, false, true);
+        await unlink(extra);
+        await weakenTestAcl(root, installed, false, true, true);
+        await weakenTestAcl(root, lease.paths.cliEntry, true);
+        await expect(lease.checkCurrent()).rejects.toThrow(/DACL/);
+      } finally {
+        await lease.close();
+      }
+    });
+  },
+);
+
+windows(
+  "checkCurrent revalidates ancestors principal native identity and original lengths",
+  async () => {
+    await ownedInstallation(async (root) => {
+      const release = await candidate(root);
+      const entry = await installCandidate(
+        release.root,
+        release.manifest,
+        release.bootstrap,
+      );
+      const native = await loadNative();
+      const lease = await verifyInstalledRoot(
+        path.dirname(path.dirname(entry)),
+      );
+      const real = native.pinInstallation.bind(native);
+      let fault: "length" | "identity" | undefined;
+      const spy = vi
+        .spyOn(native, "pinInstallation")
+        .mockImplementation((...args) => {
+          const pin = real(...args);
+          if (args[0] !== lease.paths.cliEntry) return pin;
+          if (fault === "length")
+            return { ...pin, byteLength: pin.byteLength + 1 };
+          if (fault === "identity")
+            return {
+              ...pin,
+              identity: { ...pin.identity, file: "injected-foreign-file" },
+            };
+          return pin;
+        });
+      try {
+        fault = "length";
+        await expect(lease.checkCurrent()).rejects.toThrow(/length/);
+        fault = "identity";
+        await expect(lease.checkCurrent()).rejects.toThrow(/identity/);
+        fault = undefined;
+        const principal = vi
+          .spyOn(native, "principal")
+          .mockReturnValue("S-1-5-18");
+        try {
+          await expect(lease.checkCurrent()).rejects.toThrow(/principal/);
+        } finally {
+          principal.mockRestore();
+        }
+        const ancestor = path.join(root, "DesignStudio");
+        await weakenTestAcl(root, ancestor, true);
+        try {
+          await expect(lease.checkCurrent()).rejects.toThrow(/DACL/);
+        } finally {
+          await weakenTestAcl(root, ancestor, false, true);
+        }
+        await lease.checkCurrent();
+      } finally {
+        spy.mockRestore();
+        await lease.close();
+      }
+    });
+  },
+);
+
 test("production verifier without a selected installed bootstrap stays action-required", async () => {
   await expect(verifyFixtureInstallation()).rejects.toMatchObject({
     code:
@@ -305,6 +488,7 @@ windows(
         expect(() => registerFixtureInstallationGuards(lease)).toThrow(
           /live native/,
         );
+        await expect(lease.checkCurrent()).rejects.toThrow(/closed/);
         await lease.close();
       } finally {
         spy.mockRestore();

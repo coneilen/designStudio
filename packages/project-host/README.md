@@ -482,3 +482,44 @@ a frozen outer restore using another store does not necessarily populate them.
 Use approved existing quiescent locations rather than merging database indexes.
 Nested restore failures include bounded code, stdout and stderr while preserving
 the original cause; pnpm often reports missing offline metadata on stdout.
+
+### Current continuously pinned installation checkpoint
+
+`FixtureInstallationLease.checkCurrent(): Promise<void>` is an explicit
+metadata/current-state checkpoint after full startup verification. It shares
+the same verification path as `recheck()`: bounded exact directory inventory;
+fresh native opens of every expected file/directory; owner and exact protected
+DACL (including the browser-only reader exception); final path, volume/file
+identity, kind, reparse/single-link rules and local fixed NTFS; original manifest
+file lengths; bounded reread/comparison of the mutable registration record;
+ancestor identities/ACLs; principal and closed/closing state before and after
+asynchronous work. It is not a WeakMap liveness-only or guard-registration check.
+
+The sole omission is rereading/hashing the already verified payload files,
+including their pinned inventory/policy files. Full startup verification and
+`recheck()` still stream/hash all bytes. The original manifest snapshot and
+startup native handles remain owned and continuously retained with read-only
+sharing, denying ordinary Win32 write/truncate/delete/replacement access.
+The checkpoint compares the freshly opened identities and original lengths
+to those retained startup observations. Registration handles permit writes,
+so their bounded byte comparison is **never omitted**. Directory sharing does
+not freeze namespaces or DACLs, hence those checks remain fresh on every call.
+
+This optimization inherits the explicit trusted installation/writer/OS boundary:
+it does not detect raw-volume/kernel tampering or hostile writable mappings that
+bypass normal file sharing, nor claim a hostile-current-user/admin sandbox.
+There is no TTL, cached-success reuse, coalescing, authorization minting or
+deadline/budget change. Resolver guards remain separately required and held
+through actual quiescence. Closing/failing to close a lease invalidates both
+checkpoint methods; overlapping closure is checked before returning.
+
+Native fixture tests compare full/current visited file and ancestor paths,
+observe positive native read counters during startup/full recheck and zero
+payload reads during current checks, exercise nine concurrent checks and
+close-during-check, and verify actual write/rename denial and fresh namespace,
+ACL and registration-tamper rejection. Native length/identity and principal
+faults are separately labeled injected cases. No full installed-candidate timing
+is claimed from these small fixtures. F08 will measure three serial current
+checks and one nine-concurrent batch, separately from a full rehash sample,
+inside its next otherwise-required owned actual-candidate run. Report individual
+and maximum durations, not a statistical percentile or sub-five-second guarantee.

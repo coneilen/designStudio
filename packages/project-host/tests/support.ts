@@ -77,6 +77,7 @@ export async function weakenTestAcl(
   filename: string,
   nullDacl = false,
   restoreOwner = false,
+  readonlyOwner = false,
 ): Promise<void> {
   const relative = path.relative(root, filename);
   if (
@@ -109,7 +110,7 @@ export async function weakenTestAcl(
   if (
     !convert(
       restoreOwner
-        ? `D:P(A;OICI;FA;;;${sid})(A;OICI;FA;;;SY)`
+        ? `D:P(A;OICI;${readonlyOwner ? "FRFX" : "FA"};;;${sid})(A;OICI;FA;;;SY)`
         : nullDacl
           ? "D:NO_ACCESS_CONTROL"
           : "D:P(A;OICI;FA;;;WD)",
