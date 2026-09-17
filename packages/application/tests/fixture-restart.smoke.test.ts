@@ -109,6 +109,56 @@ it.runIf(process.platform === "win32" && process.arch === "x64")(
         duringRecheck = () => {};
         const result = await application.call(accept);
         expect(await application.call(accept)).toEqual(result);
+        const retained = structuredClone(result);
+        if (
+          result.kind !== "json" ||
+          !result.envelope.success ||
+          result.envelope.data.kind !== "revision"
+        )
+          throw new Error("Expected accepted fixture.");
+        const original = result.envelope.data;
+        original.design.resources.sha256 = "f".repeat(64);
+        original.design.resources.selectedModes.core = "caller_mode";
+        original.design.root.id = "caller_node";
+        original.revision.resources.sha256 = "e".repeat(64);
+        original.revision.resources.selectedModes.core = "caller_revision_mode";
+        original.revision.content.sha256 = "d".repeat(64);
+        if (original.warnings[0]) {
+          original.warnings[0].message = "caller_warning";
+          original.warnings[0].evidenceIds.push("caller_evidence");
+        }
+        original.warnings.push({
+          schemaVersion: "1.0",
+          id: "caller_added",
+          code: "INVALID_INPUT",
+          severity: "error",
+          message: "Caller changed returned warnings.",
+          operations: [],
+          nodeIds: [],
+          evidenceIds: [],
+          recovery: "none",
+        });
+        if (original.receipt?.outputs[0])
+          original.receipt.outputs[0].sha256 = "c".repeat(64);
+        expect(await application.call(accept)).toEqual(retained);
+        const unaffected = await application.call({
+          operation: "getDesign",
+          projectId: PROJECT_ID,
+          id: "design_settings-screen",
+          requestId: "read_after_mutation",
+          parameters: { branch: "main" },
+        });
+        if (
+          unaffected.kind !== "json" ||
+          !unaffected.envelope.success ||
+          unaffected.envelope.data.kind !== "revision"
+        )
+          throw new Error("Expected independently owned read.");
+        expect(unaffected.envelope.data.design.resources.sha256).toBe(
+          "0bb106f87cc8293727acee68c32d4a5bd83d44690ab1020b6301bdbaf6c502d9",
+        );
+        unaffected.envelope.data.revision.resources.sha256 = "a".repeat(64);
+        unaffected.envelope.data.design.resources.sha256 = "b".repeat(64);
         await expect(
           application.call({
             ...accept,
@@ -123,7 +173,7 @@ it.runIf(process.platform === "win32" && process.arch === "x64")(
         expect(await application.close()).toBe(true);
         binding = await registry.openFixtureProject(PROJECT_ID);
         application = await open();
-        expect(await application.call(accept)).toEqual(result);
+        expect(await application.call(accept)).toEqual(retained);
         const head = await application.call({
           operation: "getDesign",
           projectId: PROJECT_ID,

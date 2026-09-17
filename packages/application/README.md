@@ -89,6 +89,13 @@ vault, app installation, arbitrary file import or live user-data workflow exists
 
 ## Boundary conventions
 
+Validated success envelopes and final facade JSON/binary results are detached
+snapshots. Callers may mutate returned designs, resource locks, revision metadata,
+diagnostics or receipt descriptors without altering the installed fixture policy,
+canonical accepted bytes, or later authorization/discovery decisions. Validation
+alone does not provide object ownership; the return boundary explicitly copies
+nested state and never freezes caller-owned inputs.
+
 HTTP authenticates exact loopback Host/peer and raw singleton headers before
 dispatch. CLI bearer rejects browser Origin/Cookie/Fetch-Metadata; cookie mode
 requires exact Origin even for GET and independent CSRF for unsafe methods.

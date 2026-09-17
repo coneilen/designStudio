@@ -58,7 +58,7 @@ export function success(
     !validateContract("FoundationVersionedJobResponse", envelope).success
   )
     throw new ApplicationError("INTERNAL_ERROR", 500);
-  return checked.value;
+  return structuredClone(checked.value);
 }
 export function failure(
   requestId: string,

@@ -130,6 +130,28 @@ it
         )
           throw new Error(JSON.stringify(accepted));
         const revision = accepted.envelope.data.revision;
+        const acceptedIdentity = structuredClone(revision);
+        const replay = await application.call({
+          operation: "acceptFixture",
+          projectId: PROJECT_ID,
+          id: revision.designId,
+          requestId: `accept_${fixtureId}`,
+          parameters: {},
+          body: { fixtureId, branch: "main", base: null },
+          ifNoneMatch: "*",
+        });
+        if (
+          replay.kind !== "json" ||
+          !replay.envelope.success ||
+          replay.envelope.data.kind !== "revision"
+        )
+          throw new Error("Expected independently owned acceptance replay.");
+        replay.envelope.data.design.resources.sha256 = "f".repeat(64);
+        replay.envelope.data.design.root.id = "caller_replaced";
+        replay.envelope.data.revision.resources.selectedModes.core =
+          "caller_mode";
+        replay.envelope.data.warnings.length = 0;
+        expect(revision).toEqual(acceptedIdentity);
         expect(revision.resources.snapshotId).toBe("resources_synthetic");
         const submitted = await application.call({
           operation: "submitRender",

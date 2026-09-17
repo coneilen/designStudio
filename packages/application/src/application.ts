@@ -85,7 +85,7 @@ export function createApplication(
           throw new ApplicationError("INTERNAL_ERROR", 500);
       } else if (result.bytes.byteLength > context.budget.maxOutputBytes)
         throw new ApplicationError("OUTPUT_LIMIT", 500);
-      return result;
+      return structuredClone(result);
     },
   };
 }

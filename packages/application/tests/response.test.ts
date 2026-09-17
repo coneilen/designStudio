@@ -1,8 +1,37 @@
 import { validateContract } from "@design-studio/contracts";
 import { describe, expect, it } from "vitest";
-import { exitCode, failure, success, unwrap } from "../src/response.js";
+import {
+  draftWarning,
+  exitCode,
+  failure,
+  success,
+  unwrap,
+} from "../src/response.js";
 
 describe("one authoritative response boundary", () => {
+  it("detaches nested diagnostics from trusted inputs without mutating or freezing them", () => {
+    const warning = draftWarning();
+    const data = {
+      kind: "version" as const,
+      cliVersion: "1.0.0",
+      contractVersion: "1.1.0",
+      apiVersion: "v1" as const,
+      warnings: [warning],
+    };
+    const envelope = success("request", data);
+    if (!envelope.success) throw new Error("Expected success.");
+    expect(envelope.data).not.toBe(data);
+    expect(envelope.data.warnings).not.toBe(data.warnings);
+    const returned = envelope.data.warnings[0];
+    if (!returned) throw new Error("Expected diagnostic.");
+    expect(returned).not.toBe(warning);
+    returned.evidenceIds.push("caller_replacement");
+    returned.message = "caller changed message";
+    expect(warning.evidenceIds).toEqual([]);
+    expect(warning.message).not.toBe(returned.message);
+    expect(Object.isFrozen(data)).toBe(false);
+    expect(Object.isFrozen(warning)).toBe(false);
+  });
   it("validates successful metadata and never accepts arbitrary data", () => {
     const result = success("request", {
       kind: "version",
