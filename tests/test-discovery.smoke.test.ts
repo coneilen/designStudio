@@ -13,7 +13,7 @@ it("collects owned unit tests without traversing workspace dependency links", as
   const { stdout } = await execute(
     process.execPath,
     [cli, "list", "--project", "unit", "--json"],
-    { cwd: root, timeout: 30_000, maxBuffer: 2_097_152 },
+    { cwd: root, timeout: 60_000, maxBuffer: 2_097_152 },
   );
   const collected: unknown = JSON.parse(stdout);
   if (!Array.isArray(collected))
@@ -33,4 +33,4 @@ it("collects owned unit tests without traversing workspace dependency links", as
     ...new Set(files.filter((file) => /[/\\]node_modules[/\\]/.test(file))),
   ];
   expect(dependencyFiles).toEqual([]);
-}, 35_000);
+}, 65_000);

@@ -167,3 +167,59 @@ single-worker diagnostic run, and the complete suite passed with two workers:
 Root Vitest now caps file workers at two to avoid competing executable-hash,
 process startup and native cleanup fixtures overwhelming one shared host.
 This does not change product deadlines, assertions, or runtime job concurrency.
+
+## F01-F08 Windows integration checkpoint (2026-09-17)
+
+The foundation packages, application facade and CLI are integrated locally.
+The final combined Windows run passed 1,354 tests, with six explicit skips
+(unsupported-host behavior and opt-in installation, diagnostic and performance
+cases). Build, strict root typechecking, lint, 40 generated contract outputs,
+26 fixture outputs and OpenAPI drift checks passed. The `.mts` declaration
+extension now follows the same explicit LF checkout policy as TypeScript source.
+Native fixture tests cover all five original fixture cases from unchanged
+resource identities through acceptance, fenced render jobs, committed receipts
+and verified preview bytes. The unsupported-feature fixture uses inspection,
+not a strict or approval pass. Generated schemas, fixture data and OpenAPI have
+separate drift checks. Review corrections have regression coverage for revoked
+restore authority, partial-stage evidence, pending authority callbacks, long
+native/temp paths, request snapshots, intentional text clipping, installer
+package-name traversal, and CLI startup/shutdown evidence.
+
+For the combined local check, with the documented pinned browser and SQLite
+artifacts already available:
+
+```powershell
+$env:F06_BROWSER_GATE = '1'
+$env:F06_RENDER_SMOKE = '1'
+pnpm build
+pnpm typecheck
+pnpm lint
+pnpm contracts:check
+pnpm fixtures:check
+pnpm --filter @design-studio/application openapi:check
+pnpm exec vitest run --project unit --project smoke
+```
+
+Leave installation/candidate/metadata-probe gates and performance/golden-update
+flags unset for this run. Installation mechanism tests were separately exercised
+in exact owned temporary namespaces; they never provision real user roots.
+The F08 actual-entry installed test passed once before the final CLI lifecycle
+corrections. It was not rerun to claim installed-release coverage for those
+corrections; pinned-Node subprocess and native fixture regressions cover them.
+Earlier installed freshness checks intermittently took 56-60 seconds, and the
+passing run lost its numeric phase artifacts. Neither a root cause nor reliable
+installed latency is established. The subsequent report-persistence correction
+was tested separately without another full candidate run.
+
+The final expanded unit collector completed independently in 29.11 seconds but
+exceeded its prior 30-second child timeout under combined native-suite load.
+Its bounded harness allowance is now 60 seconds (65-second outer test), retaining
+all dependency-path assertions and the two-worker limit. No product, render
+performance, authorization, or job deadline was changed by this harness correction.
+The explicitly approved installed-profile issuance allowance is separately
+documented in the application package and remains capped by the original job
+deadline.
+
+The final release's unmodified bootstrap/payload inventories and user approval
+remain separate from test candidates. No real installation, push, pull request,
+main merge, hosted CI/macOS run, or later product phase is implied by this checkpoint.
