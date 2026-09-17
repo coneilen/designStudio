@@ -51,6 +51,8 @@ jobs:
         run: pnpm typecheck
       - name: Check foundation fixture drift
         run: pnpm fixtures:check
+      - name: Check application OpenAPI and browser inventory drift
+        run: pnpm --filter @design-studio/application openapi:check
       - name: Unit tests
         run: pnpm test:unit
       - name: Offline package smoke

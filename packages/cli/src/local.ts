@@ -31,7 +31,7 @@ export async function callLocal(
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeout);
     try {
-      return await application.call(
+      const result = await application.call(
         {
           operation: route.route?.operation ?? "openapi",
           projectId: PROJECT_ID,
@@ -46,6 +46,9 @@ export async function callLocal(
         },
         controller.signal,
       );
+      if (controller.signal.aborted)
+        throw new ApplicationError("DEADLINE_EXCEEDED", 504);
+      return result;
     } catch (error) {
       if (controller.signal.aborted)
         throw new ApplicationError("DEADLINE_EXCEEDED", 504);
