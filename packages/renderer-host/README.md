@@ -95,6 +95,30 @@ system root and TZ may only be `UTC`. `PATH`, `NODE_OPTIONS`, `NODE_PATH` and
 all other keys are forbidden. The host supplies `TEMP`/`TMP` and cwd as a new
 unique child of its owned temp root. It removes only that new directory after
 observing worker exit and an empty Job.
+On Windows, only child `TEMP`/`TMP` use the checked extended local-drive spelling
+of that same freshly created directory, before bootstrap/implementation import.
+The ordinary cwd, authorized root, public identity and cleanup path do not change.
+The public host `extendedDrivePath` helper supplies the existing encoding policy;
+it confers no authority and does not permit caller-supplied extended, UNC or device
+roots. No relocation, ACL expansion, global long-path setting or sandbox/Job flag
+change is involved.
+
+This avoids pinned Playwright's `mkdtemp` failure at deep registered roots.
+The opt-in `registered-temp.smoke.test.ts` runs the actual private project-host
+KnownFolder test seam, verifies the pinned browser inventory, and requires
+sandboxed pipe-based Chromium launch, a profile beyond legacy MAX_PATH, in-memory
+PNG output, unchanged binding checks and observed graceful worker/Job cleanup.
+Run with `F06_RENDER_SMOKE=1`; `F06_BROWSER_ROOT` may select an explicitly approved
+already-present browser payload for this test, otherwise it uses the standard
+`.tools\renderer-browser-1.63.0` fixture location. It never downloads a browser.
+The child-environment component test separately checks import-time values,
+ordinary cwd and unchanged external namespace rejection.
+
+**Long `file://` navigation remains unsupported.** In the bounded investigation,
+ordinary file URLs at 279/285 characters failed with `ERR_FILE_NOT_FOUND` even
+though extended TEMP allowed browser startup and in-memory rendering. F06's
+existing in-memory document/resource path is unchanged; this fix does not claim
+general browser filesystem URL compatibility or relax its input/network policy.
 Expected temporary-directory allocation I/O failures (including `ENOSPC` and
 `EACCES`) return `unavailable` / `PROVIDER_UNAVAILABLE` with the OS error code.
 No Job handle or worker is created, and no path is cleaned when allocation

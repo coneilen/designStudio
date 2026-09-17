@@ -10,7 +10,7 @@ it("imports the built public package in a clean Node process without touching an
       "-e",
       `
     const host = await import("@design-studio/host");
-    for (const name of ["SystemClock", "OperationGuard", "authorizeOperation", "snapshotOperationContext", "ProjectFileSystem",
+    for (const name of ["SystemClock", "OperationGuard", "authorizeOperation", "snapshotOperationContext", "extendedDrivePath", "ProjectFileSystem",
       "ConfiguredToolLocator", "BoundedProcessRunner", "LocalSessionAuthenticator",
       "ScopedCredentialStore", "NapiCredentialBackend", "nativeVaultCapability", "Redactor", "decideEgress"]) {
       if (typeof host[name] !== "function") throw new Error("Missing export: " + name);

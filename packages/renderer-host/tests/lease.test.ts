@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -36,6 +36,45 @@ function context(): OperationContext {
     },
   };
 }
+
+it.skipIf(process.platform !== "win32" || process.arch !== "x64")(
+  "encodes only child TEMP and TMP before implementation import while retaining ordinary owned cwd and cleanup",
+  async () => {
+    const config = await options(`
+      const atImport = { temp: process.env.TEMP, tmp: process.env.TMP, cwd: process.cwd() };
+      export async function render() { return Buffer.from(JSON.stringify(atImport)); }
+    `);
+    const before = await readdir(directory);
+    const ctx = context();
+    const opened = await new RendererWorkerHost(config).open(ctx);
+    expect(opened.status, JSON.stringify(opened)).toBe("complete");
+    if (opened.status !== "complete") return;
+    try {
+      const result = await opened.value.exchange(new Uint8Array(), ctx);
+      expect(result.status).toBe("complete");
+      if (result.status !== "complete") return;
+      const environment = JSON.parse(Buffer.from(result.value).toString());
+      expect(environment.cwd.startsWith("\\\\")).toBe(false);
+      expect(path.dirname(environment.cwd)).toBe(directory);
+      expect(path.basename(environment.cwd)).toMatch(/^renderer-owned-/);
+      expect(environment.temp).toBe(`\\\\?\\${environment.cwd}`);
+      expect(environment.tmp).toBe(environment.temp);
+    } finally {
+      expect(await opened.value.close()).toMatchObject({
+        status: "complete",
+        value: { workerExitObserved: true, jobEmptyObserved: true },
+      });
+    }
+    expect(await readdir(directory)).toEqual(before);
+    for (const tempRoot of [
+      `\\\\?\\${directory}`,
+      "\\\\server\\share\\temp",
+      "\\\\.\\C:\\temp",
+      "\\\\?\\GLOBALROOT\\Device\\HarddiskVolume1\\temp",
+    ])
+      expect(() => new RendererWorkerHost({ ...config, tempRoot })).toThrow();
+  },
+);
 it.skipIf(process.platform === "win32" && process.arch === "x64")(
   "unsupported hosts return unavailable without attempting a worker",
   async () => {

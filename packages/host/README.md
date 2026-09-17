@@ -195,6 +195,11 @@ without a global long-path setting. Caller-supplied extended/device/UNC namespac
 alternate streams, traversal and normalization aliases remain forbidden; the
 prefix is not an authorization bypass. Handle-returned paths must be the exact
 local drive namespace and are decoded back to ordinary paths for receipt identity.
+The public `extendedDrivePath(ordinaryPath)` helper exposes only this checked
+encoding policy for trusted host composition. It rejects external namespace
+spellings rather than normalizing them. Its result proves no authorization,
+existence, containment, ACL or NTFS property; callers must establish those
+separately before using it for a native operation or an owned child environment.
 Native UTF-16 length/component bounds remain enforced. An owned long-path
 regression reproduced `Native open failed (Win32 3)` before the conversion fix
 and now verifies publication, binary read, durability evidence and no-replace.

@@ -13,6 +13,7 @@ import {
   type Authority,
   boundary,
   ConfiguredToolLocator,
+  extendedDrivePath,
   HostBoundaryError,
   OperationGuard,
   snapshotOperationContext,
@@ -205,6 +206,7 @@ export class RendererWorkerHost {
         directory = await mkdtemp(
           path.join(options.tempRoot, "renderer-owned-"),
         );
+        const nativeTemp = extendedDrivePath(directory);
         const name = `Local\\design-studio-${randomUUID()}`;
         job = native.create(name);
         guard.check();
@@ -222,7 +224,7 @@ export class RendererWorkerHost {
           ],
           {
             cwd: directory,
-            env: { ...options.environment, TEMP: directory, TMP: directory },
+            env: { ...options.environment, TEMP: nativeTemp, TMP: nativeTemp },
             stdio: ["ignore", "pipe", "pipe", "overlapped"],
             shell: false,
             windowsHide: true,
