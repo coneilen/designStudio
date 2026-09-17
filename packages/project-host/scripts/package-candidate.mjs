@@ -153,7 +153,117 @@ function supports(values, actual) {
         values.includes(actual)))
   );
 }
-async function physicalDependencies(workspace, roots, destination) {
+function packageName(name) {
+  if (
+    typeof name !== "string" ||
+    name.length > 214 ||
+    !/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/.test(name) ||
+    name === "node_modules" ||
+    name === "favicon.ico"
+  )
+    throw new Error("Invalid canonical package name.");
+  // npm spelling alone is insufficient for Windows reserved/trailing-dot aliases.
+  try {
+    relativeName(name);
+  } catch (cause) {
+    throw new Error("Invalid Windows-safe package name.", { cause });
+  }
+  return name;
+}
+function packageDestination(destination, name) {
+  packageName(name);
+  const root = path.resolve(destination);
+  const target = path.resolve(root, ...name.split("/"));
+  const relative = path.relative(root, target);
+  if (
+    !relative ||
+    relative === ".." ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative)
+  )
+    throw new Error("Package destination escaped the exact node_modules root.");
+  return target;
+}
+async function packageManifest(directory, requestedName) {
+  const manifest = JSON.parse(
+    (
+      await boundedFile(path.join(directory, "package.json"), 1024 * 1024)
+    ).toString("utf8"),
+  );
+  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest))
+    throw new Error("Invalid package manifest.");
+  packageName(manifest.name);
+  if (
+    requestedName !== undefined &&
+    manifest.name !== packageName(requestedName)
+  )
+    throw new Error(
+      "Requested package name differs from resolved manifest name.",
+    );
+  for (const field of [
+    "dependencies",
+    "optionalDependencies",
+    "peerDependencies",
+    "devDependencies",
+  ]) {
+    const dependencies = manifest[field];
+    if (dependencies === undefined) continue;
+    if (
+      !dependencies ||
+      typeof dependencies !== "object" ||
+      Array.isArray(dependencies)
+    )
+      throw new Error("Invalid package dependency map.");
+    for (const [name, version] of Object.entries(dependencies)) {
+      packageName(name);
+      if (typeof version !== "string")
+        throw new Error("Invalid package dependency version.");
+    }
+  }
+  return manifest;
+}
+export async function readBrowserInventory(filename) {
+  const browserInventory = JSON.parse(
+    (await boundedFile(filename, INSTALL_LIMITS.manifestBytes)).toString(
+      "utf8",
+    ),
+  );
+  if (
+    !browserInventory ||
+    typeof browserInventory !== "object" ||
+    Array.isArray(browserInventory) ||
+    browserInventory.playwright !== "1.63.0" ||
+    !Array.isArray(browserInventory.files) ||
+    browserInventory.files.length !== 299
+  )
+    throw new Error("Unreviewed browser inventory revision.");
+  const files = browserInventory.files.map((file) => {
+    if (
+      !file ||
+      typeof file !== "object" ||
+      Array.isArray(file) ||
+      typeof file.path !== "string" ||
+      typeof file.byteLength !== "number" ||
+      typeof file.sha256 !== "string"
+    )
+      throw new Error("Invalid browser inventory entry.");
+    return {
+      path: file.path,
+      byteLength: file.byteLength,
+      sha256: file.sha256,
+    };
+  });
+  // Validate every path, identity, alias and aggregate bound before traversing any source path.
+  encodeInventory(
+    files.map((file) => ({
+      path: file.path,
+      bytes: file.byteLength,
+      sha256: file.sha256,
+    })),
+  );
+  return { playwright: browserInventory.playwright, files };
+}
+export async function physicalDependencies(workspace, roots, destination) {
   const packages = new Map();
   const workspacePackages = new Map();
   for (const entry of await readdir(path.join(workspace, "packages"), {
@@ -161,18 +271,20 @@ async function physicalDependencies(workspace, roots, destination) {
   })) {
     if (!entry.isDirectory()) continue;
     const directory = path.join(workspace, "packages", entry.name);
-    const manifest = JSON.parse(
-      (
-        await boundedFile(path.join(directory, "package.json"), 1024 * 1024)
-      ).toString("utf8"),
-    );
+    const manifest = await packageManifest(directory);
+    if (workspacePackages.has(manifest.name))
+      throw new Error("Duplicate workspace package name.");
     workspacePackages.set(manifest.name, directory);
   }
   const resolvePackage = async (parent, name) => {
+    packageName(name);
     if (workspacePackages.has(name)) return workspacePackages.get(name);
     let current = parent;
-    while (current.startsWith(workspace)) {
-      const link = path.join(current, "node_modules", ...name.split("/"));
+    while (
+      current === workspace ||
+      current.startsWith(`${workspace}${path.sep}`)
+    ) {
+      const link = packageDestination(path.join(current, "node_modules"), name);
       try {
         return await realpath(link);
       } catch (error) {
@@ -186,17 +298,13 @@ async function physicalDependencies(workspace, roots, destination) {
       `Missing offline dependency ${name}; restore approved artifacts with scripts disabled first.`,
     );
   };
-  const add = async (directory) => {
+  const add = async (directory, requestedName) => {
     directory = await realpath(directory);
     if (!directory.startsWith(`${workspace}${path.sep}`))
       throw new Error(
         "Dependency source escaped explicit integrated workspace.",
       );
-    const manifest = JSON.parse(
-      (
-        await boundedFile(path.join(directory, "package.json"), 1024 * 1024)
-      ).toString("utf8"),
-    );
+    const manifest = await packageManifest(directory, requestedName);
     if (!supports(manifest.os, "win32") || !supports(manifest.cpu, "x64"))
       return;
     const existing = packages.get(manifest.name);
@@ -230,13 +338,13 @@ async function physicalDependencies(workspace, roots, destination) {
           continue;
         throw error;
       }
-      await add(dependency);
+      await add(dependency, name);
     }
   };
   for (const root of roots) await add(root);
   await mkdir(destination, { recursive: true });
   for (const [name, info] of packages) {
-    const target = path.join(destination, ...name.split("/"));
+    const target = packageDestination(destination, name);
     await mkdir(path.dirname(target), { recursive: true });
     if (workspacePackages.has(name))
       await copyWorkspacePackage(info.directory, target, name);
@@ -244,12 +352,8 @@ async function physicalDependencies(workspace, roots, destination) {
   }
 }
 async function copyWorkspacePackage(source, target, name) {
+  const manifest = await packageManifest(source, name);
   await mkdir(target);
-  const manifest = JSON.parse(
-    (
-      await boundedFile(path.join(source, "package.json"), 1024 * 1024)
-    ).toString("utf8"),
-  );
   await copyPhysical(
     path.join(source, "package.json"),
     path.join(target, "package.json"),
@@ -312,23 +416,15 @@ export async function packageCandidate({
   await lstat(
     path.join(workspace, "packages", "application", "dist", "render-worker.js"),
   );
-  const browserInventory = JSON.parse(
-    await readFile(
-      path.join(
-        workspace,
-        "packages",
-        "renderer",
-        "docs",
-        "browser-windows-x64.json",
-      ),
-      "utf8",
+  const browserInventory = await readBrowserInventory(
+    path.join(
+      workspace,
+      "packages",
+      "renderer",
+      "docs",
+      "browser-windows-x64.json",
     ),
   );
-  if (
-    browserInventory.playwright !== "1.63.0" ||
-    browserInventory.files.length !== 299
-  )
-    throw new Error("Unreviewed browser inventory revision.");
   if ((await hashFile(sqliteBinding)).sha256 !== sqliteHash)
     throw new Error("Unapproved SQLite addon.");
   if (

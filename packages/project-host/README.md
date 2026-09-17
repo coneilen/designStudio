@@ -453,3 +453,20 @@ using a 54-character private temporary root. These timings include candidate
 assembly/verification and are not F08 latency acceptance results.
 The generated dependency change is four importer lines adding renderer-host
 only as a test dependency; all other lockfile bytes were compared unchanged.
+
+Candidate admission correction: workspace and resolved dependency manifests
+must use lowercase, Windows-safe canonical npm package names (including scoped
+names); dependency keys are validated before lookup or optional-platform skips.
+Duplicate workspace names, case aliases and requested/resolved name mismatches
+are refused before materialization. Every computed dependency destination also
+must be a strict descendant of its exact `node_modules` root before allocation.
+External browser inventory reads are bounded to 8 MiB; all 299 entries, paths,
+hashes, file/aggregate sizes and aliases are validated before source traversal.
+
+The observed regression RED attempted an out-of-root allocation for
+`../../../escaped-package`; a test-only filesystem interceptor blocked it
+**before any escape write**. After the fix, malformed names are rejected at
+admission with zero intercepted allocation attempts and unchanged owned-root
+sentinels. Another RED accepted a browser inventory over the byte cap; tests
+now verify acceptance at exactly 8 MiB and refusal one byte beyond. These
+admission tests do not install or approve a production release.
