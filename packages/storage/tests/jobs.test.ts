@@ -1375,7 +1375,7 @@ test("v2 backup import preserves legacy receipts without inventing historical jo
   value(await store.restore(backup, f.ctx("restore")));
   expect(value(await store.getReceipt("seed", f.ctx("seed")))).not.toBeNull();
   expect(await store.jobs.get("job-seed", f.ctx("seed"))).toMatchObject({
-    error: { code: "EVIDENCE_MISSING" },
+    error: { code: "NOT_FOUND" },
   });
 });
 
