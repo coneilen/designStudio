@@ -95,6 +95,10 @@ system root and TZ may only be `UTC`. `PATH`, `NODE_OPTIONS`, `NODE_PATH` and
 all other keys are forbidden. The host supplies `TEMP`/`TMP` and cwd as a new
 unique child of its owned temp root. It removes only that new directory after
 observing worker exit and an empty Job.
+Expected temporary-directory allocation I/O failures (including `ENOSPC` and
+`EACCES`) return `unavailable` / `PROVIDER_UNAVAILABLE` with the OS error code.
+No Job handle or worker is created, and no path is cleaned when allocation
+did not succeed. Unexpected programming errors remain rejected promises.
 
 ## Fixed bootstrap and private protocol
 
@@ -255,6 +259,12 @@ Final local evidence: 27 package unit cases and one built-public-package smoke
 case passed. The unsupported-host-only case is skipped on this Windows x64
 host. Combined host/renderer-host regression execution passed 93 unit cases;
 dependency-ordered build, strict root typecheck and scoped Biome checks passed.
+The allocation-failure review follow-up adds observed RED/GREEN `ENOSPC` and
+`EACCES` cases after real pin/root preflight, asserting no Job/worker creation
+or unallocated-path cleanup, plus a programming-error propagation regression.
+The follow-up passes all 30 package unit cases (one unsupported-host-only
+skip), the built-package smoke case, package build, strict root typecheck and
+scoped Biome checks on Windows x64.
 
 Build before typecheck and tests (the real worker loads built internal files):
 

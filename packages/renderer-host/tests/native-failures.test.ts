@@ -3,13 +3,15 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { syntheticContext } from "@design-studio/contracts/testing";
-import { HostBoundaryError, SystemClock } from "@design-studio/host";
+import { SystemClock } from "@design-studio/host";
 import { afterEach, expect, it, vi } from "vitest";
 import type { RendererWorkerOptions } from "../src/index.js";
 import { loadJobs, type OwnedJob } from "../src/windows-job.js";
 
 afterEach(() => {
   vi.doUnmock("../src/windows-job.js");
+  vi.doUnmock("node:fs/promises");
+  vi.doUnmock("node:child_process");
   vi.resetModules();
 });
 async function fixture() {
@@ -62,10 +64,90 @@ async function fixture() {
   };
   return { root, options, context };
 }
+it
+  .skipIf(process.platform !== "win32" || process.arch !== "x64")
+  .each(["ENOSPC", "EACCES"])(
+  "temp allocation %s returns a typed outcome without creating or cleaning resources",
+  async (code) => {
+    const data = await fixture();
+    const native = await loadJobs();
+    const create = vi.fn(native.create);
+    const allocate = vi
+      .fn()
+      .mockRejectedValue(
+        Object.assign(new Error("Injected allocation failure."), { code }),
+      );
+    const cleanup = vi.fn(rm);
+    const spawn = vi.fn(() => {
+      throw new Error("Worker must not spawn after failed allocation.");
+    });
+    vi.doMock("node:fs/promises", async () => ({
+      ...(await vi.importActual<typeof import("node:fs/promises")>(
+        "node:fs/promises",
+      )),
+      mkdtemp: allocate,
+      rm: cleanup,
+    }));
+    vi.doMock("node:child_process", async () => ({
+      ...(await vi.importActual<typeof import("node:child_process")>(
+        "node:child_process",
+      )),
+      spawn,
+    }));
+    vi.doMock("../src/windows-job.js", () => ({
+      loadJobs: async () => ({ ...native, create }),
+    }));
+    try {
+      const { RendererWorkerHost } = await import("../src/index.js");
+      await expect(
+        new RendererWorkerHost(data.options).open(data.context),
+      ).resolves.toMatchObject({
+        status: "unavailable",
+        error: {
+          code: "PROVIDER_UNAVAILABLE",
+          message: expect.stringContaining(code),
+        },
+      });
+    } finally {
+      expect(allocate).toHaveBeenCalledExactlyOnceWith(
+        path.join(data.root, "renderer-owned-"),
+      );
+      expect(create).not.toHaveBeenCalled();
+      expect(spawn).not.toHaveBeenCalled();
+      expect(cleanup).not.toHaveBeenCalled();
+      await rm(data.root, { recursive: true, force: true });
+    }
+  },
+);
+it.skipIf(process.platform !== "win32" || process.arch !== "x64")(
+  "unexpected allocation programming errors remain rejected without cleanup",
+  async () => {
+    const data = await fixture();
+    const cause = new TypeError("Injected programming error.");
+    const cleanup = vi.fn(rm);
+    vi.doMock("node:fs/promises", async () => ({
+      ...(await vi.importActual<typeof import("node:fs/promises")>(
+        "node:fs/promises",
+      )),
+      mkdtemp: vi.fn().mockRejectedValue(cause),
+      rm: cleanup,
+    }));
+    try {
+      const { RendererWorkerHost } = await import("../src/index.js");
+      await expect(
+        new RendererWorkerHost(data.options).open(data.context),
+      ).rejects.toBe(cause);
+      expect(cleanup).not.toHaveBeenCalled();
+    } finally {
+      await rm(data.root, { recursive: true, force: true });
+    }
+  },
+);
 it.skipIf(process.platform !== "win32" || process.arch !== "x64")(
   "missing optional native capability is explicit, never a successful fallback",
   async () => {
     const data = await fixture();
+    const { HostBoundaryError } = await import("@design-studio/host");
     vi.doMock("../src/windows-job.js", () => ({
       loadJobs: async () => {
         throw new HostBoundaryError(
@@ -125,6 +207,7 @@ it.skipIf(process.platform !== "win32" || process.arch !== "x64")(
   async () => {
     const native = await loadJobs();
     const data = await fixture();
+    const { HostBoundaryError } = await import("@design-studio/host");
     let owned: OwnedJob | undefined;
     vi.doMock("../src/windows-job.js", () => ({
       loadJobs: async () => ({

@@ -198,12 +198,13 @@ export class RendererWorkerHost {
       // Reuse the host's trusted pin inspection, not its descendant-rejecting runner.
       await locator.approved(options.providerId, context, guard);
       guard.check();
-      const directory = await mkdtemp(
-        path.join(options.tempRoot, "renderer-owned-"),
-      );
+      let directory: string | undefined;
       let job: OwnedJob | undefined;
       let lease: WorkerLease | undefined;
       try {
+        directory = await mkdtemp(
+          path.join(options.tempRoot, "renderer-owned-"),
+        );
         const name = `Local\\design-studio-${randomUUID()}`;
         job = native.create(name);
         guard.check();
@@ -232,6 +233,34 @@ export class RendererWorkerHost {
         lease.assertLive();
         return lease;
       } catch (cause) {
+        if (directory === undefined) {
+          if (
+            cause instanceof Error &&
+            "code" in cause &&
+            typeof cause.code === "string" &&
+            [
+              "ENOSPC",
+              "EACCES",
+              "EPERM",
+              "ENOENT",
+              "ENOTDIR",
+              "EROFS",
+              "EMFILE",
+              "ENFILE",
+              "EIO",
+              "ENAMETOOLONG",
+              "EEXIST",
+              "EDQUOT",
+            ].includes(cause.code)
+          )
+            throw new HostBoundaryError(
+              "PROVIDER_UNAVAILABLE",
+              `Renderer temporary directory allocation failed (${cause.code}).`,
+              true,
+              { cause },
+            );
+          throw cause;
+        }
         // A created lease owns cleanup, including failures during start.
         if (lease) {
           const cleanup = await lease.close();
