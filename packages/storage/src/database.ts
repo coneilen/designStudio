@@ -14,6 +14,13 @@ const coreSchema = `
   CREATE TABLE pins (kind TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(kind,id));
   CREATE TABLE artifact_refs (owner_kind TEXT NOT NULL, owner_id TEXT NOT NULL, artifact_id TEXT NOT NULL REFERENCES artifacts(id), PRIMARY KEY(owner_kind,owner_id,artifact_id));
 `;
+const jobSchema = `
+  CREATE TABLE jobs (id TEXT PRIMARY KEY, scope TEXT NOT NULL UNIQUE, state TEXT NOT NULL, created TEXT NOT NULL, due TEXT, data TEXT NOT NULL);
+  CREATE INDEX jobs_scan ON jobs(state,created,id);
+  CREATE TABLE job_resources (key TEXT PRIMARY KEY, data TEXT NOT NULL);
+  CREATE TABLE job_stages (id TEXT PRIMARY KEY, job TEXT NOT NULL REFERENCES jobs(id), data TEXT NOT NULL);
+  CREATE INDEX job_stages_owner ON job_stages(job,id);
+`;
 
 export async function openDatabase(
   options: StorageOptions,
@@ -53,7 +60,8 @@ export async function openDatabase(
     if (
       (version === 0 && (tables.length !== 0 || app !== 0)) ||
       (version !== 0 &&
-        (app !== applicationId || (version !== 1 && version !== 2)))
+        (app !== applicationId ||
+          (version !== 1 && version !== 2 && version !== 3)))
     ) {
       throw new StorageError(
         "SCHEMA_INCOMPATIBLE",
@@ -93,12 +101,13 @@ export async function openDatabase(
             options.permissionScope,
           );
         connection.exec("CREATE INDEX artifact_hash ON artifacts(hash)");
+        connection.exec(jobSchema);
         connection.pragma(`application_id = ${applicationId}`);
-        connection.pragma("user_version = 2");
+        connection.pragma("user_version = 3");
       })();
-    } else if (version === 1) {
+    } else if (version === 1 || version === 2) {
       // Every upgrade retains a separate valid database before altering schema.
-      const backup = `${path}.migration-v1-${randomUUID()}.sqlite`;
+      const backup = `${path}.migration-v${version}-${randomUUID()}.sqlite`;
       await db.backup(backup);
       const copy = new Database(backup, {
         nativeBinding: options.nativeBinding,
@@ -107,7 +116,7 @@ export async function openDatabase(
       try {
         if (
           copy.pragma("integrity_check", { simple: true }) !== "ok" ||
-          copy.pragma("user_version", { simple: true }) !== 1
+          copy.pragma("user_version", { simple: true }) !== version
         )
           throw new StorageError(
             "INTEGRITY",
@@ -119,9 +128,11 @@ export async function openDatabase(
       await options.ensureDatabaseBackupDurable(backup);
       const connection = db;
       connection.transaction(() => {
-        connection.exec("CREATE INDEX artifact_hash ON artifacts(hash)");
+        if (version === 1)
+          connection.exec("CREATE INDEX artifact_hash ON artifacts(hash)");
+        connection.exec(jobSchema);
         options.fault?.("migration-before-commit");
-        connection.pragma("user_version = 2");
+        connection.pragma("user_version = 3");
       })();
     }
     const foreignKeys = db.pragma("foreign_key_check");

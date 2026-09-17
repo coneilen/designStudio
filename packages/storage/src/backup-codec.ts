@@ -4,6 +4,7 @@ import {
   parseContract,
   validateContract,
 } from "@design-studio/contracts";
+import { storedJob, storedResource, storedStage } from "./job-codec.js";
 import {
   type BackupMetadata,
   type ProjectBackup,
@@ -156,6 +157,10 @@ function array(value: unknown): unknown[] {
 
 export function backupMetadata(value: unknown): BackupMetadata {
   contract("JsonValue", value);
+  const version =
+    typeof value === "object" && value !== null && "storageVersion" in value
+      ? value.storageVersion
+      : undefined;
   const data = record(value, [
     "storageVersion",
     "projectId",
@@ -165,14 +170,15 @@ export function backupMetadata(value: unknown): BackupMetadata {
     "reviews",
     "receipts",
     "pins",
+    ...(version === 3 ? ["jobs", "jobResources", "jobStages"] : []),
   ]);
-  if (data.storageVersion !== 2)
+  if (data.storageVersion !== 2 && data.storageVersion !== 3)
     throw new StorageError(
       "SCHEMA_INCOMPATIBLE",
       "Unsupported backup metadata.",
     );
-  return {
-    storageVersion: 2,
+  const legacy = {
+    storageVersion: 2 as const,
     projectId: contract("StableId", data.projectId),
     artifacts: array(data.artifacts).map((item) => contract("Artifact", item)),
     revisions: array(data.revisions).map((item) => contract("Revision", item)),
@@ -212,4 +218,13 @@ export function backupMetadata(value: unknown): BackupMetadata {
       };
     }),
   };
+  return data.storageVersion === 2
+    ? legacy
+    : {
+        ...legacy,
+        storageVersion: 3,
+        jobs: array(data.jobs).map(storedJob),
+        jobResources: array(data.jobResources).map(storedResource),
+        jobStages: array(data.jobStages).map(storedStage),
+      };
 }

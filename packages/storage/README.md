@@ -2,7 +2,7 @@
 
 F03 local storage core, package version 1.0.0. Shared artifact/revision/review
 contracts remain `@design-studio/contracts` schema 1.0. The private SQLite schema
-is version 2. No renderer, asset decoder, authorization issuer, job scheduler,
+is version 3. No renderer, asset decoder, authorization issuer, job scheduler,
 handoff compiler, live provider, or competing filesystem implementation is here.
 
 **Production composition requires explicit trusted policies.** The stable
@@ -119,6 +119,7 @@ signal and clock references remain live for cancellation/deadlines.
 | `recover` | Reports orphan paths and corrupt/missing committed artifacts; discards only stages the mandatory trusted job policy proves abandoned. Unknown stages are retained explicitly. |
 | `backup`, `restore` | Complete metadata/byte snapshot and verified transactional restoration into an empty provisioned store. |
 | `encodeBackup`, `decodeBackup` | Bounded versioned UTF-8 JSON/base64 transport; duplicate keys, invalid encodings and unsupported shapes fail. Decoding does not authenticate approval provenance. |
+| `jobs` | Optional trusted-composition persistent job repository, using this same writer/queue and guarded publication transaction; see below. |
 
 `requestId` is the logical idempotency key for the current shared ArtifactStore
 contract. Scope is project + trusted actor + `write` + requestId; payload
@@ -129,6 +130,92 @@ Committed receipt wins cancellation/response-loss races. Stage/publish/transacti
 failures leave at most staged/orphan bytes, never newly committed partial pointers.
 Noncomplete host publication preserves interrupted/unavailable/cancelled outcomes
 and error codes, and never invents a receipt.
+
+### Persistent jobs: F03-owned transaction boundary
+
+`StorageOptions.jobs` enables `store.jobs`; omitting it preserves legacy callers
+and makes repository operations fail explicitly, not use an in-memory fallback.
+It supplies the trusted shared `clock`, optional `maxWorkers` (default 1, maximum
+4), optional immutable `limits` (default shared `DEFAULT_BUDGETS`), mandatory
+`verifyCompletion(record, completion, evidence, context)` and mandatory
+`authorizeRecovery(record, evidence, context)`. These are application composition,
+not request payload. The verifier must enforce registered handler/version and
+operation-specific schema/semantic completeness, not just hashes. Recovery policy
+must authenticate its evidence reference and actual callback/effect-stop knowledge;
+an aborted signal, elapsed lease, or matching hash is not stop evidence.
+
+Private `jobs`, `job_resources`, and `job_stages` tables belong to the existing
+SQLite connection. No second database, outbox, writer, public SQL handle or
+caller-supplied transaction callback was added. `JobRepository`, `JobSubmission`,
+`StoredJob`, `JobExpected`, `JobWorkerExpected`, `JobCommand`, `JobCompletion`,
+`JobReconciliation`, usage/stage/result types and `JOB_STORAGE_LIMITS` are
+exported. Shared Job/Lease/Receipt/schema version 1.0 remains unchanged.
+
+| Repository operation | Contract |
+| --- | --- |
+| `create(submission, context)` | Constructs queued shared Job with attempt/progress zero. Owns submission; derives actor/project/request from context, computes canonical submission digest, pins verified committed input/resource artifacts atomically. Optional `inputRevision` names an accepted revision and its content hash. |
+| `get(id, context)`, `getJobReceipt(id, context)` | Authorize before lookup; completed reads verify original-owner logical scope, authoritative Job/receipt binding, protected output refs and actual bytes. Observers need not be the submitting actor. |
+| `scan(query, context)` | Explicit state list, limit, optional due cutoff and `(createdAt,id)` cursor. Only IDs covered by current explicit job-read grants are selected. Stable oldest-created/ID ordering; no wildcard/existence-only polling. |
+| `getStages(id, context)` | Bounded exact stage-journal snapshot under root/job-read authority; metadata is evidence, never cleanup permission. |
+| `claim(id, expected, ownerId, durationMs, context)` | Exact state/version; queued or due retry only. Atomically acquires every sorted key or none, increments attempt and durable job/resource generations, enforces trusted worker ceiling, attempts and deadlines. Expired active jobs still occupy capacity until reconciliation. |
+| `heartbeat(id, expected, extensionMs, context)` | Original live lease required, including at transaction exit. Extension cannot resurrect a lease and is capped by original job/current context/current grant deadline. |
+| `update(id, expected, command, context)` | Discriminated progress, reserve/settle usage, wait/retry/fail/interrupt, or acknowledge-cancel. No arbitrary patch. Wait/retry/fail/cancel acknowledgment means the trusted handler has actually stopped; unresolved effects prohibit release. Interrupt quarantines resources. |
+| `requestCancel(id, expectedVersion, context)` | Current authorized caller need not own worker lease. Receipt wins first; running becomes cancel-requested, including when effects remain unresolved. Safe nonrunning work cancels; uncertain work requires reconciliation. |
+| `stage(id, expected, bytes, context)` | Copies bytes before enqueue. Atomically reserves cumulative input/output bytes and a version before host I/O. Journals returned exact stage identity before returning a fresh record. Expiry/auth/cancel after I/O retains journal evidence; crash/fault before journal leaves an unknown host stage that cannot be adopted/discarded. Failure requires rereading the current record, not retrying an obsolete version. |
+| `commitJob(id, expected, completion, context)` | Reuses real publication, actual-byte verification, mandatory durability and optional F02 revision/head CAS. Synchronously rechecks original fence/state/version/deadlines/all resource generations inside the one transaction storing artifacts, receipt, protected refs, completed Job and optional revision/head, then releases keys. Returns `{record,receipt}`. |
+| `reconcile(id, expectedVersion, evidence, context)` | Trusted recovery callback precedes receipt decisions. Interrupt invalidates generation and quarantines uncertain ownership. Resolved evidence must acknowledge exact stopped lease/effects before queued/cancelled/failed/waiting state; never resets identity, attempts, usage or deadlines. `abandon-stages` permits explicitly authorized cleanup disposition after completion without changing receipt. |
+| `canDiscardStage(stagingId, context)` | Requires named job/read authority and explicit authorized-abandoned disposition, no active/unresolved ownership, and this exact store/host-instance journal. Unknown/historical stages return false. It grants no filesystem deletion authority. |
+
+Worker `expected` contains exact state, rowVersion, leaseId, ownerId, fencingToken
+and the persisted resource-generation list. Every worker mutation also requires
+original requestId/jobId/actor and the same trusted shared clock reference.
+Submission metadata/budgets are owned before enqueue; original authorization
+proof, live signal and clock are retained through the existing snapshot/host
+branding checks. Observers, cancellation and recovery can have separate transport
+request IDs with current authority. Root/job grants are mandatory; inputs require
+artifact-read (and optional revision-read), final outputs require artifact-write,
+and receipt replay requires artifact-read. F07/F08 issue fresh contexts; storage
+never clones proof, extends expired authority, persists tokens, or acts as issuer.
+
+Fixed foundation bounds exported by `JOB_STORAGE_LIMITS`: 20,000 retained jobs
+(terminal history included), 20,000 resource counters and total journal rows;
+32 keys/job, 128 stages/effects/job, 100 scan entries, 10,000 progress sequence
+ceiling, minimum 50 ms between progress writes, and 25 MiB metadata profile.
+Lease durations/extensions are positive integers at most 30 seconds. Capacity
+returns a typed limit, never silently prunes history. Progress is monotonic and
+below 1 until final completion. All counters use checked safe-integer increments.
+Resource generations persist after release; expiry alone never frees quarantine.
+This is per-store serialization, not cross-project physical-device exclusivity.
+GC also protects paths in the durable stage journal, including published bytes
+left by a failed final transaction. This foundation conservatively retains that
+physical evidence with job history; stage-file discard does not prune blob history.
+
+Usage reservations are cumulative, including settled/no-effect reservations;
+unused reservation capacity is conservatively not refunded. Staging charges
+bytes before possible effects, including interrupted attempts. Reserve before
+an external effect, settle actual usage within the prior reservation, and retain
+unknown results. Shared defaults permit zero external calls, model tokens and
+cost. No real external handlers run here.
+
+Job receipt SQL keys use a private tagged namespace and persisted logical
+operation/original actor/requestId. Shared receipt `payloadSha256` identifies
+final output/revision/completion metadata; it differs from the immutable
+submission digest, with `StoredJob.finalOutputSha256` binding the two histories.
+Legacy write commit/getReceipt keys and rows are unchanged. A legacy logical
+write key conflicts with a new tracked write in either direction, but other
+operations can share that key. A historical legacy job ID cannot be appropriated
+by a new job. Legacy commit/commitRevision reject tracked jobs before publication
+and again in the transaction, closing unfenced stale-handler bypasses.
+Committed receipt wins cancellation and response-loss replay.
+
+Historical publication assurance accepts a tagged job receipt only when its
+exact authoritative completed Job, submission binding, final digest, scope,
+output metadata and protected refs agree. Legacy untracked write receipts retain
+their original rules. A hash-correct orphan/metadata row is not valid job input.
+Reused output stages remain journaled: completion is not automatic discard.
+Store restart preserves journal identities but does not reconstruct another
+host instance's staging authority; cleanup of such evidence needs host-owned
+recovery, outside this repository's discard permission.
 
 New-key reuse after a host restart separates historical assurance from new
 publication. An existing artifact bypasses a new host-process barrier only when
@@ -255,11 +342,12 @@ host's durable write boundary; returning encoded bytes does not persist a file.
 
 Fresh empty SQLite databases initialize atomically. Foreign application IDs,
 unknown schema versions, nonempty unversioned databases, wrong project/root/scope
-and SQLite integrity errors fail closed. The supported v1->v2 migration adds
-the content-hash index without rewriting accepted artifacts/revisions.
+and SQLite integrity errors fail closed. The supported v1->v3 migration adds the content-hash index and private job tables;
+v2->v3 adds only private job tables. Neither rewrites accepted artifacts/revisions
+or fabricates historical jobs.
 Version 1 is the tested synthetic predecessor layout, not a claim that an
 earlier storage release or existing user project was migrated.
-It first creates a uniquely named `.migration-v1-<uuid>.sqlite` backup, reopens
+Each upgrade first creates a uniquely named `.migration-v<old>-<uuid>.sqlite` backup, reopens
 and integrity-checks it, and calls mandatory `ensureDatabaseBackupDurable`.
 Only then does a transaction alter schema/user_version. Failure retains the
 original schema and backup; automatic destructive rollback is not attempted.
@@ -267,6 +355,16 @@ Restore a retained database backup to a newly provisioned local destination
 with the service stopped, after verifying its version/integrity and matching
 blob inventory. DesignIR schema migrations remain F02 operations creating new
 revisions, not database history rewrites.
+
+New backups carry `storageVersion: 3`, including original submissions, bounded
+usage/effects, durable resource counters and exact stage history. Transport format
+1 also accepts supported v2 metadata without inventing jobs. Restore validates
+nested private shapes, submission digests, limits, receipt/owner/resource/stage
+graph and protected inputs/outputs. All destination blobs still cross the current
+mandatory publication barrier. Restore increments job versions/generations and
+resource counters, turns live/uncertain executions into interrupted jobs with
+quarantined reservations, and marks imported stages historical/recovery-needed.
+It never resumes a transplanted lease or host staging capability.
 
 ## Test evidence and remaining gates
 
@@ -289,10 +387,30 @@ Only owned temporary synthetic data is touched. Payloads under
 approved bundles. No user project GC, app/device manipulation, live model call
 or existing OneDrive image use occurs.
 
-Remaining integration gates: F04 root/authority/maintenance composition and
-directory-entry/backup-file durability; F02 canonical/semantic verifier;
-trusted evidence, retention and backup authority; F07 staged-job ownership and
-receipt/idempotency binding; F05 permission-aware cache lookup composition.
+Job-extension RED observations include the initially absent repository/tables,
+lost interrupted-stage byte reservations, cancellation with outstanding effects,
+unvalidated backup usage/resource graphs, missing stage enumeration, substituted
+worker clocks, legacy job-ID appropriation, missing protected input edges,
+orphan-only inputs, and lease expiry at heartbeat/progress transaction exit.
+Permanent real temporary SQLite regressions cover those cases, atomic completion
+fault points, revision/head rollback, ABA/quarantine, cancel/commit ordering,
+operation-aware replay, restore invalidation, v1/v2 migration backup/rollback,
+bounded scans, exact four-worker and 20,000-job admission limits, and zero paid
+defaults. No uncontrolled race sleeps or user stores are used.
+
+`jobs-host.smoke.test.ts` composes fresh v3 SQLite with the actual trusted local
+session authenticator, branded context snapshots, F02 canonical bytes and native
+NTFS publication. It commits jobs, restarts the host, reuses operation-bound
+historical outputs and restores under current destination barriers while
+preserving legacy receipts. The native fixture's migration durability hook
+explicitly fails outside fresh initialization: physical migration backup-file
+durability integration remains unresolved, not replaced with a fake success.
+Logical migration tests explicitly acknowledge simulated durability only.
+
+Remaining integration gates: production F07 scheduler/F08 fresh execution and
+recovery issuer; operation-specific completeness and actual-stop/effect policy;
+physical database-backup durability; trusted evidence, retention and backup
+authority; F05 permission-aware cache lookup composition.
 Actual Windows power loss, hosted CI, public-registry restore, native
 cross-platform distribution/macOS execution, and large-project performance
 are not established by this lane.

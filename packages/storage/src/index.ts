@@ -22,6 +22,8 @@ import {
 import Database from "better-sqlite3";
 import { backupMetadata } from "./backup-codec.js";
 import { openDatabase } from "./database.js";
+import type { JobRepository } from "./job-types.js";
+import { type JobCommitHooks, StoredJobs } from "./jobs.js";
 import {
   type BackupMetadata,
   type ProjectBackup,
@@ -35,6 +37,8 @@ import {
 } from "./types.js";
 
 export { decodeBackup, encodeBackup } from "./backup-codec.js";
+export { JOB_LIMITS as JOB_STORAGE_LIMITS } from "./job-codec.js";
+export * from "./job-types.js";
 export * from "./types.js";
 
 const hash = (bytes: Uint8Array) =>
@@ -98,6 +102,8 @@ function approvalRefs(context: ApprovalContext): ArtifactReference[] {
 }
 
 export class LocalStore implements ArtifactStore {
+  readonly jobs: JobRepository;
+  private readonly jobStore: StoredJobs;
   private queue: Promise<unknown> = Promise.resolve();
   private closed = false;
   private active = 0;
@@ -114,13 +120,50 @@ export class LocalStore implements ArtifactStore {
   private constructor(
     private readonly db: Database.Database,
     private readonly options: StorageOptions,
-  ) {}
+  ) {
+    this.jobStore = new StoredJobs({
+      db,
+      options,
+      run: (context, operation, action) => this.run(context, operation, action),
+      snapshot: (input, context, operation, action) =>
+        this.snapshot(input, context, operation, action),
+      guard: (context, operation, kind, id) =>
+        this.guard(context, operation, kind, id),
+      checkpoint: (context) => this.checkpoint(context),
+      digest: (value) => this.digest(value),
+      read: (artifact, context) => this.read(artifact, context),
+      artifact: (reference) => this.artifact(reference),
+      hasCommittedPublication: (artifact) =>
+        this.hasCommittedPublication(artifact),
+      refs: (kind, id, references) => this.refs(kind, id, references),
+      stage: (bytes, context) => this.stageBytes(bytes, context),
+      commit: (outputs, context, request, hooks) =>
+        this.commitInternal(outputs, context, request, hooks),
+      verifyInputRevision: async (reference, context) => {
+        check("ArtifactReference", reference);
+        await this.guard(context, "read", "revision", reference.id);
+        const revision = this.row("revisions", reference.id, "Revision");
+        if (!revision || revision.content.sha256 !== reference.sha256)
+          throw new StorageError(
+            "CONFLICT",
+            "Input revision must identify accepted content.",
+          );
+      },
+    });
+    this.jobs = this.jobStore;
+  }
 
   static async open(options: StorageOptions): Promise<LocalStore> {
     check("StableId", options.projectId);
     check("StableId", options.artifactRootId);
     check("StableId", options.permissionScope);
-    return new LocalStore(await openDatabase(options), options);
+    const db = await openDatabase(options);
+    try {
+      return new LocalStore(db, options);
+    } catch (error) {
+      db.close();
+      throw error;
+    }
   }
 
   close(): void {
@@ -443,30 +486,37 @@ export class LocalStore implements ArtifactStore {
           "LIMIT",
           "Staged bytes exceed operation budget.",
         );
-      const sha256 = hash(snapshot);
-      const staged = unwrap(
-        await this.options.fileSystem.stage(
-          {
-            artifactRootId: this.options.artifactRootId,
-            path: blobPath(sha256),
-          },
-          snapshot,
-          context,
-        ),
-      );
-      check("Artifact", staged.artifact);
-      if (
-        staged.artifact.sha256 !== sha256 ||
-        staged.artifact.byteLength !== snapshot.length ||
-        staged.artifact.path !== blobPath(sha256)
-      ) {
-        throw new StorageError(
-          "INTEGRITY",
-          "Staging receipt differs from supplied bytes.",
-        );
-      }
-      return staged;
+      return this.stageBytes(snapshot, context);
     });
+  }
+  private async stageBytes(
+    snapshot: Uint8Array,
+    context: OperationContext,
+  ): Promise<StagedArtifact> {
+    const sha256 = hash(snapshot);
+    const staged = unwrap(
+      await this.options.fileSystem.stage(
+        {
+          artifactRootId: this.options.artifactRootId,
+          path: blobPath(sha256),
+        },
+        snapshot,
+        context,
+      ),
+    );
+    check("Artifact", staged.artifact);
+    check("StableId", staged.stagingId);
+    if (
+      staged.artifact.sha256 !== sha256 ||
+      staged.artifact.byteLength !== snapshot.length ||
+      staged.artifact.path !== blobPath(sha256)
+    ) {
+      throw new StorageError(
+        "INTEGRITY",
+        "Staging receipt differs from supplied bytes.",
+      );
+    }
+    return staged;
   }
 
   verify(
@@ -535,6 +585,7 @@ export class LocalStore implements ArtifactStore {
     outputs: StagedArtifact[],
     context: OperationContext,
     request?: RevisionCommit,
+    hooks?: JobCommitHooks,
   ): Promise<Outcome<CommitReceipt>> {
     return this.run(context, "write", async (context) => {
       if (!context.jobId)
@@ -543,6 +594,8 @@ export class LocalStore implements ArtifactStore {
           "Committing requires a jobId for a durable receipt.",
         );
       await this.guard(context, "write", "job", context.jobId);
+      if (hooks) await hooks.prepare(context);
+      else this.jobStore.assertLegacyAvailable(context);
       if (outputs.length > 20000)
         throw new StorageError("LIMIT", "Too many outputs.");
       for (const output of outputs) {
@@ -576,9 +629,28 @@ export class LocalStore implements ArtifactStore {
               branch: request.branch,
             }
           : null,
+        ...(hooks
+          ? {
+              completion: {
+                outputState: hooks.payload.outputState,
+                diagnosticIds: hooks.payload.diagnosticIds,
+                comparisonVerdict: hooks.payload.comparisonVerdict ?? null,
+                sourceStatus: hooks.payload.sourceStatus ?? null,
+              },
+            }
+          : {}),
       };
       const digest = this.digest(payload);
-      const prior = this.receipt(context.requestId, context);
+      const receiptScope =
+        hooks?.scope() ?? this.scope(context.requestId, context);
+      const priorRow = this.db
+        .prepare<[string], { data: string }>(
+          "SELECT data FROM receipts WHERE scope=?",
+        )
+        .get(receiptScope);
+      const prior = priorRow
+        ? parseContract("CommitReceipt", priorRow.data, "json")
+        : null;
       if (prior) {
         if (
           prior.idempotency.payloadSha256 !== digest ||
@@ -592,6 +664,7 @@ export class LocalStore implements ArtifactStore {
           await this.read(artifact, context);
         return prior;
       }
+      hooks?.check(context);
       if (request) await this.validateRevision(request, context);
       const published: Artifact[] = [];
       const needsPublicationBarrier: Artifact[] = [];
@@ -630,22 +703,32 @@ export class LocalStore implements ArtifactStore {
         }
         await this.options.verifyRevision(request.revision, context, evidence);
       }
+      if (hooks) {
+        const evidence = [];
+        for (const artifact of published)
+          evidence.push({
+            artifact,
+            bytes: await this.read(artifact, context),
+          });
+        await hooks.verify(evidence, context);
+      }
       if (needsPublicationBarrier.length !== 0)
         await this.options.ensurePublicationDurable(
           needsPublicationBarrier,
           context,
         );
+      if (hooks) await this.guard(context, "write", "job", context.jobId);
       this.checkpoint(context);
       const receipt: CommitReceipt = {
         schemaVersion: "1.0",
-        id: `receipt-${this.digest([this.scope(context.requestId, context), digest])}`,
+        id: `receipt-${this.digest([receiptScope, digest])}`,
         projectId: this.options.projectId,
         jobId: context.jobId,
         idempotency: {
           key: context.requestId,
           projectId: this.options.projectId,
-          actorId: context.authorization.actorId,
-          operation: "write",
+          actorId: hooks?.actorId() ?? context.authorization.actorId,
+          operation: hooks?.operation() ?? "write",
           payloadSha256: digest,
         },
         committedAt: new Date(context.clock.now()).toISOString(),
@@ -656,7 +739,10 @@ export class LocalStore implements ArtifactStore {
       check("CommitReceipt", receipt);
       this.checkpoint(context);
       this.db.transaction(() => {
+        if (hooks) hooks.check(context);
+        else this.jobStore.assertLegacyAvailable(context);
         for (const artifact of published) this.putArtifact(artifact);
+        if (hooks) this.options.fault?.("job-after-artifacts");
         if (request) {
           this.checkBase(request);
           const rev = request.revision;
@@ -672,9 +758,15 @@ export class LocalStore implements ArtifactStore {
         }
         this.db
           .prepare("INSERT INTO receipts VALUES (?,?)")
-          .run(this.scope(context.requestId, context), JSON.stringify(receipt));
+          .run(receiptScope, JSON.stringify(receipt));
         this.refs("job", receipt.id, published);
+        if (hooks) this.options.fault?.("job-after-receipt");
         this.options.fault?.("before-commit");
+        this.checkpoint(context);
+        if (hooks) {
+          hooks.check(context);
+          hooks.finish(receipt, context);
+        }
         this.checkpoint(context);
       })();
       // Once committed, cancellation or a lost response cannot undo the receipt.
@@ -699,17 +791,26 @@ export class LocalStore implements ArtifactStore {
     for (const row of rows) {
       const receipt = parseContract("CommitReceipt", row.data, "json");
       const scope = receipt.idempotency;
+      const tracked = this.jobStore.tracked(receipt.jobId);
+      const jobBound =
+        tracked &&
+        this.jobStore.receiptConsistent(
+          this.jobStore.load(receipt.jobId),
+          receipt,
+        );
       if (
         receipt.projectId !== this.options.projectId ||
         scope.projectId !== this.options.projectId ||
-        scope.operation !== "write" ||
+        (!jobBound && scope.operation !== "write") ||
         row.scope !==
-          JSON.stringify([
-            this.options.projectId,
-            scope.actorId,
-            scope.operation,
-            scope.key,
-          ])
+          (jobBound
+            ? this.jobStore.receiptScope(this.jobStore.load(receipt.jobId))
+            : JSON.stringify([
+                this.options.projectId,
+                scope.actorId,
+                scope.operation,
+                scope.key,
+              ]))
       )
         continue;
       if (receipt.outputs.some((output) => this.equal(output, artifact)))
@@ -1138,7 +1239,11 @@ export class LocalStore implements ArtifactStore {
         this.checkpoint(context);
         const canDiscard = await this.options.canDiscardStage(id, context);
         this.checkpoint(context);
-        if (!canDiscard) {
+        if (
+          !canDiscard ||
+          (this.jobStore.knownStage(id) &&
+            !this.jobStore.discardable(id, context.jobId))
+        ) {
           stagedRetained.push(id);
           continue;
         }
@@ -1170,6 +1275,8 @@ export class LocalStore implements ArtifactStore {
           .all()
           .map((row) => row.path),
       );
+      for (const path of this.jobStore.protectedStagePaths())
+        protectedPaths.add(path);
       const deleted: string[] = [];
       for (const artifact of inventory.publishedArtifacts) {
         const path = artifact.path;
@@ -1227,7 +1334,7 @@ export class LocalStore implements ArtifactStore {
         "Too many branch heads for one bounded backup.",
       );
     return {
-      storageVersion: 2,
+      storageVersion: 3,
       projectId: this.options.projectId,
       artifacts: this.allArtifacts(),
       revisions: this.db
@@ -1259,6 +1366,7 @@ export class LocalStore implements ArtifactStore {
           this.validatePin(pin);
           return pin;
         }),
+      ...this.jobStore.backup(),
     };
   }
   private boundRows(
@@ -1288,6 +1396,14 @@ export class LocalStore implements ArtifactStore {
       await this.guard(context, operation, "design", id);
     for (const id of new Set(metadata.receipts.map((receipt) => receipt.jobId)))
       await this.guard(context, operation, "job", id);
+    if (metadata.storageVersion === 3) {
+      for (const record of metadata.jobs) {
+        this.jobStore.validateBinding(record);
+        await this.guard(context, operation, "job", record.job.id);
+        for (const reference of this.jobStore.inputRefs(record))
+          await this.guard(context, "read", "artifact", reference.id);
+      }
+    }
   }
   backup(context: OperationContext): Promise<Outcome<ProjectBackup>> {
     return this.run(context, "read", async (context) => {
@@ -1331,7 +1447,10 @@ export class LocalStore implements ArtifactStore {
         this.metadata().revisions.length ||
         this.metadata().reviews.length ||
         this.metadata().receipts.length ||
-        this.metadata().pins.length
+        this.metadata().pins.length ||
+        this.jobStore.backup().jobs.length ||
+        this.jobStore.backup().jobResources.length ||
+        this.jobStore.backup().jobStages.length
       )
         throw new StorageError(
           "CONFLICT",
@@ -1339,7 +1458,7 @@ export class LocalStore implements ArtifactStore {
         );
       const metadata = backupMetadata(backup.metadata);
       if (
-        metadata.storageVersion !== 2 ||
+        (metadata.storageVersion !== 2 && metadata.storageVersion !== 3) ||
         metadata.projectId !== this.options.projectId
       )
         throw new StorageError(
@@ -1453,17 +1572,26 @@ export class LocalStore implements ArtifactStore {
           );
         }
         for (const receipt of metadata.receipts) {
-          const scope = JSON.stringify([
-            receipt.projectId,
-            receipt.idempotency.actorId,
-            "write",
-            receipt.idempotency.key,
-          ]);
+          const record =
+            metadata.storageVersion === 3
+              ? metadata.jobs.find((record) =>
+                  this.jobStore.receiptConsistent(record, receipt),
+                )
+              : undefined;
+          const scope = record
+            ? this.jobStore.receiptScope(record)
+            : JSON.stringify([
+                receipt.projectId,
+                receipt.idempotency.actorId,
+                "write",
+                receipt.idempotency.key,
+              ]);
           this.db
             .prepare("INSERT INTO receipts VALUES (?,?)")
             .run(scope, JSON.stringify(receipt));
           this.refs("job", receipt.id, receipt.outputs);
         }
+        if (metadata.storageVersion === 3) this.jobStore.restore(metadata);
         for (const pin of metadata.pins) {
           this.db
             .prepare("INSERT INTO pins VALUES (?,?,?)")
@@ -1558,7 +1686,13 @@ export class LocalStore implements ArtifactStore {
       if (
         receipt.projectId !== this.options.projectId ||
         receipt.idempotency.projectId !== this.options.projectId ||
-        receipt.idempotency.operation !== "write"
+        (receipt.idempotency.operation !== "write" &&
+          !(
+            metadata.storageVersion === 3 &&
+            metadata.jobs.some((record) =>
+              this.jobStore.receiptConsistent(record, receipt),
+            )
+          ))
       )
         throw new StorageError("INTEGRITY", "Invalid receipt scope.");
       for (const artifact of receipt.outputs)
@@ -1571,6 +1705,95 @@ export class LocalStore implements ArtifactStore {
     for (const pin of metadata.pins) {
       this.validatePin(pin);
       refs(pin.artifacts);
+    }
+    if (metadata.storageVersion === 3) {
+      const jobs = new Map(
+        metadata.jobs.map((record) => [record.job.id, record]),
+      );
+      const resources = new Map(
+        metadata.jobResources.map((resource) => [resource.key, resource]),
+      );
+      if (
+        jobs.size !== metadata.jobs.length ||
+        resources.size !== metadata.jobResources.length ||
+        new Set(metadata.jobStages.map((stage) => stage.stagingId)).size !==
+          metadata.jobStages.length ||
+        new Set(
+          metadata.jobs.map((record) => this.jobStore.receiptScope(record)),
+        ).size !== metadata.jobs.length
+      )
+        throw new StorageError(
+          "INTEGRITY",
+          "Duplicate private job identities.",
+        );
+      for (const record of metadata.jobs) {
+        if (record.job.projectId !== metadata.projectId)
+          throw new StorageError("INTEGRITY", "Cross-project job in backup.");
+        refs(this.jobStore.inputRefs(record));
+        if (
+          record.inputRevision &&
+          revisions.get(record.inputRevision.id)?.content.sha256 !==
+            record.inputRevision.sha256
+        )
+          throw new StorageError(
+            "INTEGRITY",
+            "Job input revision is unavailable.",
+          );
+        const receipts = metadata.receipts.filter(
+          (receipt) => receipt.jobId === record.job.id,
+        );
+        if (
+          record.job.status === "completed"
+            ? receipts.length !== 1 ||
+              !receipts[0] ||
+              !this.jobStore.receiptConsistent(record, receipts[0])
+            : receipts.length !== 0
+        )
+          throw new StorageError(
+            "INTEGRITY",
+            "Job receipt graph is inconsistent.",
+          );
+        for (const reservation of record.resources) {
+          const resource = resources.get(reservation.key);
+          if (
+            !resource ||
+            resource.state === "released" ||
+            resource.jobId !== record.job.id ||
+            resource.generation !== reservation.generation ||
+            resource.leaseId !== record.job.lease?.id ||
+            resource.fencingToken !== record.job.lease?.fencingToken
+          )
+            throw new StorageError(
+              "INTEGRITY",
+              "Job reservation graph is inconsistent.",
+            );
+        }
+      }
+      for (const resource of metadata.jobResources)
+        if (
+          resource.state !== "released" &&
+          !jobs
+            .get(resource.jobId ?? "")
+            ?.resources.some(
+              (r) =>
+                r.key === resource.key && r.generation === resource.generation,
+            )
+        )
+          throw new StorageError("INTEGRITY", "Resource owner is missing.");
+      for (const stage of metadata.jobStages) {
+        const record = jobs.get(stage.jobId);
+        if (
+          !record ||
+          stage.requestId !== record.requestId ||
+          stage.attempt > record.job.attempt ||
+          stage.fencingToken > record.generation ||
+          stage.staged.artifact.path !== blobPath(stage.staged.artifact.sha256)
+        )
+          throw new StorageError(
+            "INTEGRITY",
+            "Stage ownership graph is inconsistent.",
+          );
+      }
     }
   }
 }

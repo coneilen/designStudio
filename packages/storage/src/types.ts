@@ -11,6 +11,12 @@ import type {
   Revision,
   StagedArtifact,
 } from "@design-studio/contracts";
+import type {
+  JobStorageOptions,
+  StoredJob,
+  StoredJobResource,
+  StoredJobStage,
+} from "./job-types.js";
 
 export interface StorageScope {
   projectId: string;
@@ -34,6 +40,7 @@ export interface ApprovalAssessment {
 }
 
 export interface StorageOptions {
+  jobs?: JobStorageOptions;
   databasePath: string;
   nativeBinding: string;
   projectId: string;
@@ -85,7 +92,14 @@ export interface StorageOptions {
     context: OperationContext,
   ): Promise<boolean>;
   fault?(
-    point: "before-commit" | "after-commit" | "migration-before-commit",
+    point:
+      | "before-commit"
+      | "after-commit"
+      | "migration-before-commit"
+      | "job-after-stage"
+      | "job-after-artifacts"
+      | "job-after-receipt"
+      | "job-after-state",
   ): void;
 }
 
@@ -107,7 +121,7 @@ export interface RetentionPin {
   artifacts: ArtifactReference[];
 }
 
-export interface BackupMetadata {
+export interface LegacyBackupMetadata {
   storageVersion: 2;
   projectId: string;
   artifacts: Artifact[];
@@ -117,6 +131,16 @@ export interface BackupMetadata {
   receipts: CommitReceipt[];
   pins: RetentionPin[];
 }
+
+export interface JobBackupMetadata
+  extends Omit<LegacyBackupMetadata, "storageVersion"> {
+  storageVersion: 3;
+  jobs: StoredJob[];
+  jobResources: StoredJobResource[];
+  jobStages: StoredJobStage[];
+}
+
+export type BackupMetadata = LegacyBackupMetadata | JobBackupMetadata;
 
 export interface ProjectBackup {
   metadata: BackupMetadata;

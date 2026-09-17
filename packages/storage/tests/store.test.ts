@@ -730,6 +730,9 @@ describe.skipIf(process.platform !== "win32" || process.arch !== "x64")(
           nativeBinding: options.nativeBinding,
         });
         db.exec("DROP INDEX artifact_hash");
+        db.exec(
+          "DROP TABLE job_stages; DROP TABLE job_resources; DROP TABLE jobs",
+        );
         db.pragma("user_version = 1");
         db.close();
         const migrated = LocalStore.open({
@@ -764,7 +767,7 @@ describe.skipIf(process.platform !== "win32" || process.arch !== "x64")(
           nativeBinding: options.nativeBinding,
         });
         expect(original.pragma("user_version", { simple: true })).toBe(
-          fail ? 1 : 2,
+          fail ? 1 : 3,
         );
         original.close();
       },
