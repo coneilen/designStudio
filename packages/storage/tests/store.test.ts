@@ -223,6 +223,7 @@ describe.skipIf(process.platform !== "win32" || process.arch !== "x64")(
     test.each([
       "orphan",
       "missing-job-edge",
+      "missing-receipt",
       "foreign-project",
       "wrong-scope-key",
       "wrong-receipt-output",
@@ -248,7 +249,9 @@ describe.skipIf(process.platform !== "win32" || process.arch !== "x64")(
             nativeBinding: source.options.nativeBinding,
           });
           try {
-            if (scenario === "missing-job-edge")
+            if (scenario === "missing-receipt")
+              db.prepare("DELETE FROM receipts").run();
+            else if (scenario === "missing-job-edge")
               db.prepare(
                 "DELETE FROM artifact_refs WHERE owner_kind='job'",
               ).run();

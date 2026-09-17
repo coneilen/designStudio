@@ -156,6 +156,9 @@ left available to bounded `recover`: their cleanup cannot change an already
 committed logical receipt. They are discarded only after the existing trusted
 `canDiscardStage` policy and host ownership checks allow it; unknown/live stages
 remain explicitly reported. No automatic cleanup under expired authority occurs.
+Callers/jobs must retain the original submitted staging IDs until authorized
+cleanup/reconciliation; a complete commit receipt does not mean every submitted
+stage was consumed. The shared receipt records artifacts, not staging lifecycle.
 
 Public content contracts are imported rather than copied. JSON persistence
 encoding is not a new canonical design format: mandatory `canonicalBytes`
