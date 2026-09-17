@@ -55,6 +55,22 @@ by each controller command. Transport sessions expire after five minutes without
 implicit renewal. Shutdown waits for authoritative quiescence before releasing
 installation ownership; incomplete cleanup is not a successful result.
 
+Service startup owns fd3 before acquiring a project. Acquisition or subsequent
+startup failure always closes that channel; cleanup failures retain the primary
+typed error and a close-only retry capability for acquired resources.
+
+Controller shutdown records the fixed service's exit and teardown evidence
+independently. An already-exited service does not need another exchange on a
+dead pipe: release requires actual child `close` **and** either its strict final
+`service_stop` / `project_synthetic` stopped envelope or one exact project-bound
+stopped frame emitted after confirmed project shutdown. Truncated, duplicate,
+conflicting or foreign evidence is rejected. Abnormal exit after proven
+quiescence releases controller resources but remains a typed interrupted failure.
+Unknown crashes and still-live children retain installation pins; Node exit or
+kill-on-owner-close alone is not asserted to be renderer Job-empty evidence.
+Owner-close failures are retryable without repeating the dead IPC exchange,
+and successfully released resources are not closed twice.
+
 `preview` returns verified PNG artifact metadata with an unapproved warning;
 it never launches a browser. `artifacts get` optionally writes only to
 `--output-root foundation_outputs --output-relative <path>` using native verified

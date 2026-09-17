@@ -9,10 +9,15 @@ export class PrivateChannel {
   private waiter:
     | { resolve(value: JsonValue): void; reject(error: Error): void }
     | undefined;
-  constructor(private readonly pipe: Duplex) {
+  constructor(
+    private readonly pipe: Duplex,
+    observe?: (value: JsonValue) => void,
+    invalidProtocol?: () => void,
+  ) {
     pipe.on("data", (input: Buffer) => {
       if (this.failure) return;
       if (input.length + this.bytes.length > 65540) {
+        invalidProtocol?.();
         this.fail();
         return;
       }
@@ -20,6 +25,7 @@ export class PrivateChannel {
       while (this.bytes.length >= 4) {
         const size = this.bytes.readUInt32BE();
         if (size === 0 || size > 65536) {
+          invalidProtocol?.();
           this.fail();
           return;
         }
@@ -31,7 +37,9 @@ export class PrivateChannel {
             this.bytes.subarray(4, 4 + size).toString("utf8"),
             "json",
           );
+          observe?.(value);
         } catch {
+          invalidProtocol?.();
           this.fail();
           return;
         }
@@ -43,14 +51,21 @@ export class PrivateChannel {
           waiter.resolve(value);
         } else if (this.values.length < 4) this.values.push(value);
         else {
+          invalidProtocol?.();
           this.fail();
           return;
         }
       }
     });
     pipe.on("error", () => this.fail());
-    pipe.on("end", () => this.fail());
-    pipe.on("close", () => this.fail());
+    pipe.on("end", () => {
+      if (this.bytes.length !== 0) invalidProtocol?.();
+      this.fail();
+    });
+    pipe.on("close", () => {
+      if (this.bytes.length !== 0) invalidProtocol?.();
+      this.fail();
+    });
   }
   private fail() {
     this.failure ??= new ApplicationError("TRANSPORT_UNAVAILABLE", 503);

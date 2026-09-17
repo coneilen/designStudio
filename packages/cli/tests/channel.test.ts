@@ -2,6 +2,18 @@ import { PassThrough } from "node:stream";
 import { expect, it } from "vitest";
 import { PrivateChannel } from "../src/channel.js";
 
+it("notifies the owning lifecycle when closure leaves a truncated protocol frame", async () => {
+  const pipe = new PassThrough();
+  let invalid = false;
+  const channel = new PrivateChannel(pipe, undefined, () => {
+    invalid = true;
+  });
+  const pending = channel.read(1000);
+  pipe.end(Buffer.from([0, 0]));
+  await expect(pending).rejects.toThrow();
+  expect(invalid).toBe(true);
+});
+
 it("frames a private message without stdout or environment transport", async () => {
   const pipe = new PassThrough();
   const channel = new PrivateChannel(pipe);

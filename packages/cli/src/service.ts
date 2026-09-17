@@ -8,15 +8,60 @@ import {
 } from "@design-studio/application";
 import { openInstalledProject } from "@design-studio/application/installed";
 import { PrivateChannel } from "./channel.js";
+import { stoppedFrame } from "./service-shutdown.js";
 
+export class ServiceCleanupRequired extends ApplicationError {
+  override readonly cause: unknown;
+  constructor(
+    cause: unknown,
+    readonly cleanupFailures: readonly unknown[],
+    readonly close: () => Promise<boolean>,
+  ) {
+    super("INTERRUPTED", 409);
+    this.cause = cause;
+  }
+}
 export async function serve(port: number, controlFd: string | undefined) {
   if (controlFd !== "3") throw new ApplicationError("ACTION_REQUIRED", 409);
   const control = new PrivateChannel(
     new Socket({ fd: 3, readable: true, writable: true }),
   );
-  const project = await openInstalledProject();
+  let project: Awaited<ReturnType<typeof openInstalledProject>> | undefined;
   let api: Awaited<ReturnType<typeof listenHttp>> | undefined;
+  let apiClosed = false;
+  let projectClosed = false;
+  let channelClosed = false;
+  const closeOwned = async (): Promise<unknown[]> => {
+    const failures: unknown[] = [];
+    if (api && !apiClosed) {
+      try {
+        await api.close();
+        apiClosed = true;
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (project && !projectClosed) {
+      try {
+        projectClosed = await project.close();
+        if (!projectClosed)
+          failures.push(new ApplicationError("INTERRUPTED", 409));
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (!channelClosed) {
+      try {
+        control.close();
+        channelClosed = true;
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    return failures;
+  };
   try {
+    project = await openInstalledProject();
     const application = await project.application();
     api = await listenHttp(application.facade, createHttpSessions, port);
     const session = application.newClient(
@@ -45,12 +90,15 @@ export async function serve(port: number, controlFd: string | undefined) {
       )
         throw new ApplicationError("INVALID_INPUT");
       await api.close();
-      if (!(await project.close())) {
+      apiClosed = true;
+      projectClosed = await project.close();
+      if (!projectClosed) {
         await control.write({ kind: "interrupted" });
         continue;
       }
-      await control.write({ kind: "stopped" });
+      await control.write(stoppedFrame());
       control.close();
+      channelClosed = true;
       return success("service_stop", {
         kind: "service",
         projectId: PROJECT_ID,
@@ -59,10 +107,13 @@ export async function serve(port: number, controlFd: string | undefined) {
       });
     }
   } catch (error) {
-    if (api) await api.close();
-    if (!(await project.close()))
-      throw new ApplicationError("INTERRUPTED", 409);
-    control.close();
+    const failures = await closeOwned();
+    if (failures.length)
+      throw new ServiceCleanupRequired(
+        error,
+        failures,
+        async () => (await closeOwned()).length === 0,
+      );
     throw error;
   }
 }

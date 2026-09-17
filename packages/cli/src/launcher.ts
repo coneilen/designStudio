@@ -11,13 +11,21 @@ import { acquireInstalledLauncher } from "@design-studio/application/installed";
 import { parseContract, type ResponseEnvelope } from "@design-studio/contracts";
 import { parseArguments } from "./arguments.js";
 import { PrivateChannel } from "./channel.js";
+import {
+  type ObservedServiceExit,
+  ServiceQuiescence,
+  ServiceShutdown,
+} from "./service-shutdown.js";
 
 export interface CliResult {
   envelope: ResponseEnvelope;
   exitCode: number;
 }
 const blocked: readonly Command[] = ["serve", "with-session", "fixtures init"];
-function processResult(child: ChildProcess) {
+function processResult(
+  child: ChildProcess,
+  onClose?: (exit: ObservedServiceExit) => void,
+) {
   let stdout = Buffer.alloc(0);
   let stderrBytes = 0;
   let pending = "";
@@ -48,9 +56,11 @@ function processResult(child: ChildProcess) {
       child.once("error", () => {
         error = new ApplicationError("PROCESS_FAILED");
       });
-      child.once("close", (code) =>
-        error ? reject(error) : resolve({ code, bytes: stdout }),
-      );
+      child.once("close", (code) => {
+        onClose?.({ code, bytes: stdout, ...(error ? { error } : {}) });
+        if (error) reject(error);
+        else resolve({ code, bytes: stdout });
+      });
     },
   );
   return closed;
@@ -111,7 +121,11 @@ export async function launchLocalSession(
       env: environment(),
     },
   );
-  const closed = processResult(child);
+  let observedExit: ObservedServiceExit | undefined;
+  const evidence = new ServiceQuiescence();
+  const closed = processResult(child, (exit) => {
+    observedExit = exit;
+  });
   // Attach immediately: startup may fail before readiness is consumed.
   void closed.catch(() => {});
   const pipe = child.stdio[3];
@@ -121,7 +135,11 @@ export async function launchLocalSession(
     await owner.close();
     throw new ApplicationError("TRANSPORT_UNAVAILABLE");
   }
-  const channel = new PrivateChannel(pipe);
+  const channel = new PrivateChannel(
+    pipe,
+    (value) => evidence.observeControl(value),
+    () => evidence.invalidateControl(),
+  );
   let credential: string;
   let port: number;
   try {
@@ -151,11 +169,28 @@ export async function launchLocalSession(
     await owner.close();
     throw error;
   }
-  let stopped = false;
   let working = false;
+  const shutdown = new ServiceShutdown({
+    channel,
+    evidence,
+    observedExit: () => observedExit,
+    waitForExit: async () => {
+      await bounded(
+        closed.catch(() => undefined),
+        30000,
+      );
+      if (!observedExit) throw new ApplicationError("INTERRUPTED", 409);
+      return observedExit;
+    },
+    release: async () => {
+      credential = "";
+      await owner.close();
+    },
+  });
   return {
     async runCli(argv: readonly string[]): Promise<CliResult> {
-      if (stopped || working) throw new ApplicationError("CONFLICT", 409);
+      if (shutdown.started || observedExit || working)
+        throw new ApplicationError("CONFLICT", 409);
       const args = [...argv];
       const parsed = parseArguments(args);
       if (
@@ -226,23 +261,8 @@ export async function launchLocalSession(
       }
     },
     async close(): Promise<void> {
-      if (stopped) return;
       if (working) throw new ApplicationError("CONFLICT", 409);
-      await channel.write({ kind: "stop" });
-      const reply = await channel.read(30000);
-      if (
-        !reply ||
-        typeof reply !== "object" ||
-        Array.isArray(reply) ||
-        reply.kind !== "stopped"
-      )
-        throw new ApplicationError("INTERRUPTED", 409);
-      const result = await bounded(closed, 30000);
-      if (result.code !== 0) throw new ApplicationError("INTERRUPTED", 409);
-      channel.close();
-      credential = "";
-      await owner.close();
-      stopped = true;
+      await shutdown.close();
     },
   };
 }
