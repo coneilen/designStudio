@@ -1,0 +1,500 @@
+{
+  "fonts": [
+    {
+      "custom": true,
+      "family": "ABeeZee",
+      "fontId": "font_abeezee_regular",
+      "fontSha256": "2901c8df256648cc2bb2e3afb381cb8d28e65ed3dbe11de20695ae4d5ffdeda9",
+      "glyphs": 17,
+      "nodeId": "instance_4693ee18656801bf707184669ec3c28e8e723caaa63542d0a0ad94779860a60b"
+    },
+    {
+      "custom": true,
+      "family": "ABeeZee",
+      "fontId": "font_abeezee_regular",
+      "fontSha256": "2901c8df256648cc2bb2e3afb381cb8d28e65ed3dbe11de20695ae4d5ffdeda9",
+      "glyphs": 15,
+      "nodeId": "instance_77747f6d429927c027a6f6bc42019793fcd1f2ec1bd01ef0d91f73d5f4193611"
+    },
+    {
+      "custom": true,
+      "family": "ABeeZee",
+      "fontId": "font_abeezee_regular",
+      "fontSha256": "2901c8df256648cc2bb2e3afb381cb8d28e65ed3dbe11de20695ae4d5ffdeda9",
+      "glyphs": 24,
+      "nodeId": "instance_b52747a3e540b31ba0bad136e4503de8fdf9da4f524ab12a2f8857de4703ac4c"
+    }
+  ],
+  "nodes": {
+    "instance_0478c5259e003610c848ab7b60ce5a6c17aa434586067289a5bf6475a670f2cd": {
+      "clipChain": [],
+      "evidence": "renderer-measurement",
+      "localBounds": {
+        "height": 20,
+        "unit": "design-unit",
+        "width": 36,
+        "x": 349,
+        "y": 10
+      },
+      "measuredBounds": {
+        "height": 20,
+        "unit": "design-unit",
+        "width": 36,
+        "x": 349,
+        "y": 114
+      },
+      "overflow": false,
+      "paintOrder": 15,
+      "transform": {
+        "matrix": [1, 0, 0, 1, 0, 0],
+        "origin": { "x": 0, "y": 0 }
+      }
+    },
+    "instance_0f4694255d142ad52359ba56b99af24ae8192a27d9494d167776f795a662eb2a": {
+      "clipChain": [],
+      "evidence": "renderer-measurement",
+      "localBounds": {
+        "height": 16,
+        "unit": "design-unit",
+        "width": 16,
+        "x": 2,
+        "y": 2
+      },
+      "measuredBounds": {
+        "height": 16,
+        "unit": "design-unit",
+        "width": 16,
+        "x": 351,
+        "y": 12
+      },
+      "overflow": false,
+      "paintOrder": 5,
+      "transform": {
+        "matrix": [1, 0, 0, 1, 0, 0],
+        "origin": { "x": 0, "y": 0 }
+      }
+    },
+    "instance_4693ee18656801bf707184669ec3c28e8e723caaa63542d0a0ad94779860a60b": {
+      "clipChain": [],
+      "evidence": "renderer-measurement",
+      "localBounds": {
+        "height": 24,
+        "unit": "design-unit",
+        "width": 317,
+        "x": 8,
+        "y": 8
+      },
+      "measuredBounds": {
+        "height": 24,
+        "unit": "design-unit",
+        "width": 317,
+        "x": 8,
+        "y": 8
+      },
+      "overflow": false,
+      "paintOrder": 2,
+      "transform": {
+        "matrix": [1, 0, 0, 1, 0, 0],
+        "origin": { "x": 0, "y": 0 }
+      }
+    },
+    "instance_5212b7d5b662b2c85606037dfa4a1a42495e3778a781c03d2408abb2450aed12": {
+      "clipChain": [],
+      "evidence": "renderer-measurement",
+      "localBounds": {
+        "height": 16,
+        "unit": "design-unit",
+        "width": 16,
+        "x": 18,
+        "y": 2
+      },
+      "measuredBounds": {
+        "height": 16,
+        "unit": "design-unit",
+        "width": 16,
+        "x": 367,
+        "y": 64
+      },
+      "overflow": false,
+      "paintOrder": 11,
+      "transform": {
+        "matrix": [1, 0, 0, 1, 0, 0],
+        "origin": { "x": 0, "y": 0 }
+      }
+    },
+    "instance_53572678c6a87c38e70c6231385d79a3799636cf78773e36f250a5dda137b690": {
+      "clipChain": [],
+      "evidence": "renderer-measurement",
+      "localBounds": {
+        "height": 20,
+        "unit": "design-unit",
+        "width": 36,
+        "x": 349,
+        "y": 10
+      },
+      "measuredBounds": {
+        "height": 20,
+        "unit": "design-unit",
+        "width": 36,
+        "x": 349,
+        "y": 62
+      },
+      "overflow": false,
+      "paintOrder": 10,
+      "transform": {
+        "matrix": [1, 0, 0, 1, 0, 0],
+        "origin": { "x": 0, "y": 0 }
+      }
+    },
+    "instance_6d888bf659ec6bcfda118f34c91a9f88fa9a16f00a63306213e92d0c4854d1d3": {
+      "clipChain": [],
+      "evidence": "renderer-measurement",
+      "localBounds": {
+        "height": 16,
+        "unit": "design-unit",
+        "width": 16,
+        "x": 18,
+        "y": 2
+      },
+      "measuredBounds": {
+        "height": 16,
+        "unit": "design-unit",
+        "width": 16,
+        "x": 367,
+        "y": 116
+      },
+      "overflow": false,
+      "paintOrder": 16,
+      "transform": {
+        "matrix": [1, 0, 0, 1, 0, 0],
+        "origin": { "x": 0, "y": 0 }
+      }
+    },
+    "instance_77747f6d429927c027a6f6bc42019793fcd1f2ec1bd01ef0d91f73d5f4193611": {
+      "clipChain": [],
+      "evidence": "renderer-measurement",
+      "localBounds": {
+        "height": 24,
+        "unit": "design-unit",
+        "width": 309,
+        "x": 8,
+        "y": 8
+      },
+      "measuredBounds": {
+        "height": 24,
+        "unit": "design-unit",
+        "width": 309,
+        "x": 8,
+        "y": 60
+      },
+      "overflow": false,
+      "paintOrder": 7,
+      "transform": {
+        "matrix": [1, 0, 0, 1, 0, 0],
+        "origin": { "x": 0, "y": 0 }
+      }
+    },
+    "instance_8186f7b03aad4eab51e4f1aa4d4da14a054ff0782c2579f1ed8c76074bd3d56c": {
+      "clipChain": [],
+      "evidence": "renderer-measurement",
+      "localBounds": {
+        "height": 0,
+        "unit": "design-unit",
+        "width": 0,
+        "x": 337,
+        "y": 20
+      },
+      "measuredBounds": {
+        "height": 0,
+        "unit": "design-unit",
+        "width": 0,
+        "x": 337,
+        "y": 124
+      },
+      "overflow": false,
+      "paintOrder": 14,
+      "transform": {
+        "matrix": [1, 0, 0, 1, 0, 0],
+        "origin": { "x": 0, "y": 0 }
+      }
+    },
+    "instance_8805c5c222d3091faff647da2c43f6936365f2528fbd71fe78e3183eebe2ff02": {
+      "clipChain": [],
+      "evidence": "renderer-measurement",
+      "localBounds": {
+        "height": 0,
+        "unit": "design-unit",
+        "width": 0,
+        "x": 337,
+        "y": 20
+      },
+      "measuredBounds": {
+        "height": 0,
+        "unit": "design-unit",
+        "width": 0,
+        "x": 337,
+        "y": 20
+      },
+      "overflow": false,
+      "paintOrder": 3,
+      "transform": {
+        "matrix": [1, 0, 0, 1, 0, 0],
+        "origin": { "x": 0, "y": 0 }
+      }
+    },
+    "instance_b43982acd7fba9e76af5f0f277f8af50d5854006d25fa11a7e778ee8e4870fe7": {
+      "clipChain": [],
+      "evidence": "renderer-measurement",
+      "localBounds": {
+        "height": 8,
+        "unit": "design-unit",
+        "width": 8,
+        "x": 0,
+        "y": 0
+      },
+      "measuredBounds": {
+        "height": 8,
+        "unit": "design-unit",
+        "width": 8,
+        "x": 329,
+        "y": 68
+      },
+      "overflow": false,
+      "paintOrder": 9,
+      "transform": {
+        "matrix": [1, 0, 0, 1, 0, 0],
+        "origin": { "x": 0, "y": 0 }
+      }
+    },
+    "instance_b52747a3e540b31ba0bad136e4503de8fdf9da4f524ab12a2f8857de4703ac4c": {
+      "clipChain": [],
+      "evidence": "renderer-measurement",
+      "localBounds": {
+        "height": 24,
+        "unit": "design-unit",
+        "width": 317,
+        "x": 8,
+        "y": 8
+      },
+      "measuredBounds": {
+        "height": 24,
+        "unit": "design-unit",
+        "width": 317,
+        "x": 8,
+        "y": 112
+      },
+      "overflow": false,
+      "paintOrder": 13,
+      "transform": {
+        "matrix": [1, 0, 0, 1, 0, 0],
+        "origin": { "x": 0, "y": 0 }
+      }
+    },
+    "instance_e13c55005a1e2d88c9d095891446cda1cbf7c700d42f5f14aab3eaedfe62a540": {
+      "clipChain": [],
+      "evidence": "renderer-measurement",
+      "localBounds": {
+        "height": 20,
+        "unit": "design-unit",
+        "width": 36,
+        "x": 349,
+        "y": 10
+      },
+      "measuredBounds": {
+        "height": 20,
+        "unit": "design-unit",
+        "width": 36,
+        "x": 349,
+        "y": 10
+      },
+      "overflow": false,
+      "paintOrder": 4,
+      "transform": {
+        "matrix": [1, 0, 0, 1, 0, 0],
+        "origin": { "x": 0, "y": 0 }
+      }
+    },
+    "instance_f128a9ac9ab15221fdf4d6e9bb43ae12573374c666f0a3f650ecd432e5aa0c68": {
+      "clipChain": [],
+      "evidence": "renderer-measurement",
+      "localBounds": {
+        "height": 8,
+        "unit": "design-unit",
+        "width": 8,
+        "x": 329,
+        "y": 16
+      },
+      "measuredBounds": {
+        "height": 8,
+        "unit": "design-unit",
+        "width": 8,
+        "x": 329,
+        "y": 68
+      },
+      "overflow": false,
+      "paintOrder": 8,
+      "transform": {
+        "matrix": [1, 0, 0, 1, 0, 0],
+        "origin": { "x": 0, "y": 0 }
+      }
+    },
+    "variant-disabled": {
+      "clipChain": [],
+      "evidence": "renderer-measurement",
+      "localBounds": {
+        "height": 40,
+        "unit": "design-unit",
+        "width": 393,
+        "x": 0,
+        "y": 104
+      },
+      "measuredBounds": {
+        "height": 40,
+        "unit": "design-unit",
+        "width": 393,
+        "x": 0,
+        "y": 104
+      },
+      "overflow": false,
+      "paintOrder": 12,
+      "transform": {
+        "matrix": [1, 0, 0, 1, 0, 0],
+        "origin": { "x": 0, "y": 0 }
+      }
+    },
+    "variant-off": {
+      "clipChain": [],
+      "evidence": "renderer-measurement",
+      "localBounds": {
+        "height": 40,
+        "unit": "design-unit",
+        "width": 393,
+        "x": 0,
+        "y": 0
+      },
+      "measuredBounds": {
+        "height": 40,
+        "unit": "design-unit",
+        "width": 393,
+        "x": 0,
+        "y": 0
+      },
+      "overflow": false,
+      "paintOrder": 1,
+      "transform": {
+        "matrix": [1, 0, 0, 1, 0, 0],
+        "origin": { "x": 0, "y": 0 }
+      }
+    },
+    "variant-on": {
+      "clipChain": [],
+      "evidence": "renderer-measurement",
+      "localBounds": {
+        "height": 40,
+        "unit": "design-unit",
+        "width": 393,
+        "x": 0,
+        "y": 52
+      },
+      "measuredBounds": {
+        "height": 40,
+        "unit": "design-unit",
+        "width": 393,
+        "x": 0,
+        "y": 52
+      },
+      "overflow": false,
+      "paintOrder": 6,
+      "transform": {
+        "matrix": [1, 0, 0, 1, 0, 0],
+        "origin": { "x": 0, "y": 0 }
+      }
+    },
+    "variants-root": {
+      "clipChain": [],
+      "evidence": "renderer-measurement",
+      "localBounds": {
+        "height": 852,
+        "unit": "design-unit",
+        "width": 393,
+        "x": 0,
+        "y": 0
+      },
+      "measuredBounds": {
+        "height": 852,
+        "unit": "design-unit",
+        "width": 393,
+        "x": 0,
+        "y": 0
+      },
+      "overflow": false,
+      "paintOrder": 0,
+      "transform": {
+        "matrix": [1, 0, 0, 1, 0, 0],
+        "origin": { "x": 0, "y": 0 }
+      }
+    }
+  },
+  "overflow": [],
+  "pngSha256": "043a5bf4f63531e69144e4ab0ba1b2b344d8f45f835c09a22fb29dc88223c97b",
+  "profile": {
+    "assetHashes": [
+      {
+        "id": "asset_stripes",
+        "sha256": "0074ca9803f951ff777598b3a162c19cbea0a7b829e86f0d53340ad87643281d"
+      }
+    ],
+    "browser": {
+      "name": "chromium-headless-shell",
+      "sha256": "addfa79abb060e1e514e155ed745d4bf96140bca402735958bb4e223aea0b98c",
+      "version": "153.0.8010.12"
+    },
+    "capture": {
+      "bounds": {
+        "height": 852,
+        "unit": "design-unit",
+        "width": 393,
+        "x": 0,
+        "y": 0
+      },
+      "insets": { "bottom": 0, "left": 0, "right": 0, "top": 0 },
+      "scrollOffset": { "x": 0, "y": 0 },
+      "systemBars": "excluded"
+    },
+    "colorSpace": "srgb",
+    "deviceScale": 1,
+    "fontFallback": "forbidden",
+    "fontHashes": [
+      {
+        "id": "font_abeezee_regular",
+        "sha256": "2901c8df256648cc2bb2e3afb381cb8d28e65ed3dbe11de20695ae4d5ffdeda9"
+      }
+    ],
+    "frozenTime": "2026-09-16T00:00:00Z",
+    "host": {
+      "architecture": "x64",
+      "evidence": "observed",
+      "os": "windows",
+      "version": "10.0.26200"
+    },
+    "id": "windows_static_v1",
+    "locale": "en-US",
+    "motion": "disabled",
+    "network": "deny",
+    "renderer": {
+      "name": "@design-studio/renderer",
+      "sha256": "183d72b2f9914ebc1532e37910d598be41a4459fac2bd8c83d1ff0ea8b727b71",
+      "version": "1.0.0"
+    },
+    "schemaVersion": "1.0",
+    "state": {},
+    "theme": "light",
+    "viewport": {
+      "height": 852,
+      "unit": "design-unit",
+      "width": 393,
+      "x": 0,
+      "y": 0
+    }
+  }
+}

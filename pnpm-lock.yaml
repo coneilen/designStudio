@@ -119,6 +119,27 @@ importers:
         specifier: 3.2.1
         version: 3.2.1
 
+  packages/renderer:
+    dependencies:
+      '@design-studio/assets':
+        specifier: workspace:*
+        version: link:../assets
+      '@design-studio/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@design-studio/design-ir':
+        specifier: workspace:*
+        version: link:../design-ir
+      '@design-studio/host':
+        specifier: workspace:*
+        version: link:../host
+      '@design-studio/renderer-host':
+        specifier: workspace:*
+        version: link:../renderer-host
+      playwright:
+        specifier: 1.63.0
+        version: 1.63.0
+
   packages/renderer-host:
     dependencies:
       '@design-studio/contracts':
@@ -923,6 +944,16 @@ packages:
     resolution: {integrity: sha1-YxM2ADTMs2s9xh7L3/eBIfkP4h8=}
     engines: {node: '>=12'}
 
+  playwright-core@1.63.0:
+    resolution: {integrity: sha1-5XZlvDKEbCE6w5oeTVvGIo52s3Y=}
+    engines: {node: '>=20'}
+    hasBin: true
+
+  playwright@1.63.0:
+    resolution: {integrity: sha1-mbVvn2mxtwxE8Av4Sy/lI0iuJRE=}
+    engines: {node: '>=20'}
+    hasBin: true
+
   pngjs@7.0.0:
     resolution: {integrity: sha1-qLdEYCDrvGrHOdtsVBWmXRcJDiY=}
     engines: {node: '>=14.19.0'}
@@ -1677,6 +1708,12 @@ snapshots:
   picocolors@1.1.1: {}
 
   picomatch@4.0.7: {}
+
+  playwright-core@1.63.0: {}
+
+  playwright@1.63.0:
+    dependencies:
+      playwright-core: 1.63.0
 
   pngjs@7.0.0: {}
 
