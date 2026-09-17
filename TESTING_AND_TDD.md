@@ -223,3 +223,19 @@ deadline.
 The final release's unmodified bootstrap/payload inventories and user approval
 remain separate from test candidates. No real installation, push, pull request,
 main merge, hosted CI/macOS run, or later product phase is implied by this checkpoint.
+
+### PR CI follow-up
+
+The first PR run failed on both hosted lanes. macOS encountered backslash fixture
+paths and Windows-only native dependencies; CI now targets only the approved
+Windows foundation scope instead of advertising a passing macOS matrix.
+
+Windows failures included strict real-path rejection of temporary roots. An
+owned local directory-alias reproduction produced the same renderer-host
+`PATH_FORBIDDEN` failure; resolving `TEMP`/`TMP` through the new CI setup script
+made that exact test pass. The script exports only the canonical existing
+directory via `GITHUB_ENV` before tests create their owned roots. A subprocess
+regression verifies alias resolution and unchanged target identity, and verifies
+that missing temporary roots do not publish environment changes. Production
+alias checks, authorization, deadlines, and native publication rules are unchanged.
+Hosted success must still be established by the new PR run.

@@ -137,9 +137,16 @@ upstream integrity before release when that registry is reachable.
 CI uses SHA-pinned actions, read-only repository permissions, no persisted
 checkout credentials, no secret inputs, and no artifact uploads. It performs a
 frozen install followed by lint, dependency-ordered build, typecheck, unit, and offline smoke on
-`windows-latest` and `macos-latest`. The official runner inventory mapped these
-to Windows Server 2025 x64 and macOS 26 arm64 when configured; aliases can move.
-Neither hosted CI nor macOS was executed during this local bootstrap.
+`windows-latest`. This foundation checkpoint intentionally excludes macOS:
+the initial hosted macOS run exposed unguarded Windows fixture paths and native
+bindings. Portable tests/native preparation must be established before restoring
+that lane. Runner aliases can move; the initially selected Windows image was
+Windows Server 2025 x64.
+
+Before tests allocate temporary roots, `scripts/prepare-ci-temp.mjs` resolves the
+runner's temporary directory to its real path and exports it as `TEMP` and `TMP`
+for subsequent steps. This handles environment aliases without relaxing the
+production filesystem and renderer-host checks that reject aliased roots.
 
 ## Native foundation integration
 

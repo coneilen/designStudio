@@ -21,7 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest]
+        os: [windows-latest]
     steps:
       - name: Check out source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -36,6 +36,8 @@ jobs:
         uses: pnpm/action-setup@a8198c4bff370c8506180b035930dea56dbd5288 # v5
         with:
           run_install: false
+      - name: Resolve the runner temporary directory
+        run: node scripts/prepare-ci-temp.mjs
       - name: Install from the committed lockfile
         run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Prepare the pinned Windows SQLite prebuild

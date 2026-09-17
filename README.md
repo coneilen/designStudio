@@ -69,7 +69,8 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for runtime setup and version rationale,
 [TESTING_AND_TDD.md](TESTING_AND_TDD.md) for acceptance and observed evidence, and
 [ARCHITECTURE.md](ARCHITECTURE.md) for planned boundaries.
 
-Windows x64 checks have been run locally. Windows/macOS hosted CI is configured,
-but no hosted run or macOS execution has been observed. F01 used the approved
-Windows-first synthetic-foundation G0 exception; this does not pass deferred
-live Figma/macOS/device gates or authorize later product work.
+Windows x64 checks have been run locally. CI targets `windows-latest` for this
+Windows-first checkpoint. The initial hosted macOS run exposed Windows-specific
+fixture paths and native dependencies; macOS is not currently a supported test
+target. F01 used the approved Windows-first synthetic-foundation G0 exception;
+this does not pass deferred live Figma/macOS/device gates or authorize later work.
