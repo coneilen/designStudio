@@ -131,7 +131,7 @@ export async function diskFixture(root: string) {
           publishedArtifacts,
         };
       },
-      async removeBlob(artifact: Artifact) {
+      async removeBlob(artifact: Artifact, _context: OperationContext) {
         const path = join(root, ...artifact.path.split("/"));
         const content = await readFile(path);
         if (

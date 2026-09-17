@@ -82,9 +82,7 @@ export function decodeBackup(
       !("base64" in blob) ||
       typeof blob.base64 !== "string" ||
       Object.keys(blob).length !== 2 ||
-      !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
-        blob.base64,
-      )
+      !validBase64(blob.base64)
     )
       throw new StorageError("INVALID_INPUT", "Invalid backup byte encoding.");
     const data = Buffer.from(blob.base64, "base64");
@@ -98,6 +96,26 @@ export function decodeBackup(
   // Full nested contracts, reference graph, exact byte integrity and trusted origin are
   // deliberately revalidated by LocalStore.restore before any database references commit.
   return { metadata, sha256: contract("Sha256", value.sha256), blobs };
+}
+
+function validBase64(value: string): boolean {
+  if (value.length % 4 !== 0) return false;
+  const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+  const end = value.length - padding;
+  for (let index = 0; index < end; index++) {
+    const code = value.charCodeAt(index);
+    if (
+      !(
+        (code >= 65 && code <= 90) ||
+        (code >= 97 && code <= 122) ||
+        (code >= 48 && code <= 57) ||
+        code === 43 ||
+        code === 47
+      )
+    )
+      return false;
+  }
+  return true;
 }
 
 function limit(maxBytes: number): void {

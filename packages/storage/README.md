@@ -97,6 +97,16 @@ Every operation requires `OperationContext` and a mandatory asynchronous
 Root-scoped authorization precedes deduplication, existence checks and inventory;
 revision/design/job access receives additional object-scoped checks.
 
+Before enqueueing, storage owns and freezes request metadata and a copied
+budget, then passes that owned context to authorization, filesystem calls,
+retention callbacks and receipt construction. Caller edits to request/project/
+job IDs, deadlines or budgets cannot retarget queued/in-flight work. The exact
+authorization object is retained for trusted reference-based authenticators;
+storage neither clones that proof nor freezes caller objects. Its captured
+authorization JSON must remain unchanged at checkpoints and before accepting
+results; in-place claim/grant mutation fails with `FORBIDDEN`. The original
+signal and clock references remain live for cancellation/deadlines.
+
 | API | Behavior |
 | --- | --- |
 | `stage(bytes, context)` | Copies bounded bytes, requests `blobs/<lowercase SHA256>`, checks verbatim shared staging metadata. |
@@ -166,6 +176,13 @@ writer queue/OS lease, and is cleared in `finally`. Reference checks include
 all aliases of a physical content path. A racing commit cannot add a reference
 between the reference check and deletion. `authorizeRetention` is mandatory
 for pin/release/collection; no legal hold is silently overridden.
+When composing F04, set `StorageOptions.snapshotOperationContext` to the host's
+shared branded helper. Reapplying that helper in nested host operations returns
+the same owned context, preserving the exact removal reservation. Storage
+checks frozen metadata/budget, unchanged metadata values and exact authorization/
+signal/clock references even when this optional helper is supplied; it is not
+an authorization bypass. Non-host adapters use storage's own snapshot boundary.
+A configured helper cannot substitute a cloned auth proof.
 This version conservatively retains job-receipt evidence indefinitely.
 Releasing cache pins does not erase revision, review, job, bundle or legal
 references; broad historical deletion is intentionally not exposed.
@@ -193,6 +210,9 @@ reviews, receipts and retention pins, plus a canonical metadata digest and
 deduplicated exact bytes. The transport codec has a 25-MiB ceiling; oversized
 exports fail explicitly, not partially. No streaming/large-project archive
 implementation is claimed.
+Base64 validation uses a stack-safe character scan with length/padding checks
+and a canonical decode/re-encode comparison. A 4-MiB synthetic artifact is
+covered through encoding, decoding, verified restore and exact byte hashing.
 
 Restore requires an empty store and mandatory `authorizeRestore(backup, context)`
 that authenticates backup provenance and destination authority. Hash checks
@@ -225,6 +245,11 @@ RED was observed for the absent native binding, missing store implementation,
 new references to corrupt existing blobs, object-scoped backup authorization,
 duplicate-key transport, accessor-bearing revisions, unverified durability and
 interrupted host publication. Tests then drove the corresponding fixes.
+Follow-up review also reproduced caller-owned context mutation during an
+authorization/durability await, queued identity/budget mutation, and regex stack
+exhaustion on valid multi-megabyte base64; these now have passing regressions.
+Frozen exact-reference authentication and shared branded context/reservation
+compatibility are tested without mutating or freezing caller input.
 Synthetic tests cover transactional CAS, idempotency/restart, stage/publication/
 DB fault boundaries, abrupt SQLite process exit, approvals and explicit waivers,
 retention and GC races, corrupt/missing bytes, migration backup/rollback,

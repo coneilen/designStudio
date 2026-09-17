@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import type {
   ApprovalContext,
   Artifact,
+  OperationContext,
   Outcome,
   ReviewEvent,
   StagedArtifact,
@@ -16,10 +17,19 @@ import {
   LocalStore,
   type StorageOptions,
 } from "../src/index.js";
-import { bytes, context, diskFixture, revision } from "./support.js";
+import { bytes, context, diskFixture, hash, revision } from "./support.js";
 
 const roots: string[] = [];
 const stores: LocalStore[] = [];
+function gate() {
+  let resolve: () => void = () => {
+    throw new Error("Uninitialized test gate.");
+  };
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
 afterEach(async () => {
   for (const store of stores.splice(0)) store.close();
   for (const root of roots.splice(0))
@@ -607,18 +617,19 @@ describe.skipIf(process.platform !== "win32" || process.arch !== "x64")(
       const ctx = context("gc");
       expect(store.hasRemovalReservation(staged.artifact, ctx)).toBe(false);
       const remove = disk.maintenance.removeBlob;
-      disk.maintenance.removeBlob = async (artifact) => {
-        expect(store.hasRemovalReservation(artifact, ctx)).toBe(true);
+      disk.maintenance.removeBlob = async (artifact, operation) => {
+        expect(operation).not.toBe(ctx);
+        expect(store.hasRemovalReservation(artifact, operation)).toBe(true);
         expect(
           store.hasRemovalReservation(
             { ...artifact, sha256: "a".repeat(64) },
-            ctx,
+            operation,
           ),
         ).toBe(false);
         expect(store.hasRemovalReservation(artifact, context("gc"))).toBe(
           false,
         );
-        await remove(artifact);
+        await remove(artifact, operation);
       };
       value(await store.collectGarbage(ctx));
       expect(store.hasRemovalReservation(staged.artifact, ctx)).toBe(false);
@@ -705,9 +716,9 @@ describe.skipIf(process.platform !== "win32" || process.arch !== "x64")(
       await disk.fs.publish(staged, context());
       let queued: Promise<Outcome<unknown>> | undefined;
       const remove = disk.maintenance.removeBlob;
-      disk.maintenance.removeBlob = async (artifact) => {
+      disk.maintenance.removeBlob = async (artifact, operation) => {
         queued = store.commit([staged], context("racing-commit"));
-        await remove(artifact);
+        await remove(artifact, operation);
       };
       expect(
         value(await store.collectGarbage(context("gc"))).deleted,
@@ -808,6 +819,168 @@ describe.skipIf(process.platform !== "win32" || process.arch !== "x64")(
       expect(
         value(await store.getHead("design1", "alternative", context())),
       ).toBe("rev2");
+    });
+    test("rejects authorization mutation while publication durability is awaiting", async () => {
+      const entered = gate();
+      const resume = gate();
+      const ctx = context("original");
+      const { store } = await setup({
+        authorize: async (operation) => {
+          if (operation.authorization.actorId !== "actor1")
+            throw new Error("unauthorized actor");
+        },
+        ensurePublicationDurable: async () => {
+          entered.resolve();
+          await resume.promise;
+        },
+      });
+      const outputs = await stage(store, ["context-race"]);
+      const pending = store.commit(outputs, ctx);
+      await entered.promise;
+      ctx.authorization.actorId = "unauthorized-actor";
+      ctx.requestId = "changed-key";
+      ctx.jobId = "unauthorized-job";
+      resume.resolve();
+      const result = await pending;
+      expect(result.status).toBe("failed");
+      expect(result.requestId).toBe("original");
+      expect(value(await store.backup(context())).metadata.receipts).toEqual(
+        [],
+      );
+      expect(Object.isFrozen(ctx.authorization)).toBe(false);
+    });
+    test("owns metadata and budgets while preserving exact frozen trusted authorization, signal and clock", async () => {
+      const entered = gate();
+      const resume = gate();
+      const ctx = context("original");
+      const trusted = ctx.authorization;
+      Object.freeze(trusted.grants);
+      Object.freeze(trusted);
+      const seen: string[] = [];
+      const { store } = await setup({
+        authorize: async (operation) => {
+          if (operation.authorization !== trusted)
+            throw new Error("unknown authorization provenance");
+          expect(operation.signal).toBe(ctx.signal);
+          expect(operation.clock).toBe(ctx.clock);
+          seen.push(operation.requestId);
+        },
+        ensurePublicationDurable: async () => {
+          entered.resolve();
+          await resume.promise;
+        },
+      });
+      const staged = value(
+        await store.stage(bytes("healthy-trusted-auth"), ctx),
+      );
+      const pending = store.commit([staged], ctx);
+      await entered.promise;
+      ctx.requestId = "changed-key";
+      ctx.jobId = "unauthorized-job";
+      ctx.projectId = "other-project";
+      ctx.deadline = "2026-09-16T00:00:00.000Z";
+      ctx.budget.maxDurationMs = 1;
+      ctx.budget.maxInputBytes = 1;
+      ctx.authorization = { ...trusted, actorId: "unauthorized-actor" };
+      resume.resolve();
+      const receipt = value(await pending);
+      expect(receipt.jobId).toBe("job-original");
+      expect(receipt.idempotency).toMatchObject({
+        actorId: "actor1",
+        key: "original",
+        projectId: "project1",
+      });
+      expect(seen.every((id) => id === "original")).toBe(true);
+      expect(Object.isFrozen(ctx)).toBe(false);
+      expect(Object.isFrozen(ctx.budget)).toBe(false);
+    });
+    test("snapshots queued request identity before the preceding operation yields", async () => {
+      const entered = gate();
+      const resume = gate();
+      let first = true;
+      const { store } = await setup({
+        ensurePublicationDurable: async () => {
+          if (first) {
+            first = false;
+            entered.resolve();
+            await resume.promise;
+          }
+        },
+      });
+      const outputs = await stage(store, ["queue-first", "queue-second"]);
+      const one = outputs[0];
+      const two = outputs[1];
+      if (!one || !two) throw new Error("missing staged fixture");
+      const pending = store.commit([one], context("first"));
+      await entered.promise;
+      const ctx = context("queued-original");
+      const queued = store.commit([two], ctx);
+      ctx.requestId = "changed-while-queued";
+      ctx.jobId = "changed-job";
+      ctx.budget.maxOutputBytes = 1;
+      resume.resolve();
+      value(await pending);
+      const receipt = value(await queued);
+      expect(receipt.idempotency.key).toBe("queued-original");
+      expect(receipt.jobId).toBe("job-queued-original");
+    });
+    test("multi-megabyte base64 backup decodes and restores within budget", async () => {
+      const source = await setup();
+      const content = new Uint8Array(4 * 1024 * 1024);
+      const staged = value(await source.store.stage(content, context()));
+      const receipt = value(await source.store.commit([staged], context()));
+      const snapshot = value(await source.store.backup(context()));
+      const encoded = encodeBackup(snapshot, 26214400);
+      expect(encoded.byteLength).toBeGreaterThan(5 * 1024 * 1024);
+      expect(encoded.byteLength).toBeLessThanOrEqual(26214400);
+      const decoded = decodeBackup(encoded, 26214400);
+      const decodedBytes = decoded.blobs[0]?.bytes;
+      if (!decodedBytes) throw new Error("missing decoded bytes");
+      expect(decodedBytes.byteLength).toBe(content.byteLength);
+      expect(hash(decodedBytes)).toBe(hash(content));
+      const target = await setup();
+      value(await target.store.restore(decoded, context("restore")));
+      expect(
+        value(await target.store.getReceipt("request1", context())),
+      ).toEqual(receipt);
+      const restoredBytes = value(await target.store.backup(context())).blobs[0]
+        ?.bytes;
+      if (!restoredBytes) throw new Error("missing restored bytes");
+      expect(restoredBytes.byteLength).toBe(content.byteLength);
+      expect(hash(restoredBytes)).toBe(hash(content));
+    }, 30000);
+    test("shared branded host snapshots preserve the exact removal reservation", async () => {
+      const branded = new WeakSet<OperationContext>();
+      const snapshotOperationContext = (
+        input: OperationContext,
+      ): OperationContext => {
+        if (branded.has(input)) return input;
+        const { signal, clock, authorization, ...metadata } = input;
+        const copy = structuredClone(metadata);
+        Object.freeze(copy.budget);
+        const owned = Object.freeze({ ...copy, signal, clock, authorization });
+        branded.add(owned);
+        return owned;
+      };
+      const { store, disk } = await setup({
+        snapshotOperationContext,
+        authorize: async (operation) => {
+          expect(snapshotOperationContext(operation)).toBe(operation);
+        },
+      });
+      const output = value(
+        await store.stage(bytes("branded-orphan"), context()),
+      );
+      await disk.fs.publish(output, context());
+      const remove = disk.maintenance.removeBlob;
+      disk.maintenance.removeBlob = async (artifact, operation) => {
+        const hostSnapshot = snapshotOperationContext(operation);
+        expect(store.hasRemovalReservation(artifact, hostSnapshot)).toBe(true);
+        await remove(artifact, hostSnapshot);
+      };
+      expect(value(await store.collectGarbage(context("gc"))).deleted).toEqual([
+        output.artifact.path,
+      ]);
     });
   },
 );

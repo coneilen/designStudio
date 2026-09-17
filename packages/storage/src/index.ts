@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import {
   type ApprovalContext,
   type Artifact,
@@ -105,6 +106,10 @@ export class LocalStore implements ArtifactStore {
     | undefined;
   private inputBytes = 0;
   private startedAt = 0;
+  private readonly authorizationSnapshots = new WeakMap<
+    OperationContext,
+    string
+  >();
 
   private constructor(
     private readonly db: Database.Database,
@@ -130,6 +135,7 @@ export class LocalStore implements ArtifactStore {
   }
 
   private checkpoint(context: OperationContext): void {
+    this.checkAuthorization(context);
     if (this.closed) throw new StorageError("IO_FAILURE", "Store is closed.");
     if (context.signal.aborted)
       throw new StorageError("CANCELLED", "Storage operation was cancelled.");
@@ -137,6 +143,62 @@ export class LocalStore implements ArtifactStore {
       throw new StorageError("DEADLINE", "Storage deadline expired.");
     if (context.clock.now() - this.startedAt >= context.budget.maxDurationMs)
       throw new StorageError("DEADLINE", "Storage duration budget expired.");
+  }
+  private ownContext(context: OperationContext): OperationContext {
+    const { signal, clock, authorization, ...metadata } = context;
+    check("OperationRequestContext", { ...metadata, authorization });
+    const authorizationJson = JSON.stringify(authorization);
+    const owned = structuredClone(metadata);
+    Object.freeze(owned.budget);
+    const snapshot = this.options.snapshotOperationContext
+      ? this.options.snapshotOperationContext(context)
+      : Object.freeze({ ...owned, authorization, signal, clock });
+    const {
+      authorization: receivedAuthorization,
+      signal: receivedSignal,
+      clock: receivedClock,
+      ...receivedMetadata
+    } = snapshot;
+    if (
+      !Object.isFrozen(snapshot) ||
+      !Object.isFrozen(snapshot.budget) ||
+      receivedAuthorization !== authorization ||
+      receivedSignal !== signal ||
+      receivedClock !== clock ||
+      !isDeepStrictEqual(owned, receivedMetadata)
+    )
+      throw new StorageError(
+        "AUTHORIZATION_CHANGED",
+        "Context snapshot must own frozen metadata and preserve trusted runtime references.",
+      );
+    const previous = this.authorizationSnapshots.get(snapshot);
+    if (
+      JSON.stringify(authorization) !== authorizationJson ||
+      (previous !== undefined && previous !== authorizationJson)
+    )
+      throw new StorageError(
+        "AUTHORIZATION_CHANGED",
+        "A reused context cannot replace its captured authorization.",
+      );
+    this.authorizationSnapshots.set(snapshot, authorizationJson);
+    return snapshot;
+  }
+  private checkAuthorization(context: OperationContext): void {
+    const baseline = this.authorizationSnapshots.get(context);
+    if (baseline === undefined)
+      throw new StorageError(
+        "AUTHORIZATION_CHANGED",
+        "Storage operation lacks its captured authorization provenance.",
+      );
+    const result = validateContract(
+      "AuthorizationContext",
+      context.authorization,
+    );
+    if (!result.success || JSON.stringify(context.authorization) !== baseline)
+      throw new StorageError(
+        "AUTHORIZATION_CHANGED",
+        "Authorization changed during the storage operation.",
+      );
   }
 
   private async guard(
@@ -162,15 +224,28 @@ export class LocalStore implements ArtifactStore {
   private async run<T>(
     context: OperationContext,
     operation: "read" | "write",
-    action: () => Promise<T>,
+    action: (context: OperationContext) => Promise<T>,
   ): Promise<Outcome<T>> {
+    const identity = {
+      projectId: context.projectId,
+      requestId: context.requestId,
+    };
+    let captureError: unknown;
+    try {
+      context = this.ownContext(context);
+    } catch (error) {
+      captureError = error;
+    }
     this.active++;
     const execute = async (): Promise<Outcome<T>> => {
       try {
+        if (captureError !== undefined) throw captureError;
         this.inputBytes = 0;
         this.startedAt = context.clock.now();
         await this.guard(context, operation);
-        return this.success(await action(), context);
+        const result = await action(context);
+        this.checkAuthorization(context);
+        return this.success(result, context);
       } catch (error) {
         const code =
           error instanceof StorageError
@@ -190,6 +265,7 @@ export class LocalStore implements ArtifactStore {
           DEADLINE: "DEADLINE_EXCEEDED",
           IO_FAILURE: "INTERNAL_ERROR",
           NOT_FOUND: "EVIDENCE_MISSING",
+          AUTHORIZATION_CHANGED: "FORBIDDEN",
         };
         const external =
           error instanceof Error && "code" in error
@@ -197,8 +273,8 @@ export class LocalStore implements ArtifactStore {
             : null;
         return {
           schemaVersion: "1.0",
-          projectId: context.projectId,
-          requestId: context.requestId,
+          projectId: identity.projectId,
+          requestId: identity.requestId,
           status:
             error instanceof BoundaryFailure
               ? error.status
@@ -361,7 +437,7 @@ export class LocalStore implements ArtifactStore {
       bytes.length <= context.budget.maxOutputBytes
         ? Uint8Array.from(bytes)
         : null;
-    return this.run(context, "write", async () => {
+    return this.run(context, "write", async (context) => {
       if (snapshot === null)
         throw new StorageError(
           "LIMIT",
@@ -397,7 +473,7 @@ export class LocalStore implements ArtifactStore {
     reference: ArtifactReference,
     context: OperationContext,
   ): Promise<Outcome<Artifact>> {
-    return this.run(context, "read", async () => {
+    return this.run(context, "read", async (context) => {
       check("ArtifactReference", reference);
       const artifact = this.artifact(reference);
       await this.read(artifact, context);
@@ -444,7 +520,7 @@ export class LocalStore implements ArtifactStore {
     key: string,
     context: OperationContext,
   ): Promise<Outcome<CommitReceipt | null>> {
-    return this.run(context, "read", async () => {
+    return this.run(context, "read", async (context) => {
       check("StableId", key);
       const receipt = this.receipt(key, context);
       if (receipt) {
@@ -460,7 +536,7 @@ export class LocalStore implements ArtifactStore {
     context: OperationContext,
     request?: RevisionCommit,
   ): Promise<Outcome<CommitReceipt>> {
-    return this.run(context, "write", async () => {
+    return this.run(context, "write", async (context) => {
       if (!context.jobId)
         throw new StorageError(
           "INVALID_INPUT",
@@ -548,6 +624,7 @@ export class LocalStore implements ArtifactStore {
         await this.options.verifyRevision(request.revision, context, evidence);
       }
       await this.options.ensurePublicationDurable(published, context);
+      this.checkpoint(context);
       const receipt: CommitReceipt = {
         schemaVersion: "1.0",
         id: `receipt-${this.digest([this.scope(context.requestId, context), digest])}`,
@@ -593,10 +670,7 @@ export class LocalStore implements ArtifactStore {
       try {
         this.options.fault?.("after-commit");
       } catch {
-        const accepted = this.receipt(context.requestId, context);
-        if (!accepted)
-          throw new StorageError("INTEGRITY", "Committed receipt disappeared.");
-        return accepted;
+        return receipt;
       }
       return receipt;
     });
@@ -662,7 +736,7 @@ export class LocalStore implements ArtifactStore {
     id: string,
     context: OperationContext,
   ): Promise<Outcome<Revision>> {
-    return this.run(context, "read", async () => {
+    return this.run(context, "read", async (context) => {
       check("StableId", id);
       await this.guard(context, "read", "revision", id);
       const revision = this.row("revisions", id, "Revision");
@@ -676,7 +750,7 @@ export class LocalStore implements ArtifactStore {
     branch: string,
     context: OperationContext,
   ): Promise<Outcome<string | null>> {
-    return this.run(context, "read", async () => {
+    return this.run(context, "read", async (context) => {
       check("StableId", designId);
       check("StableId", branch);
       await this.guard(context, "read", "design", designId);
@@ -700,7 +774,7 @@ export class LocalStore implements ArtifactStore {
       context,
       "write",
       (request) =>
-        this.run(context, "write", async () => {
+        this.run(context, "write", async (context) => {
           check("StableId", request.designId);
           check("StableId", request.branch);
           check("ExpectedBase", request.base);
@@ -754,7 +828,7 @@ export class LocalStore implements ArtifactStore {
     designId: string,
     context: OperationContext,
   ): Promise<Outcome<StoredReview[]>> {
-    return this.run(context, "read", async () => {
+    return this.run(context, "read", async (context) => {
       check("StableId", designId);
       await this.guard(context, "read", "design", designId);
       return this.reviews(designId);
@@ -826,7 +900,7 @@ export class LocalStore implements ArtifactStore {
     event: ReviewEvent,
     context: OperationContext,
   ): Promise<Outcome<ArtifactReference>> {
-    return this.run(context, "write", async () => {
+    return this.run(context, "write", async (context) => {
       check("ReviewEvent", event);
       await this.guard(context, "write", "design", event.context.designId);
       if (
@@ -879,7 +953,7 @@ export class LocalStore implements ArtifactStore {
     approval: ApprovalContext,
     context: OperationContext,
   ): Promise<Outcome<ReviewEvent | null>> {
-    return this.run(context, "read", async () => {
+    return this.run(context, "read", async (context) => {
       await this.approvalContext(approval, context);
       const last = this.reviews(approval.designId)
         .filter(
@@ -909,11 +983,12 @@ export class LocalStore implements ArtifactStore {
     context: OperationContext,
   ): Promise<Outcome<RetentionPin>> {
     const { kind, id } = pin;
-    return this.run(context, "write", async () => {
+    return this.run(context, "write", async (context) => {
       this.validatePin(pin);
       await this.options.authorizeRetention("pin", pin, context);
       for (const reference of pin.artifacts)
         await this.read(this.artifact(reference), context);
+      this.checkpoint(context);
       this.db.transaction(() => {
         this.db
           .prepare(
@@ -935,7 +1010,7 @@ export class LocalStore implements ArtifactStore {
     id: string,
     context: OperationContext,
   ): Promise<Outcome<{ released: true }>> {
-    return this.run(context, "write", async () => {
+    return this.run(context, "write", async (context) => {
       this.validatePin({ kind, id, artifacts: [] });
       const row = this.db
         .prepare<[string, string], { data: string }>(
@@ -947,6 +1022,7 @@ export class LocalStore implements ArtifactStore {
       const pin: RetentionPin = JSON.parse(row.data);
       this.validatePin(pin);
       await this.options.authorizeRetention("release", pin, context);
+      this.checkpoint(context);
       this.db.transaction(() => {
         this.db.prepare("DELETE FROM pins WHERE kind=? AND id=?").run(kind, id);
         this.db
@@ -1000,7 +1076,7 @@ export class LocalStore implements ArtifactStore {
     return inventory;
   }
   recover(context: OperationContext): Promise<Outcome<RecoveryReport>> {
-    return this.run(context, "write", async () => {
+    return this.run(context, "write", async (context) => {
       const inventory = await this.inventory(context);
       const artifacts = this.allArtifacts();
       const missingOrCorrupt: string[] = [];
@@ -1018,7 +1094,9 @@ export class LocalStore implements ArtifactStore {
       }
       for (const id of inventory.stagedIds) {
         this.checkpoint(context);
-        if (!(await this.options.canDiscardStage(id, context))) {
+        const canDiscard = await this.options.canDiscardStage(id, context);
+        this.checkpoint(context);
+        if (!canDiscard) {
           stagedRetained.push(id);
           continue;
         }
@@ -1039,7 +1117,7 @@ export class LocalStore implements ArtifactStore {
   collectGarbage(
     context: OperationContext,
   ): Promise<Outcome<{ deleted: string[] }>> {
-    return this.run(context, "write", async () => {
+    return this.run(context, "write", async (context) => {
       await this.options.authorizeRetention("collect", null, context);
       const inventory = await this.inventory(context);
       const protectedPaths = new Set(
@@ -1170,7 +1248,7 @@ export class LocalStore implements ArtifactStore {
       await this.guard(context, operation, "job", id);
   }
   backup(context: OperationContext): Promise<Outcome<ProjectBackup>> {
-    return this.run(context, "read", async () => {
+    return this.run(context, "read", async (context) => {
       const metadata = this.metadata();
       await this.authorizeMetadata(metadata, "read", context);
       this.validateBackupGraph(metadata);
@@ -1204,7 +1282,7 @@ export class LocalStore implements ArtifactStore {
     context: OperationContext,
   ): Promise<Outcome<{ restored: true }>> {
     const backup = structuredClone(input);
-    return this.run(context, "write", async () => {
+    return this.run(context, "write", async (context) => {
       await this.options.authorizeRestore(backup, context);
       if (
         this.allArtifacts().length ||

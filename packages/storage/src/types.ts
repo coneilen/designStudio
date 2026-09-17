@@ -39,6 +39,8 @@ export interface StorageOptions {
   projectId: string;
   artifactRootId: string;
   permissionScope: string;
+  /** Supply the host's branded snapshot helper when host callbacks preserve reservation identity. */
+  snapshotOperationContext?(context: OperationContext): OperationContext;
   fileSystem: FileSystemBoundary;
   maintenance: StorageMaintenance;
   /** Must establish directory-entry durability, not only atomic visibility or file fsync. */
@@ -130,6 +132,7 @@ export interface RecoveryReport {
 }
 
 export type StorageCode =
+  | "AUTHORIZATION_CHANGED"
   | "WRITER_BUSY"
   | "UNSUITABLE_FILESYSTEM"
   | "SCHEMA_INCOMPATIBLE"
