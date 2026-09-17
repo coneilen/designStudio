@@ -76,6 +76,7 @@ async function setup(
   let fault: string | undefined;
   let beforeCommit: (() => void) | undefined;
   let barrier = async () => {};
+  let verifier = async () => {};
   const clock = { now: () => now, sleep: async () => {} };
   const options: StorageOptions = {
     databasePath: join(root, "state.sqlite"),
@@ -103,7 +104,7 @@ async function setup(
     jobs: {
       clock,
       maxWorkers,
-      verifyCompletion: async () => {},
+      verifyCompletion: async () => verifier(),
       authorizeRecovery: async () => {},
       ...(discovery ? { discovery } : {}),
     },
@@ -163,6 +164,9 @@ async function setup(
     barrier(callback: () => Promise<void>) {
       barrier = callback;
     },
+    verifier(callback: () => Promise<void>) {
+      verifier = callback;
+    },
     async reopen() {
       store.close();
       store = await LocalStore.open(options);
@@ -206,6 +210,257 @@ async function completion(
   };
   return { record: result.record, output };
 }
+
+test.each(
+  (["verifier", "durability"] as const).flatMap((phase) =>
+    (
+      [
+        "first-output",
+        "middle-output",
+        "last-output",
+        "root",
+        "job",
+        "design",
+      ] as const
+    ).map((scope) => ({ phase, scope })),
+  ),
+)(
+  "unbound job commit reauthorizes $scope revoked during $phase",
+  async ({ phase, scope }) => {
+    const f = await setup();
+    let record = await claim(f, ["held-resource"]);
+    const payloads = ["first output", "middle output", "last output"];
+    const outputs: JobCompletion["outputs"] = [];
+    for (const payload of payloads) {
+      const staged = value(
+        await f.store.jobs.stage(
+          record.job.id,
+          fence(record),
+          bytes(payload),
+          f.ctx(),
+        ),
+      );
+      record = staged.record;
+      outputs.push(staged.staged);
+    }
+    const rev = revision(
+      "late-revocation",
+      outputs.map((output) => output.artifact),
+    );
+    const output: JobCompletion = {
+      outputs,
+      outputState: "complete",
+      diagnosticIds: [],
+      revision: { revision: rev, branch: "main", base: null },
+    };
+    const original = value(await f.store.backup(f.ctx("backup")));
+    let entered: (() => void) | undefined;
+    let resume: (() => void) | undefined;
+    const awaiting = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const release = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    const wait = async () => {
+      required(entered)();
+      await release;
+    };
+    if (phase === "verifier") f.verifier(wait);
+    else f.barrier(wait);
+    const kind =
+      scope === "job" ? "job" : scope === "design" ? "design" : "artifact";
+    const id =
+      scope === "root"
+        ? "artifact-root"
+        : scope === "job"
+          ? record.job.id
+          : scope === "design"
+            ? rev.designId
+            : required(
+                scope === "first-output"
+                  ? outputs[0]
+                  : scope === "middle-output"
+                    ? outputs[1]
+                    : outputs.at(-1),
+              ).artifact.id;
+    let revoked = false;
+    const deniedChecks: string[] = [];
+    f.options.authorize = async (_context, requested) => {
+      if (
+        revoked &&
+        requested.resourceKind === kind &&
+        requested.resourceId === id &&
+        requested.operation === "write"
+      ) {
+        deniedChecks.push(id);
+        throw Object.assign(new Error("Synthetic current-policy revocation."), {
+          code: "FORBIDDEN",
+        });
+      }
+    };
+    let discarded = 0;
+    let removed = 0;
+    const discard = f.disk.fs.discard;
+    f.disk.fs.discard = async (...args) => {
+      discarded++;
+      return discard(...args);
+    };
+    const remove = f.disk.maintenance.removeBlob;
+    f.disk.maintenance.removeBlob = async (...args) => {
+      removed++;
+      return remove(...args);
+    };
+    const committing = f.store.jobs.commitJob(
+      record.job.id,
+      fence(record),
+      output,
+      f.ctx(),
+    );
+    await awaiting;
+    revoked = true;
+    required(resume)();
+    expect(await committing).toMatchObject({
+      status: "failed",
+      error: { code: "FORBIDDEN" },
+    });
+    expect(deniedChecks).toEqual([id]);
+    expect(discarded).toBe(0);
+    expect(removed).toBe(0);
+    revoked = false;
+    expect(value(await f.store.backup(f.ctx("backup")))).toEqual(original);
+    expect(
+      value(await f.store.jobs.getStages(record.job.id, f.ctx())),
+    ).toHaveLength(3);
+    for (const [index, staged] of outputs.entries())
+      expect(
+        value(
+          await f.disk.fs.read(
+            { artifactRootId: "artifact-root", path: staged.artifact.path },
+            f.ctx(),
+          ),
+        ),
+      ).toEqual(bytes(required(payloads[index])));
+    f.store.close();
+    const db = new Database(f.options.databasePath, { nativeBinding });
+    try {
+      for (const staged of outputs) {
+        expect(
+          db
+            .prepare("SELECT 1 FROM artifacts WHERE id=?")
+            .get(staged.artifact.id),
+        ).toBeUndefined();
+        expect(
+          db
+            .prepare("SELECT 1 FROM artifact_refs WHERE artifact_id=?")
+            .get(staged.artifact.id),
+        ).toBeUndefined();
+      }
+      expect(
+        db
+          .prepare(
+            "SELECT 1 FROM receipts WHERE json_extract(data,'$.jobId')=?",
+          )
+          .get(record.job.id),
+      ).toBeUndefined();
+      for (const table of ["revisions", "heads", "artifact_bindings"])
+        expect(
+          db.prepare(`SELECT count(*) AS count FROM ${table}`).get(),
+        ).toEqual({ count: 0 });
+      const stored = db
+        .prepare<[string], { data: string }>("SELECT data FROM jobs WHERE id=?")
+        .get(record.job.id);
+      expect(JSON.parse(required(stored).data)).toEqual(record);
+    } finally {
+      db.close();
+    }
+  },
+);
+
+test("reused unbound outputs still require live write authority even without a new publication barrier", async () => {
+  const f = await setup();
+  const running = await claim(f);
+  const stage = value(
+    await f.store.jobs.stage(
+      running.job.id,
+      fence(running),
+      bytes("immutable input"),
+      f.ctx(),
+    ),
+  );
+  const before = value(await f.store.backup(f.ctx("backup")));
+  let revoked = false;
+  let barriers = 0;
+  f.options.authorize = async (_context, scope) => {
+    if (
+      revoked &&
+      scope.resourceKind === "artifact" &&
+      scope.resourceId === stage.staged.artifact.id &&
+      scope.operation === "write"
+    )
+      throw Object.assign(new Error("Revoked reused output"), {
+        code: "FORBIDDEN",
+      });
+  };
+  f.verifier(async () => {
+    revoked = true;
+  });
+  f.barrier(async () => {
+    barriers++;
+  });
+  expect(
+    await f.store.jobs.commitJob(
+      running.job.id,
+      fence(stage.record),
+      {
+        outputs: [stage.staged],
+        outputState: "complete",
+        diagnosticIds: [],
+      },
+      f.ctx(),
+    ),
+  ).toMatchObject({ error: { code: "FORBIDDEN" } });
+  expect(barriers).toBe(0);
+  revoked = false;
+  expect(value(await f.store.backup(f.ctx("backup")))).toEqual(before);
+  expect(
+    value(await f.store.jobs.getJobReceipt(running.job.id, f.ctx())),
+  ).toBeNull();
+});
+
+test("exact completed job replay verifies reads without adding fresh output-write checks", async () => {
+  const f = await setup();
+  const { record, output } = await completion(f, await claim(f));
+  const committed = value(
+    await f.store.jobs.commitJob(record.job.id, fence(record), output, f.ctx()),
+  );
+  const artifactId = required(output.outputs[0]).artifact.id;
+  let outputWrites = 0;
+  f.options.authorize = async (_context, scope) => {
+    if (scope.resourceId === artifactId && scope.operation === "write") {
+      outputWrites++;
+      throw Object.assign(new Error("No new writes permitted"), {
+        code: "FORBIDDEN",
+      });
+    }
+  };
+  const noNewPublication = async () => {
+    throw new Error("Replay must not publish/verify new completion.");
+  };
+  f.verifier(noNewPublication);
+  f.barrier(noNewPublication);
+  expect(
+    value(
+      await f.store.jobs.commitJob(
+        record.job.id,
+        fence(record),
+        output,
+        f.ctx(),
+      ),
+    ),
+  ).toEqual(committed);
+  expect(outputWrites).toBe(0);
+});
 
 test("trusted owner discovery bootstraps bounded exact grants without reading artifact bytes", async () => {
   const f = await setup();

@@ -346,6 +346,21 @@ by a new job. Legacy commit/commitRevision reject tracked jobs before publicatio
 and again in the transaction, closing unfenced stale-handler bypasses.
 Committed receipt wins cancellation and response-loss replay.
 
+Before a new commit's SQLite transaction, after all semantic validation and
+publication/durability awaits, storage rechecks live root-write and job-write
+authority, plus design-write for a revision. Tracked job commits also recheck
+write authority for **every** physical output, including unbound outputs and
+historically reused outputs that need no new publication barrier. Logical-binding
+dual-ID checks remain in place. Legacy direct commits retain their root-scoped
+physical-output contract rather than acquiring a new per-artifact requirement.
+Exact historical receipt replay performs its existing authorized reads without
+new publication, mutation or output-write requirements.
+
+Late revocation fails before any new artifact/ref/receipt/revision/head/job
+pointers commit; existing job lease/resource reservations and staged evidence
+remain unchanged. Published physical bytes are retained, not silently discarded.
+Metadata/deadline checkpoints do not substitute for these current-policy checks.
+
 Historical publication assurance accepts a tagged job receipt only when its
 exact authoritative completed Job, submission binding, final digest, scope,
 output metadata and protected refs agree. Legacy untracked write receipts retain
@@ -614,6 +629,15 @@ discard/removal calls.
 Follow-up verification: 170 storage unit tests, eight storage/root/native smoke
 tests and 122 F07 consumer unit tests, with storage/F07 builds, scoped
 source/test typecheck and storage lint.
+The final commit-policy follow-up observed RED for late unbound output/root/design
+revocation and legacy root/job/design revocation. Deferred verifier/durability
+tests cover every position in a three-output commit, retained exact bytes and
+zero new authoritative pointers; separate cases cover output reuse without a
+barrier and read-only completed replay. Verification: 192 storage unit tests,
+eight storage/root/native smoke tests and 122 F07 consumer unit tests, plus
+storage/F07 builds, scoped source/test typecheck and storage lint. Full root
+build/typecheck requires the integrated dependency workspace; this older
+worktree's missing package links/dependencies were not installed or patched.
 
 Remaining integration gates: production F07 scheduler/F08 fresh execution and
 recovery issuer; operation-specific completeness and actual-stop/effect policy;

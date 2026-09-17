@@ -896,7 +896,13 @@ export class LocalStore implements ArtifactStore {
           needsPublicationBarrier,
           context,
         );
-      if (hooks) await this.guard(context, "write", "job", context.jobId);
+      await this.guard(context, "write");
+      await this.guard(context, "write", "job", context.jobId);
+      if (request)
+        await this.guard(context, "write", "design", request.revision.designId);
+      if (hooks)
+        for (const artifact of published)
+          await this.guard(context, "write", "artifact", artifact.id);
       for (const item of bound) {
         await this.guard(context, "write", "artifact", item.reference.id);
         await this.guard(context, "read", "artifact", item.artifact.id);

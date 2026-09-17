@@ -107,6 +107,121 @@ const fixture: { payloads: string[] } = JSON.parse(
     "utf8",
   ),
 );
+test.each([
+  { path: "commit", phase: "durability", scope: "root" },
+  { path: "commit", phase: "durability", scope: "job" },
+  ...(["verifier", "durability"] as const).flatMap((phase) =>
+    (["root", "job", "design"] as const).map((scope) => ({
+      path: "revision",
+      phase,
+      scope,
+    })),
+  ),
+])(
+  "legacy $path reauthorizes $scope revoked during $phase",
+  async ({ path, phase, scope }) => {
+    const entered = gate();
+    const resume = gate();
+    const wait = async () => {
+      entered.resolve();
+      await resume.promise;
+    };
+    let revoked = false;
+    const ctx = context("legacy-revoke");
+    const kind =
+      scope === "job" ? "job" : scope === "design" ? "design" : "artifact";
+    const id =
+      scope === "root"
+        ? "artifact-root"
+        : scope === "job"
+          ? required(ctx.jobId)
+          : "design1";
+    const deniedChecks: string[] = [];
+    const f = await setup({
+      verifyRevision: phase === "verifier" ? wait : async () => {},
+      ensurePublicationDurable: phase === "durability" ? wait : async () => {},
+      authorize: async (_context, requested) => {
+        if (
+          revoked &&
+          requested.resourceKind === kind &&
+          requested.resourceId === id &&
+          requested.operation === "write"
+        ) {
+          deniedChecks.push(id);
+          throw Object.assign(
+            new Error("Synthetic current-policy revocation."),
+            { code: "FORBIDDEN" },
+          );
+        }
+      },
+    });
+    const outputs = await stage(f.store);
+    const rev = revision(
+      "legacy-revoked",
+      outputs.map((output) => output.artifact),
+    );
+    let discarded = 0;
+    let removed = 0;
+    const discard = f.disk.fs.discard;
+    f.disk.fs.discard = async (...args) => {
+      discarded++;
+      return discard(...args);
+    };
+    const remove = f.disk.maintenance.removeBlob;
+    f.disk.maintenance.removeBlob = async (...args) => {
+      removed++;
+      return remove(...args);
+    };
+    const committing =
+      path === "commit"
+        ? f.store.commit(outputs, ctx)
+        : f.store.commitRevision(
+            { outputs, revision: rev, base: null, branch: "main" },
+            ctx,
+          );
+    await entered.promise;
+    revoked = true;
+    resume.resolve();
+    expect(await committing).toMatchObject({
+      status: "failed",
+      error: { code: "FORBIDDEN" },
+    });
+    expect(deniedChecks).toEqual([id]);
+    expect(discarded).toBe(0);
+    expect(removed).toBe(0);
+    for (const [index, output] of outputs.entries())
+      expect(
+        value(
+          await f.disk.fs.read(
+            { artifactRootId: "artifact-root", path: output.artifact.path },
+            context(),
+          ),
+        ),
+      ).toEqual(bytes(required(fixture.payloads[index])));
+    f.store.close();
+    const db = new Database(f.options.databasePath, {
+      nativeBinding: f.options.nativeBinding,
+    });
+    try {
+      for (const table of [
+        "artifacts",
+        "artifact_refs",
+        "artifact_bindings",
+        "receipts",
+        "revisions",
+        "heads",
+        "jobs",
+      ])
+        expect(
+          db.prepare(`SELECT count(*) AS count FROM ${table}`).get(),
+          table,
+        ).toEqual({ count: 0 });
+    } finally {
+      db.close();
+    }
+  },
+);
+
 test("logical bindings preserve physical publication and protect pinned revision references across restore", async () => {
   const seen: string[] = [];
   const { store } = await setup({
