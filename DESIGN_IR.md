@@ -14,7 +14,7 @@ Its `definitions` are the shared reference graph. Public per-artifact
 `*.schema.json` files and `src/generated.ts`, `catalog.generated.ts`, and
 `schema.generated.ts` are reproducibly generated, committed, and drift-checked.
 Do not edit generated files. All artifact `schemaVersion` values are `"1.0"`;
-the package version is `1.0.0`. The public dialect is JSON Schema **draft-07**.
+the package version is `1.1.0`. The public dialect is JSON Schema **draft-07**.
 The reserved `.invalid` schema IDs are stable identifiers, not network endpoints.
 Load the catalog locally when resolving references.
 
@@ -212,6 +212,22 @@ status, and comparison verdict are separate. Exits are 0 success/async accepted,
 1 operational failure, 2 invalid input, 3 policy fail, 4 inconclusive, 5 conflict/
 required action. The typed error/retryability and job/diagnostic IDs remain
 independent of that exit code.
+
+The additive contracts package 1.1.0 extension provides closed revision/help/
+version/api-description/stopped-service response data and shared `NOT_FOUND`.
+All success data retains typed warnings. Existing accepted-job/job/artifact/
+design/validation/capabilities and error envelopes remain valid, including
+legacy shared optional data fields. Job data permits an optional safe nonnegative
+`jobVersion`; F08 uses the separately exported `FoundationVersionedJobResponse`
+refinement to require the actual stored row version on successful job responses.
+That refinement reuses the envelope and does not accept failures or default a
+missing version. `FoundationAcceptFixtureRequest`,
+`FoundationRenderSubmissionRequest`, and closed empty `FoundationCancelJobRequest`
+follow `RenderRequest`: endpoint `/v1` supplies request versioning; no top-level
+request `schemaVersion`, authority context, callbacks or path IDs in JSON.
+Artifact versions/identities and provider `contractVersion: "1.0"` are unchanged.
+See [the contracts README](packages/contracts/README.md#additive-cliapi-v1-contracts-package-110)
+for field limits, generated exports and the package/provider version distinction.
 
 ## Capture, comparison and limits
 

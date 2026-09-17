@@ -114,12 +114,23 @@ export interface ContractTypes {
   CommitReceipt: Types.CommitReceipt;
   JobStatus: Types.JobStatus;
   Job: Types.Job;
+  JobVersion: Types.JobVersion;
+  FoundationRevisionResponseData: Types.FoundationRevisionResponseData;
+  FoundationHelpResponseData: Types.FoundationHelpResponseData;
+  FoundationVersionResponseData: Types.FoundationVersionResponseData;
+  FoundationApiDescriptionResponseData: Types.FoundationApiDescriptionResponseData;
+  FoundationServiceResponseData: Types.FoundationServiceResponseData;
+  LegacyResponseData: Types.LegacyResponseData;
   ResponseEnvelope: Types.ResponseEnvelope;
+  FoundationVersionedJobResponse: Types.FoundationVersionedJobResponse;
   ProviderCapabilities: Types.ProviderCapabilities;
   OperationRequestContext: Types.OperationRequestContext;
   ProviderOutcome: Types.ProviderOutcome;
   FigmaReadRequest: Types.FigmaReadRequest;
   PluginSnapshotRequest: Types.PluginSnapshotRequest;
+  FoundationAcceptFixtureRequest: Types.FoundationAcceptFixtureRequest;
+  FoundationRenderSubmissionRequest: Types.FoundationRenderSubmissionRequest;
+  FoundationCancelJobRequest: Types.FoundationCancelJobRequest;
   RenderRequest: Types.RenderRequest;
   RenderResult: Types.RenderResult;
   DeviceRequest: Types.DeviceRequest;
@@ -250,12 +261,23 @@ export const contractNames: readonly ContractName[] = [
   "CommitReceipt",
   "JobStatus",
   "Job",
+  "JobVersion",
+  "FoundationRevisionResponseData",
+  "FoundationHelpResponseData",
+  "FoundationVersionResponseData",
+  "FoundationApiDescriptionResponseData",
+  "FoundationServiceResponseData",
+  "LegacyResponseData",
   "ResponseEnvelope",
+  "FoundationVersionedJobResponse",
   "ProviderCapabilities",
   "OperationRequestContext",
   "ProviderOutcome",
   "FigmaReadRequest",
   "PluginSnapshotRequest",
+  "FoundationAcceptFixtureRequest",
+  "FoundationRenderSubmissionRequest",
+  "FoundationCancelJobRequest",
   "RenderRequest",
   "RenderResult",
   "DeviceRequest",

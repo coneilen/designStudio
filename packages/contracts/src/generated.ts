@@ -316,6 +316,7 @@ export type ErrorCode =
   | "TRANSPORT_UNAVAILABLE"
   | "AUTH_REQUIRED"
   | "FORBIDDEN"
+  | "NOT_FOUND"
   | "ORIGIN_FORBIDDEN"
   | "CSRF_INVALID"
   | "EGRESS_DENIED"
@@ -513,6 +514,55 @@ export type Job = {
   diagnosticIds: StableId[];
 };
 /**
+ * Authoritative stored job row version, not a client counter or artifact schema version.
+ *
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "JobVersion".
+ */
+export type JobVersion = number;
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "LegacyResponseData".
+ */
+export type LegacyResponseData = {
+  kind: "accepted-job" | "job" | "artifact" | "design" | "validation" | "capabilities";
+  job?: Job;
+  jobVersion?: JobVersion;
+  jobId?: StableId;
+  status?: JobStatus;
+  artifact?: Artifact;
+  design?: DesignIR;
+  validation?: ValidationReport;
+  capabilities?: ProviderCapabilities;
+  warnings: Diagnostic[];
+} & LegacyResponseData1;
+export type LegacyResponseData1 =
+  | {
+      kind: "accepted-job";
+      jobId: StableId;
+      status: "queued" | "running" | "waiting-for-user" | "retry-wait";
+    }
+  | {
+      kind: "job";
+      job: Job;
+    }
+  | {
+      kind: "artifact";
+      artifact: Artifact;
+    }
+  | {
+      kind: "design";
+      design: DesignIR;
+    }
+  | {
+      kind: "validation";
+      validation: ValidationReport;
+    }
+  | {
+      kind: "capabilities";
+      capabilities: ProviderCapabilities;
+    };
+/**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "ResponseEnvelope".
  */
@@ -521,9 +571,13 @@ export type ResponseEnvelope =
       schemaVersion: SchemaVersion;
       success: true;
       requestId: StableId;
-      data: {
-        [k: string]: unknown;
-      };
+      data:
+        | FoundationRevisionResponseData
+        | FoundationHelpResponseData
+        | FoundationVersionResponseData
+        | FoundationApiDescriptionResponseData
+        | FoundationServiceResponseData
+        | LegacyResponseData;
     }
   | {
       schemaVersion: SchemaVersion;
@@ -531,6 +585,20 @@ export type ResponseEnvelope =
       requestId: StableId;
       error: ContractError;
     };
+/**
+ * F08 successful job response with an authoritative row version. Refines the shared envelope without invalidating legacy unversioned job responses.
+ *
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "FoundationVersionedJobResponse".
+ */
+export type FoundationVersionedJobResponse = ResponseEnvelope & {
+  success: true;
+  data: {
+    kind: "job";
+    job: Job;
+    jobVersion: JobVersion;
+  };
+};
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "ProviderOutcome".
@@ -679,12 +747,23 @@ export interface ContractCatalog {
   CommitReceipt: CommitReceipt;
   JobStatus: JobStatus;
   Job: Job;
+  JobVersion: JobVersion;
+  FoundationRevisionResponseData: FoundationRevisionResponseData;
+  FoundationHelpResponseData: FoundationHelpResponseData;
+  FoundationVersionResponseData: FoundationVersionResponseData;
+  FoundationApiDescriptionResponseData: FoundationApiDescriptionResponseData;
+  FoundationServiceResponseData: FoundationServiceResponseData;
+  LegacyResponseData: LegacyResponseData;
   ResponseEnvelope: ResponseEnvelope;
+  FoundationVersionedJobResponse: FoundationVersionedJobResponse;
   ProviderCapabilities: ProviderCapabilities;
   OperationRequestContext: OperationRequestContext;
   ProviderOutcome: ProviderOutcome;
   FigmaReadRequest: FigmaReadRequest;
   PluginSnapshotRequest: PluginSnapshotRequest;
+  FoundationAcceptFixtureRequest: FoundationAcceptFixtureRequest;
+  FoundationRenderSubmissionRequest: FoundationRenderSubmissionRequest;
+  FoundationCancelJobRequest: FoundationCancelJobRequest;
   RenderRequest: RenderRequest;
   RenderResult: RenderResult;
   DeviceRequest: DeviceRequest;
@@ -2148,6 +2227,66 @@ export interface CommitReceipt {
 }
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "FoundationRevisionResponseData".
+ */
+export interface FoundationRevisionResponseData {
+  kind: "revision";
+  warnings: Diagnostic[];
+  revision: Revision;
+  design: DesignIR;
+  receipt?: CommitReceipt;
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "FoundationHelpResponseData".
+ */
+export interface FoundationHelpResponseData {
+  kind: "help";
+  warnings: Diagnostic[];
+  /**
+   * Fixed command registry name, never echoed arbitrary argv. F08 validates registry membership.
+   */
+  command: string;
+  /**
+   * Usage generated from the fixed command registry, not user input.
+   */
+  usage: string;
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "FoundationVersionResponseData".
+ */
+export interface FoundationVersionResponseData {
+  kind: "version";
+  warnings: Diagnostic[];
+  cliVersion: Version;
+  contractVersion: Version;
+  apiVersion: "v1";
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "FoundationApiDescriptionResponseData".
+ */
+export interface FoundationApiDescriptionResponseData {
+  kind: "api-description";
+  warnings: Diagnostic[];
+  openapiVersion: "3.1.0";
+  apiVersion: "v1";
+  documentSha256: Sha256;
+  path: "/v1/openapi.json";
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "FoundationServiceResponseData".
+ */
+export interface FoundationServiceResponseData {
+  kind: "service";
+  warnings: Diagnostic[];
+  state: "stopped";
+  projectId: StableId;
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "ProviderCapabilities".
  */
 export interface ProviderCapabilities {
@@ -2201,6 +2340,29 @@ export interface PluginSnapshotRequest {
   artifact: Artifact;
   binding: FigmaBinding;
 }
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "FoundationAcceptFixtureRequest".
+ */
+export interface FoundationAcceptFixtureRequest {
+  fixtureId: StableId;
+  branch: StableId;
+  base: ExpectedBase | null;
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "FoundationRenderSubmissionRequest".
+ */
+export interface FoundationRenderSubmissionRequest {
+  revision: ArtifactReference;
+  base: ExpectedBase;
+  mode: "strict" | "inspection";
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "FoundationCancelJobRequest".
+ */
+export interface FoundationCancelJobRequest {}
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "RenderRequest".

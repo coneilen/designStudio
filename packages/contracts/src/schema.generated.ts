@@ -5655,6 +5655,7 @@ export const foundationSchema = {
         "TRANSPORT_UNAVAILABLE",
         "AUTH_REQUIRED",
         "FORBIDDEN",
+        "NOT_FOUND",
         "ORIGIN_FORBIDDEN",
         "CSRF_INVALID",
         "EGRESS_DENIED",
@@ -6176,6 +6177,331 @@ export const foundationSchema = {
         }
       ]
     },
+    "JobVersion": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "description": "Authoritative stored job row version, not a client counter or artifact schema version."
+    },
+    "FoundationRevisionResponseData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "warnings",
+        "revision",
+        "design"
+      ],
+      "properties": {
+        "kind": {
+          "const": "revision"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Diagnostic"
+          }
+        },
+        "revision": {
+          "$ref": "#/definitions/Revision"
+        },
+        "design": {
+          "$ref": "#/definitions/DesignIR"
+        },
+        "receipt": {
+          "$ref": "#/definitions/CommitReceipt"
+        }
+      }
+    },
+    "FoundationHelpResponseData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "warnings",
+        "command",
+        "usage"
+      ],
+      "properties": {
+        "kind": {
+          "const": "help"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Diagnostic"
+          }
+        },
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "description": "Fixed command registry name, never echoed arbitrary argv. F08 validates registry membership."
+        },
+        "usage": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384,
+          "description": "Usage generated from the fixed command registry, not user input."
+        }
+      }
+    },
+    "FoundationVersionResponseData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "warnings",
+        "cliVersion",
+        "contractVersion",
+        "apiVersion"
+      ],
+      "properties": {
+        "kind": {
+          "const": "version"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Diagnostic"
+          }
+        },
+        "cliVersion": {
+          "$ref": "#/definitions/Version"
+        },
+        "contractVersion": {
+          "$ref": "#/definitions/Version"
+        },
+        "apiVersion": {
+          "const": "v1"
+        }
+      }
+    },
+    "FoundationApiDescriptionResponseData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "warnings",
+        "openapiVersion",
+        "apiVersion",
+        "documentSha256",
+        "path"
+      ],
+      "properties": {
+        "kind": {
+          "const": "api-description"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Diagnostic"
+          }
+        },
+        "openapiVersion": {
+          "const": "3.1.0"
+        },
+        "apiVersion": {
+          "const": "v1"
+        },
+        "documentSha256": {
+          "$ref": "#/definitions/Sha256"
+        },
+        "path": {
+          "const": "/v1/openapi.json"
+        }
+      }
+    },
+    "FoundationServiceResponseData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "warnings",
+        "state",
+        "projectId"
+      ],
+      "properties": {
+        "kind": {
+          "const": "service"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Diagnostic"
+          }
+        },
+        "state": {
+          "const": "stopped"
+        },
+        "projectId": {
+          "$ref": "#/definitions/StableId"
+        }
+      }
+    },
+    "LegacyResponseData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "warnings"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "accepted-job",
+            "job",
+            "artifact",
+            "design",
+            "validation",
+            "capabilities"
+          ]
+        },
+        "job": {
+          "$ref": "#/definitions/Job"
+        },
+        "jobVersion": {
+          "$ref": "#/definitions/JobVersion"
+        },
+        "jobId": {
+          "$ref": "#/definitions/StableId"
+        },
+        "status": {
+          "$ref": "#/definitions/JobStatus"
+        },
+        "artifact": {
+          "$ref": "#/definitions/Artifact"
+        },
+        "design": {
+          "$ref": "#/definitions/DesignIR"
+        },
+        "validation": {
+          "$ref": "#/definitions/ValidationReport"
+        },
+        "capabilities": {
+          "$ref": "#/definitions/ProviderCapabilities"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Diagnostic"
+          }
+        }
+      },
+      "if": {
+        "required": [
+          "jobVersion"
+        ]
+      },
+      "then": {
+        "properties": {
+          "kind": {
+            "const": "job"
+          }
+        }
+      },
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "jobId",
+            "status"
+          ],
+          "properties": {
+            "kind": {
+              "const": "accepted-job"
+            },
+            "jobId": {
+              "$ref": "#/definitions/StableId"
+            },
+            "status": {
+              "enum": [
+                "queued",
+                "running",
+                "waiting-for-user",
+                "retry-wait"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "job"
+          ],
+          "properties": {
+            "kind": {
+              "const": "job"
+            },
+            "job": {
+              "$ref": "#/definitions/Job"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "artifact"
+          ],
+          "properties": {
+            "kind": {
+              "const": "artifact"
+            },
+            "artifact": {
+              "$ref": "#/definitions/Artifact"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "design"
+          ],
+          "properties": {
+            "kind": {
+              "const": "design"
+            },
+            "design": {
+              "$ref": "#/definitions/DesignIR"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "validation"
+          ],
+          "properties": {
+            "kind": {
+              "const": "validation"
+            },
+            "validation": {
+              "$ref": "#/definitions/ValidationReport"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "capabilities"
+          ],
+          "properties": {
+            "kind": {
+              "const": "capabilities"
+            },
+            "capabilities": {
+              "$ref": "#/definitions/ProviderCapabilities"
+            }
+          }
+        }
+      ]
+    },
     "ResponseEnvelope": {
       "oneOf": [
         {
@@ -6198,164 +6524,24 @@ export const foundationSchema = {
               "$ref": "#/definitions/StableId"
             },
             "data": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": [
-                "kind",
-                "warnings"
-              ],
-              "properties": {
-                "kind": {
-                  "enum": [
-                    "accepted-job",
-                    "job",
-                    "artifact",
-                    "design",
-                    "validation",
-                    "capabilities"
-                  ]
-                },
-                "job": {
-                  "$ref": "#/definitions/Job"
-                },
-                "jobId": {
-                  "$ref": "#/definitions/StableId"
-                },
-                "status": {
-                  "$ref": "#/definitions/JobStatus"
-                },
-                "artifact": {
-                  "$ref": "#/definitions/Artifact"
-                },
-                "design": {
-                  "$ref": "#/definitions/DesignIR"
-                },
-                "validation": {
-                  "$ref": "#/definitions/ValidationReport"
-                },
-                "capabilities": {
-                  "$ref": "#/definitions/ProviderCapabilities"
-                },
-                "warnings": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/definitions/Diagnostic"
-                  }
-                }
-              },
-              "allOf": [
+              "oneOf": [
                 {
-                  "if": {
-                    "properties": {
-                      "kind": {
-                        "const": "accepted-job"
-                      }
-                    },
-                    "required": [
-                      "kind"
-                    ]
-                  },
-                  "then": {
-                    "required": [
-                      "jobId",
-                      "status"
-                    ],
-                    "properties": {
-                      "status": {
-                        "enum": [
-                          "queued",
-                          "running",
-                          "waiting-for-user",
-                          "retry-wait"
-                        ]
-                      }
-                    }
-                  }
+                  "$ref": "#/definitions/FoundationRevisionResponseData"
                 },
                 {
-                  "if": {
-                    "properties": {
-                      "kind": {
-                        "const": "job"
-                      }
-                    },
-                    "required": [
-                      "kind"
-                    ]
-                  },
-                  "then": {
-                    "required": [
-                      "job"
-                    ]
-                  }
+                  "$ref": "#/definitions/FoundationHelpResponseData"
                 },
                 {
-                  "if": {
-                    "properties": {
-                      "kind": {
-                        "const": "artifact"
-                      }
-                    },
-                    "required": [
-                      "kind"
-                    ]
-                  },
-                  "then": {
-                    "required": [
-                      "artifact"
-                    ]
-                  }
+                  "$ref": "#/definitions/FoundationVersionResponseData"
                 },
                 {
-                  "if": {
-                    "properties": {
-                      "kind": {
-                        "const": "design"
-                      }
-                    },
-                    "required": [
-                      "kind"
-                    ]
-                  },
-                  "then": {
-                    "required": [
-                      "design"
-                    ]
-                  }
+                  "$ref": "#/definitions/FoundationApiDescriptionResponseData"
                 },
                 {
-                  "if": {
-                    "properties": {
-                      "kind": {
-                        "const": "validation"
-                      }
-                    },
-                    "required": [
-                      "kind"
-                    ]
-                  },
-                  "then": {
-                    "required": [
-                      "validation"
-                    ]
-                  }
+                  "$ref": "#/definitions/FoundationServiceResponseData"
                 },
                 {
-                  "if": {
-                    "properties": {
-                      "kind": {
-                        "const": "capabilities"
-                      }
-                    },
-                    "required": [
-                      "kind"
-                    ]
-                  },
-                  "then": {
-                    "required": [
-                      "capabilities"
-                    ]
-                  }
+                  "$ref": "#/definitions/LegacyResponseData"
                 }
               ]
             }
@@ -6382,6 +6568,45 @@ export const foundationSchema = {
             },
             "error": {
               "$ref": "#/definitions/ContractError"
+            }
+          }
+        }
+      ]
+    },
+    "FoundationVersionedJobResponse": {
+      "description": "F08 successful job response with an authoritative row version. Refines the shared envelope without invalidating legacy unversioned job responses.",
+      "allOf": [
+        {
+          "$ref": "#/definitions/ResponseEnvelope"
+        },
+        {
+          "type": "object",
+          "required": [
+            "success",
+            "data"
+          ],
+          "properties": {
+            "success": {
+              "const": true
+            },
+            "data": {
+              "type": "object",
+              "required": [
+                "kind",
+                "job",
+                "jobVersion"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "job"
+                },
+                "job": {
+                  "$ref": "#/definitions/Job"
+                },
+                "jobVersion": {
+                  "$ref": "#/definitions/JobVersion"
+                }
+              }
             }
           }
         }
@@ -6691,6 +6916,61 @@ export const foundationSchema = {
           "$ref": "#/definitions/FigmaBinding"
         }
       }
+    },
+    "FoundationAcceptFixtureRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fixtureId",
+        "branch",
+        "base"
+      ],
+      "properties": {
+        "fixtureId": {
+          "$ref": "#/definitions/StableId"
+        },
+        "branch": {
+          "$ref": "#/definitions/StableId"
+        },
+        "base": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/ExpectedBase"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "FoundationRenderSubmissionRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "revision",
+        "base",
+        "mode"
+      ],
+      "properties": {
+        "revision": {
+          "$ref": "#/definitions/ArtifactReference"
+        },
+        "base": {
+          "$ref": "#/definitions/ExpectedBase"
+        },
+        "mode": {
+          "enum": [
+            "strict",
+            "inspection"
+          ]
+        }
+      }
+    },
+    "FoundationCancelJobRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
     },
     "RenderRequest": {
       "type": "object",
