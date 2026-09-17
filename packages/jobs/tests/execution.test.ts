@@ -144,6 +144,7 @@ test("completed receipt wins cancellation queued at commit and response loss", a
     const result = await completed(ex);
     f.setFault((point) => {
       if (point === "after-commit") {
+        f.setFault(undefined);
         cancellation = s.cancel(
           "job-work",
           ex.record.rowVersion,

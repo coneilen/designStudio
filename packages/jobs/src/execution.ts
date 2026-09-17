@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import {
+  type ContractError,
   type FileSystemBoundary,
   type OperationContext,
   type Outcome,
@@ -19,15 +20,8 @@ import {
   type JobWorkerExpected,
   type StoredJob,
 } from "@design-studio/storage";
-import {
-  complete,
-  detail,
-  failure,
-  JobFailure,
-  own,
-  unwrap,
-} from "./boundary.js";
-import type { JobExecution, JobServiceOptions } from "./types.js";
+import { complete, detail, failure, own, unwrap } from "./boundary.js";
+import type { JobExecution, JobServiceOptions, StageFailure } from "./types.js";
 
 export function fence(record: StoredJob): JobWorkerExpected {
   const lease = record.job.lease;
@@ -55,7 +49,8 @@ export class Execution implements JobExecution {
   private highestProgress: number;
   private readonly originalFence: JobWorkerExpected;
   closing = false;
-  stageFailure: JobFailure | undefined;
+  private failedStage: StageFailure | undefined;
+  refreshFailure: ContractError | undefined;
 
   constructor(
     record: StoredJob,
@@ -104,6 +99,9 @@ export class Execution implements JobExecution {
   }
   get record(): StoredJob {
     return structuredClone(this.current);
+  }
+  get stageFailure(): StageFailure | undefined {
+    return this.failedStage === undefined ? undefined : own(this.failedStage);
   }
   serial<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.tail.then(operation);
@@ -203,19 +201,23 @@ export class Execution implements JobExecution {
           this.context,
         );
         if (result.status !== "complete") {
-          this.stageFailure = new JobFailure(
+          this.failedStage =
             result.status === "partial"
-              ? detail("OUTPUT_UNCERTAIN")
-              : result.error,
-            result.status === "partial" ? "interrupted" : result.status,
-          );
+              ? { ...own(result), value: own(result.value.staged) }
+              : own(result);
           // Even a failed stage can reserve bytes and advance the durable version.
-          const refreshed = await this.options.repository.get(
-            this.current.job.id,
-            this.context,
-          );
-          if (refreshed.status === "complete") this.adopt(refreshed.value);
-          return failure(this.context, this.stageFailure);
+          // Refresh failure must not erase the primary outcome or its known receipt.
+          try {
+            const refreshed = await this.options.repository.get(
+              this.current.job.id,
+              this.context,
+            );
+            if (refreshed.status === "complete") this.adopt(refreshed.value);
+            else this.refreshFailure = detail(refreshed.error.code);
+          } catch {
+            this.refreshFailure = detail("INTERNAL_ERROR");
+          }
+          return own(this.failedStage);
         }
         this.adopt(result.value.record);
         return complete(this.context, result.value.staged);

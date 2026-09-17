@@ -18,7 +18,15 @@ import {
   type JobSubmission,
   type StoredJob,
 } from "@design-studio/storage";
-import { complete, detail, failure, integer, own, unwrap } from "./boundary.js";
+import {
+  complete,
+  detail,
+  failure,
+  integer,
+  JobFailure,
+  own,
+  unwrap,
+} from "./boundary.js";
 import { Execution, fence } from "./execution.js";
 import { assertTransition, retryDeadline, terminal } from "./state-machine.js";
 import type {
@@ -51,6 +59,7 @@ const view = (record: StoredJob): VersionedJob => ({
 export class JobService {
   private readonly handlers = new Map<string, TrustedJobHandler>();
   private readonly active = new Map<string, Active>();
+  private readonly authorities = new Set<Promise<unknown>>();
   private readonly maxWorkers: number;
   private readonly leaseMs: number;
   private readonly heartbeatMs: number;
@@ -157,6 +166,12 @@ export class JobService {
     duration: number,
     onTimeout: () => void,
   ): Promise<T> {
+    const original = Promise.resolve(work);
+    this.authorities.add(original);
+    original.then(
+      () => this.authorities.delete(original),
+      () => this.authorities.delete(original),
+    );
     const timer = new AbortController();
     const sleeping = this.options.clock.sleep(duration, timer.signal);
     const timeout = sleeping.then(() => {
@@ -167,7 +182,7 @@ export class JobService {
       );
     });
     try {
-      return await Promise.race([work, timeout]);
+      return await Promise.race([original, timeout]);
     } finally {
       timer.abort();
       await sleeping.catch((error: unknown) => {
@@ -296,8 +311,8 @@ export class JobService {
     return this.boundary(context, async (context) => {
       context = this.context(context, id, "write");
       integer(expectedVersion, 1, Number.MAX_SAFE_INTEGER);
-      const record = unwrap(
-        await this.options.repository.requestCancel(
+      const { record } = unwrap(
+        await this.options.repository.cancelWithReceipt(
           id,
           expectedVersion,
           context,
@@ -597,7 +612,9 @@ export class JobService {
           );
           return;
         }
-        if (ex.stageFailure) throw ex.stageFailure;
+        if (ex.refreshFailure)
+          this.fault(new JobFailure(ex.refreshFailure), ex.record);
+        if (ex.stageFailure) unwrap(ex.stageFailure);
         if (error) throw error;
         if (!result)
           throw new HostBoundaryError(
@@ -684,6 +701,7 @@ export class JobService {
         // Only explicit reconciliation can establish its external outcome.
         if (
           committing ||
+          problem.status === "interrupted" ||
           safe.code === "OUTPUT_UNCERTAIN" ||
           safe.code === "INTERRUPTED"
         )
@@ -1039,14 +1057,14 @@ export class JobService {
           ...repairs,
           ...[...this.active.values()].map((entry) => entry.done),
         ]);
+        // A timeout/abort only ends the wait, not the original trusted callback.
+        while (this.authorities.size !== 0)
+          await Promise.allSettled([...this.authorities]);
         drained = true;
       });
       await Promise.race([draining, sleeping]);
       if (!drained || this.active.size) {
-        throw new HostBoundaryError(
-          "INTERRUPTED",
-          "Callbacks have not confirmed stop.",
-        );
+        throw new JobFailure(detail("INTERRUPTED"), "interrupted");
       }
       if (this.loop) await this.loop;
       return {

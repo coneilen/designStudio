@@ -30,7 +30,7 @@ export function detail(code: ErrorCode, retryable = false): ContractError {
 export function unwrap<T>(outcome: Outcome<T>): T {
   if (outcome.status === "complete") return outcome.value;
   if (outcome.status === "partial")
-    throw new JobFailure(detail("OUTPUT_UNCERTAIN"), "interrupted");
+    throw new JobFailure(outcome.error, "interrupted");
   throw new JobFailure(outcome.error, outcome.status);
 }
 export function complete<T>(context: OperationContext, value: T): Outcome<T> {

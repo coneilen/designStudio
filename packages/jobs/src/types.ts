@@ -60,9 +60,15 @@ export type HandlerResult =
   | { kind: "wait" | "fail" | "interrupt"; error: ContractError }
   | { kind: "retry"; error: ContractError; retryAfter?: string };
 
+export type StageFailure = Exclude<
+  Outcome<StagedArtifact>,
+  { status: "complete" }
+>;
+
 export interface JobExecution {
   readonly context: OperationContext;
   readonly record: StoredJob;
+  readonly stageFailure?: StageFailure | undefined;
   checkpoint(): Promise<void>;
   stage(bytes: Uint8Array): Promise<Outcome<StagedArtifact>>;
   progress(value: number): Promise<void>;

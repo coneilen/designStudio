@@ -117,7 +117,7 @@ test("bounded stop retains an uncooperative callback and its slot until actual r
   f.setFault(undefined);
   clock.advance(500);
   expect(await stopping).toMatchObject({
-    status: "failed",
+    status: "interrupted",
     error: { code: "INTERRUPTED" },
   });
   expect(execution.context.signal.aborted).toBe(true);
@@ -199,6 +199,7 @@ test("a hung issuer has a finite allowance and cannot launch after its late repl
     "waiting-for-user",
   );
   release.resolve();
+  value(await s.stop());
   expect(calls).toBe(0);
 });
 

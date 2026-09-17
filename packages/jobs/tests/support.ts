@@ -56,7 +56,12 @@ afterEach(async () => {
 });
 
 export async function fixture(
-  options: { native?: boolean; workers?: number; clock?: Clock } = {},
+  options: {
+    native?: boolean;
+    workers?: number;
+    clock?: Clock;
+    seed?: boolean;
+  } = {},
 ) {
   const clock =
     options.clock ?? createFakeClock(Date.parse("2026-09-17T00:00:00Z"));
@@ -70,6 +75,8 @@ export async function fixture(
     "job-third",
     "job-fourth",
     "job-fifth",
+    "job-backup",
+    "job-restore",
   ]);
   const artifactId = (bytes: Uint8Array) =>
     `${options.native ? "sha256_" : "blob-"}${createHash("sha256").update(bytes).digest("hex")}`;
@@ -78,6 +85,7 @@ export async function fixture(
     artifactId(inputBytes),
     artifactId(output),
   ]);
+  const trustedBackups = new Set<string>();
   const authenticator = new LocalSessionAuthenticator({
     clock,
     hosts: ["127.0.0.1:47115"],
@@ -249,7 +257,12 @@ export async function fixture(
     canonicalBytes,
     verifyRevision: outside,
     assessApproval: outside,
-    authorizeRestore: outside,
+    authorizeRestore: async (backup) => {
+      if (!trustedBackups.has(backup.sha256))
+        throw new Error(
+          "Backup not registered from the owned trusted source fixture.",
+        );
+    },
     authorizeRetention: outside,
     canDiscardStage: async () => false,
     jobs: {
@@ -271,13 +284,15 @@ export async function fixture(
     fault: (point) => fault?.(point),
   };
   let store = await LocalStore.open(settings);
-  const seedCtx = context("seed");
-  const inputStage = value(await store.stage(inputBytes, seedCtx));
-  value(await store.commit([inputStage], seedCtx));
   const input = {
-    id: inputStage.artifact.id,
-    sha256: inputStage.artifact.sha256,
+    id: artifactId(inputBytes),
+    sha256: createHash("sha256").update(inputBytes).digest("hex"),
   };
+  if (options.seed !== false) {
+    const seedCtx = context("seed");
+    const inputStage = value(await store.stage(inputBytes, seedCtx));
+    value(await store.commit([inputStage], seedCtx));
+  }
   cleanup.push(async () => {
     store.close();
     if (host) await host.close();
@@ -292,6 +307,9 @@ export async function fixture(
     executionAuthority,
     recoveryAuthority,
     artifactRootId,
+    trustBackup(sha256: string) {
+      trustedBackups.add(sha256);
+    },
     get store() {
       return store;
     },

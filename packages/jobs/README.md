@@ -45,7 +45,7 @@ and recovery policies still belong to the real host/store composition.
 | `submit(submission, context)` | `Outcome<Job>`; authorized schema-valid submission, registered operation/handler/version, immutable input references, operation-scoped idempotency. F03 constructs the Job/digest. |
 | `get(id, context)` | `Outcome<Job>`; current authorized durable state, including verified completed receipt bytes. |
 | `getVersioned(id, context)` | `Outcome<{job, rowVersion}>`; no private authority, effect, control or storage envelope. |
-| `cancel(id, expectedVersion, context)` | `Outcome<{job, rowVersion}>`; conditional durable cancellation. Currently uses `requestCancel`; retry-safe cancel-control integration is pending below. |
+| `cancel(id, expectedVersion, context)` | `Outcome<{job, rowVersion}>`; conditional, durably idempotent cancellation through `cancelWithReceipt`. The control receipt remains in the store's private journal; the public view is current, not the original control-result snapshot. |
 | `wait(id, context)` | Waits within the caller's live deadline/signal for terminal or action-required state. Retry-wait is not completion. Cancelling this observer does not cancel the job. |
 | `waitForAttempt(id, context)` | Bounded authorized wait for this service's active callback/finalizer to return; useful for attempt-level orchestration. It does not attest another process's quiescence. |
 | `getRecoveryView(id, context)` | Bounded authorized `{job,rowVersion,stages,recoveryRequired}` inspection. Stage receipts are evidence, not permission to adopt/publish/discard bytes. |
@@ -58,10 +58,15 @@ The private rowVersion is an optimistic-concurrency token, not a lease
 generation. Both matter. Consumers must not attach rowVersion or private
 metadata as extra fields on the strict shared Job JSON.
 
-**Cancellation-control follow-up:** F03's approved `cancelWithReceipt` port is
-being integrated separately. Do not advertise retry-safe HTTP cancellation
-based on the current conditional `requestCancel` path. There is no in-memory
-deduplication workaround. F08 transports and routes are outside this package.
+Cancellation `context.requestId` is the control idempotency key, independent of
+the job's original logical request. F03 binds it to project/actor/private
+job-cancel operation and exact job ID/expected version. A successful control
+increments the private version once, even when a final receipt already won.
+Exact replay after restart/restore does not mutate and returns the currently
+authorized Job/version, which may be newer than the immutable control receipt's
+resultVersion. Reusing that key for another target/precondition conflicts before
+completed-job handling. There is no in-memory deduplication or fallback to legacy
+`requestCancel`. F08 transports/header handling/routes remain outside this package.
 
 ## Handler and staged renderer contract
 
@@ -99,6 +104,16 @@ separate from artifact cleanup and finishes before staging under that lease's
 own finite allowance. No publisher/discard is reachable through the jobs stage
 adapter. Only F07 calls fenced `commitJob`; the standalone auto-publishing
 Renderer adapter is not the tracked-job path.
+
+A declared partial `JobStageResult` maps to partial `StagedArtifact`, preserving
+the exact known receipt, original error, missing items and diagnostic IDs.
+`execution.stageFailure` retains an owned copy of that mapped noncomplete
+outcome before attempting a journal refresh. Failed or rejected refresh cannot
+replace this primary evidence. Such a partial result still forbids completion
+and remains interrupted; it is neither publication authority nor permission to
+adopt bytes by hash. `getStages` remains necessary for durable recovery but is
+not a substitute for preserving already-known receipts while reads are unavailable.
+Do not log raw stageFailure objects; normal job errors/telemetry remain sanitized.
 
 ## State, limits and safety
 
@@ -149,9 +164,15 @@ not exceed heartbeat and heartbeat is below lease. Storage further caps leases
 by job/context/grant deadlines. F03 holds its queue during publication I/O:
 delayed heartbeats cannot retroactively revive an expired lease.
 
-`stop` returning a failure means work/authority/recovery has not fully drained:
+Original observe/issue/recovery callback promises are tracked independently of
+their deadline races, until actual fulfillment or rejection. Aborting their
+signals does not remove them from shutdown accounting. A late result after
+timeout cannot start a handler or be mistaken for a completed earlier request.
+
+`stop` returning a noncomplete outcome means work/authority/recovery has not fully drained:
 do not close the shared store/host while operations are still pending. Retry
-stop after actual quiescence. It never kills arbitrary code, deletes staged
+stop after actual quiescence. Pending callbacks produce `interrupted` even when
+the count of active job handlers is zero. It never kills arbitrary code, deletes staged
 files, or claims an uncooperative callback stopped. Trusted host/authority
 operations still have to honor their own finite/cooperative boundaries;
 synchronous native calls are not forcibly interruptible.
@@ -182,6 +203,10 @@ races; and telemetry exceptions escaping durable completion. Tests cover all81
 legal/illegal state pairs, conditional cancellation, receipt races, staged
 renderer journaling, retained slot caps1/4, restart, persisted retry deadlines,
 unknown effects, finite authority waits, explicit resume and waiter cancellation.
+Review-driven regressions additionally cover partial stage receipts surviving
+unavailable/rejected refresh, timed-out authority/recovery callbacks still
+blocking shutdown until late settlement, and durable cancellation replay after
+restart/authorized restore returning the current private version without mutation.
 
 Most integration cases use real temporary SQLite with the explicitly synthetic
 storage test disk adapter and a current-policy LocalSessionAuthenticator registry.
