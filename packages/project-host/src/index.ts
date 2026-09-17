@@ -1,4 +1,10 @@
 export {
+  type FixtureInstallationLease,
+  type FixtureInstallationPaths,
+  registerFixtureInstallationGuards,
+  verifyFixtureInstallation,
+} from "./installation.js";
+export {
   type CurrentPrincipal,
   type FixturePaths,
   type FixtureProjectBinding,

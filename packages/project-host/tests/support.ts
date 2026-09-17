@@ -76,6 +76,7 @@ export async function weakenTestAcl(
   root: string,
   filename: string,
   nullDacl = false,
+  restoreOwner = false,
 ): Promise<void> {
   const relative = path.relative(root, filename);
   if (
@@ -104,9 +105,14 @@ export async function weakenTestAcl(
     "void * __stdcall LocalFree(void *)",
   );
   const descriptor: unknown[] = [null];
+  const sid = restoreOwner ? (await loadNative()).principal() : undefined;
   if (
     !convert(
-      nullDacl ? "D:NO_ACCESS_CONTROL" : "D:P(A;OICI;FA;;;WD)",
+      restoreOwner
+        ? `D:P(A;OICI;FA;;;${sid})(A;OICI;FA;;;SY)`
+        : nullDacl
+          ? "D:NO_ACCESS_CONTROL"
+          : "D:P(A;OICI;FA;;;WD)",
       1,
       descriptor,
       null,

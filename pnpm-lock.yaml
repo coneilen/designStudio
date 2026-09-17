@@ -114,6 +114,10 @@ importers:
       '@design-studio/host':
         specifier: workspace:*
         version: link:../host
+    devDependencies:
+      '@design-studio/renderer-host':
+        specifier: workspace:*
+        version: link:../renderer-host
     optionalDependencies:
       koffi:
         specifier: 3.2.1

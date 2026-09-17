@@ -4,6 +4,9 @@ Narrow Windows **fresh fixture-catalog projects only** provisioning for F08.
 This is not arbitrary directory adoption, an ACL repair service, an HTTP setup
 endpoint, a general filesystem sandbox, or a complete application.
 
+The separately approved offline installation mechanism is described below.
+It does not turn a repository checkout into an approved executable release.
+
 ## Trusted composition
 
 ```ts
@@ -217,3 +220,236 @@ Only ten importer lines are added; a byte-for-byte comparison (normalizing
 newlines) verified all existing package/integrity/snapshot records unchanged.
 Windows arm64, other operating systems, non-NTFS volumes, live production-root
 provisioning, power-cut recovery and full application integration are unverified.
+
+## Offline fixture installation mechanism
+
+**No real release is approved by this implementation.** The user selected the
+offline release model and requires approval of the exact final release before
+installation. There is no signing infrastructure, automatic approval receipt,
+development-worktree success switch or successful production test callback.
+Ordinary repository calls to `verifyFixtureInstallation()` return
+`ACTION_REQUIRED`. The packager refuses before allocating output when actual
+integrated application/CLI build entries are absent.
+
+The user's initial trust decision covers the complete selected bootstrap:
+pinned Windows x64 Node 24.21.0 distribution, bootstrap scripts, native bridge,
+all bootstrap dependencies, inventories and policy. Executing an untrusted
+bootstrap to ask whether it is trusted is **not safe**. Its self-checks establish
+integrity relative to the externally selected bytes, not provenance. Local
+`--approve-*` flags are explicit release-selection confirmations, not evidence
+that somebody reviewed the bytes, and are never accepted from HTTP or job data.
+
+### Candidate creation, approval, installation and launch
+
+From the final **integrated, built** source and already acquired, independently
+reviewed runtime/browser/SQLite artifacts:
+
+```powershell
+pnpm --filter @design-studio/project-host build
+node packages\project-host\scripts\package-candidate.mjs `
+  --workspace D:\approved-integrated-build `
+  --node-root D:\approved-artifacts\node-v24.21.0-win-x64 `
+  --browser-root D:\approved-artifacts\renderer-browser-1.63.0 `
+  --sqlite-binding D:\approved-artifacts\better_sqlite3.node `
+  --output D:\new-offline-candidate
+```
+
+The tool neither downloads nor installs dependencies, runs package scripts,
+compiles native code, updates OS settings, nor executes candidate source
+executables. Candidate Node bytes must match the explicitly trusted running
+24.21.0 runtime. The SQLite addon is checked against the existing ABI137 binary
+pin, and all 299 Chromium r1243 inventory files against the reviewed renderer
+inventory. Those integrity checks do not replace release selection.
+
+Output is `payload/`, `bootstrap/`, `payload-inventory.json` and
+`bootstrap-inventory.json`. Candidate metadata prints both SHA-256 identities
+and `candidate-awaiting-user-release-approval`; it is **not an approval**.
+Present both inventories, identities, upstream provenance/notices and remaining
+limitations to the user after the actual F08 integration. Only after that exact
+user approval would the user execute, from the independently trusted candidate:
+
+```powershell
+.\bootstrap\runtime\node.exe .\bootstrap\install.mjs `
+  --approve-manifest <user-approved-payload-inventory-sha256> `
+  --approve-bootstrap <user-approved-bootstrap-inventory-sha256>
+```
+
+This command was **not executed against a live installation namespace** during
+development. Its engine was exercised only inside verified temporary test roots.
+The installer prints the fixed installed bootstrap entry; run it with its
+adjacent `runtime\node.exe`, the literal role `cli`, and ordinary F08 arguments.
+The browser worker continues using renderer-host's reviewed source-pinned
+bootstrap, Job join, nonce/frame protocol and observed cleanup. No raw browser
+spawn or `NODE_OPTIONS` workaround replaces that boundary.
+
+The payload contains compiled workspace modules and their package metadata,
+contract JSON schemas, renderer-host's required `src/bootstrap.mjs`, original
+fixture catalog/assets/license, native SQLite binding, complete public browser
+inventory, and complete transitive package contents/notices. Package-manager
+links are resolved during **candidate assembly**, then materialized as new
+physical files, never shipped as pnpm junctions/symlinks. Conflicting versions
+or source resolutions for one flat package name fail closed rather than
+silently select an alternative. Source-store hardlinks may be read as candidate
+inputs; every destination is a new single-link file and is rehashed.
+Workspace tests/caches/sources not part of the reviewed runtime file set are
+not shipped. The tool does not automatically approve new source versions.
+
+Outer bootstrap inventory covers **every** bootstrap file, including scripts,
+runtime, policy and the inner module inventory. It excludes only itself, which
+resides alongside the bootstrap directory and whose exact hash the user selects.
+There is no circular self-hash. A builtin-only `preflight.mjs` embeds the hash of
+`bootstrap-modules.json`, covering the physical bootstrap dependency tree. That
+inner inventory intentionally excludes entry/preflight scripts and runtime;
+all remain covered by the **outer user approval**. Preflight checks module bytes,
+physical paths and exact inventory before registering synchronous Node hooks and
+only then importing project-host/host/Koffi. This early byte check is within the
+trusted-bootstrap/private-writer boundary, not hostile-writer race containment.
+
+### Private installation and the public browser exception
+
+Installation uses native KnownFolder:
+`LocalAppData\DesignStudio\installations\<combined-inventory-digest-base64url>\<generated-UUID>`.
+There is no production destination override or directory adoption.
+Atomic private reservation excludes same-release races; an unknown partial
+reservation is retained and action-required, never overwritten, repaired or
+automatically removed. Exact source inventory is verified/pinned before writes.
+Files stream through `CREATE_NEW`, are flushed, and are finalized only through
+handles returned for that exact new installer-owned entry. Existing arbitrary
+paths cannot obtain a finalization handle.
+
+Final protected DACLs grant current principal **read/execute** (`0x1200a9`) and
+SYSTEM full control; writable creation handles close before attestation.
+Only `payload\browser` and its exact approved Chromium descendants additionally
+grant BUILTIN\Users read/execute. The user separately approved this public-binary
+reader exception after the real sandbox differential. **No Users write grant**
+is present. Node, JS/modules/addons, bootstrap policy, catalog, project databases,
+profiles, credentials and temporary output remain private. Browser contents must
+remain the approved public binaries/resources/notices, never application data.
+Native reattestation rejects extra trustees or reader grants outside that subtree.
+
+The current user owns the files and can change a DACL. Thus this is **not**
+immutability against hostile same-user code or administrators. Exact inventory,
+protected ACLs, native path/identity checks, trusted installed writers and retained
+`FILE_SHARE_READ` handles provide the declared boundary. File pins deny new
+write/delete sharing and are compatible with actual Node/addon/browser loading;
+directory handles do not magically freeze all namespace mutations. Arbitrary
+hostile trusted code could bypass JS hooks or call native APIs and is not sandboxed.
+Windows system DLLs/kernel/platform remain an explicit OS trust boundary.
+
+After full destination verification a protected no-replace write-through record
+binds native principal, generated root identity and both inventories. Reopen
+checks exact canonical metadata, file bytes/lengths, all identities/ACLs and
+ancestor paths/local NTFS; extra, missing, reparse, hardlinked or altered entries
+fail. NTFS request evidence is not power-cut/hardware/new-parent durability proof.
+No migration-backup durability is conferred by installation.
+
+### Public installation API and teardown
+
+```ts
+const installation = await verifyFixtureInstallation();
+const guard = registerFixtureInstallationGuards(installation);
+// Only now dynamically import application code / start work.
+// Await actual worker.close(), child exit and Job-empty evidence first.
+guard.close();
+await installation.close();
+```
+
+`FixtureInstallationLease` exposes readonly `identity` and frozen
+`paths: {node, bootstrapEntry, cliEntry, rendererEntry, fixtureCatalogRoot,
+browserRoot, sqliteBinding}`, plus asynchronous `recheck()` and `close()`.
+The public verifier takes **no paths, IDs, hashes, booleans or JSON proof**.
+It operates only in the selected pinned bootstrap runtime, with the module's
+exact fixed installed placement and native KnownFolder registration.
+Extra Node command-line loaders/flags and `NODE_OPTIONS`/`NODE_PATH` are refused.
+`registerFixtureInstallationGuards` accepts only this process's live
+WeakMap-owned verified lease; serialization/forgery cannot resurrect one.
+
+The synchronous resolver covers ESM, CommonJS `require` and `createRequire`.
+Loaded files must be exact inventoried paths; builtins are the explicit runtime
+boundary. Bare package resolution must stay under the selected physical
+bootstrap or payload package root, never global or ancestor fallback.
+The broader native-verified guard is registered **before** the restrictive
+preflight guard retires, with no unguarded import window.
+Direct native `dlopen`, browser resources and OS image dependencies require the
+separate complete native file inventory/pins; JS hooks alone do not attest them.
+
+The parent holds its lease while children/jobs run. Each child independently
+verifies the installed release and owns its own pins. The fixed renderer entry
+must import only the reviewed verifier TCB, verify/register, and then dynamically
+import the rendering implementation after the existing host bootstrap has joined
+the Job. Guard deregistration is explicit; lease close refuses live guards.
+Guard/lease close must follow real quiescence, never a callback timeout.
+The CLI outer bootstrap deliberately retains its final native pins for the
+entire process lifetime; it does not infer quiescence from import completion or
+Node's `beforeExit`. The exit hook deregisters the outer guard, and OS process
+teardown releases the final pins. F08 still must observe child/job termination
+before deciding to exit. Forced process death releases OS handles; it is not
+evidence that some uncontained descendant stopped.
+Cleanup attempts every owned handle, preserves original failures, blocks reuse
+after failed close, and permits close-only retry. No installation data is deleted.
+
+Bounds: combined inventories at most 20,000 files and 2 GiB, each file at most
+512 MiB, each manifest at most 8 MiB, canonical ASCII relative paths at most
+220 characters, streamed reads/writes in 1 MiB chunks and bounded directory
+enumeration (40,000 entries). Unsupported shapes/version conflicts fail rather
+than widen resolution. Operations are synchronous native checkpoints, not
+hard-real-time cancellation. Large installation verification can take seconds;
+F08 startup budgets must account for the complete closure.
+
+### Installation evidence and remaining gate
+
+Observed RED/GREEN: absent native finalizer and manifest/resolver primitives;
+outside ESM/CommonJS/createRequire resolution denied by exact Node 24.21.0;
+hostile preflight dependency/inner-inventory edits and omitted/extra files;
+source-pin leak on destination-create failure (one leaked pin before fix);
+empty-directory inventory mismatch; installed bootstrap trailing-separator
+comparison; installation close failure draining and close-only retry.
+Synthetic engine tests cover dual identity rejection, seal/reopen, record
+tamper, unexpected private-path DACL, incomplete reservation and guards/lifetime.
+They are labeled **synthetic**, not release provenance or full application proof.
+
+The complete candidate workflow was exercised with real physical dependencies,
+full copied Node runtime, pinned SQLite addon and 299-file browser inventory;
+only F08 CLI/application entries were synthetic and only native KnownFolder
+return was replaced to the exact freshly generated TEMP namespace. It packaged,
+installed, sealed and launched a separate copied Node child which independently
+verified all native identities/ACLs/inventories, registered guards and rechecked.
+No actual F08 release or production approval was fabricated.
+
+The compatibility probe holds native read-share pins while Node imports physical
+Playwright/Koffi, loads SQLite and renders a page through sandboxed, Job-contained
+Chromium. It captures sandbox/pipe flags and checks observed worker exit and
+Job emptiness before releasing pins. The browser-reader differential observed
+private copied browser `browser.newPage` failure even without browser pins;
+browser-only Users read/execute made it pass without sandbox weakening.
+Full exact before/after native DACL observations are emitted only by that
+explicit opt-in test. Test cleanup rechecks generated identities before
+test-only owner-ACL restoration and removes only its exact owned namespace.
+
+Opt-in commands (approved artifacts must already exist at documented test
+locations; no implicit download):
+
+```powershell
+$env:FIXTURE_INSTALL_COMPATIBILITY='1'
+$env:FIXTURE_INSTALL_PUBLIC_BROWSER_READ='1'
+pnpm exec vitest run --project smoke packages\project-host\tests\installation-compatibility.smoke.test.ts
+$env:FIXTURE_INSTALL_CANDIDATE_GATE='1'
+pnpm exec vitest run --project smoke packages\project-host\tests\candidate-workflow.smoke.test.ts
+```
+
+The compatibility probe's ordinary writable root is short and private. F08's
+exact registered long temporary hierarchy exposed Playwright `ENAMETOOLONG`
+before browser launch; that separate renderer-host path-spelling fix belongs to
+the host/F08 integration. No temp/profile reader-ACL widening is authorized or
+implemented here. The optional registered-temp probe mode is not passing evidence.
+Actual integrated F08 CLI/render flow, final user selection of both release
+identities, and any real per-user installation remain explicit subsequent gates.
+
+Final mechanism validation on this branch: **34 unit tests and all 3 opt-in
+package/candidate/browser smoke tests passed**, with build-before-strict-root
+typecheck and scoped Biome checks. The complete synthetic-entry candidate/child
+case took 235.4 seconds; the guarded native browser case took 44.7 seconds,
+using a 54-character private temporary root. These timings include candidate
+assembly/verification and are not F08 latency acceptance results.
+The generated dependency change is four importer lines adding renderer-host
+only as a test dependency; all other lockfile bytes were compared unchanged.

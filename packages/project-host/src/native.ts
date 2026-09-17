@@ -12,6 +12,13 @@ export interface Lease {
   identity: Identity;
   close(): void;
 }
+export interface ReadLease extends Lease {
+  read(buffer: Buffer): number;
+}
+export interface InstallationEntry extends Lease {
+  write(bytes: Buffer): void;
+  finalize(publicBrowser?: boolean): void;
+}
 export interface Native {
   principal(): string;
   localAppData(): string;
@@ -23,6 +30,18 @@ export interface Native {
     destination?: string,
   ): void;
   inspect(filename: string, directory: boolean, sid?: string): Lease;
+  pinRead(filename: string, directory: boolean, sid?: string): ReadLease;
+  pinInstallation(
+    filename: string,
+    directory: boolean,
+    sid: string,
+    publicBrowser?: boolean,
+  ): ReadLease;
+  createInstallationEntry(
+    filename: string,
+    directory: boolean,
+    sid: string,
+  ): InstallationEntry;
 }
 
 export function refuse(message: string): never {
@@ -252,6 +271,34 @@ async function load(): Promise<Native> {
   ) => number = kernel.func(
     "int __stdcall WriteFile(uintptr_t, void *, uint32_t, _Out_ void *, void *)",
   );
+  const read: (
+    handle: Handle,
+    bytes: Buffer,
+    size: number,
+    readBytes: Buffer,
+    overlap: null,
+  ) => number = kernel.func(
+    "int __stdcall ReadFile(uintptr_t, _Out_ void *, uint32_t, _Out_ void *, void *)",
+  );
+  const descriptorDacl: (
+    descriptor: unknown,
+    present: Buffer,
+    dacl: unknown[],
+    defaulted: Buffer,
+  ) => number = advapi.func(
+    "int __stdcall GetSecurityDescriptorDacl(void *, _Out_ void *, _Out_ void **, _Out_ void *)",
+  );
+  const setSecurity: (
+    handle: Handle,
+    kind: number,
+    flags: number,
+    owner: null,
+    group: null,
+    dacl: unknown,
+    sacl: null,
+  ) => number = advapi.func(
+    "uint32_t __stdcall SetSecurityInfo(uintptr_t, int, uint32_t, void *, void *, void *, void *)",
+  );
   const flush: (handle: Handle) => number = kernel.func(
     "int __stdcall FlushFileBuffers(uintptr_t)",
   );
@@ -371,7 +418,13 @@ async function load(): Promise<Native> {
       () => free(pointer[0]),
     );
   }
-  function checkAcl(handle: Handle, sid: string, directory: boolean): void {
+  function checkAcl(
+    handle: Handle,
+    sid: string,
+    directory: boolean,
+    installation = false,
+    publicBrowser = false,
+  ): void {
     const owner: unknown[] = [null];
     const acl: unknown[] = [null];
     const descriptor: unknown[] = [null];
@@ -392,19 +445,19 @@ async function load(): Promise<Native> {
         )
           refuse("Private fixture requires a protected non-null valid DACL.");
         const header = Buffer.from(koffi.decode(acl[0], "uint8_t", 8));
-        if (header.readUInt16LE(4) !== 2)
+        const expectedCount = publicBrowser ? 3 : 2;
+        if (header.readUInt16LE(4) !== expectedCount)
           refuse(
             "Private fixture DACL must contain exactly two explicit grants.",
           );
         const seen = new Set<string>();
-        for (let index = 0; index < 2; index++) {
+        for (let index = 0; index < expectedCount; index++) {
           const ace: unknown[] = [null];
           if (!getAce(acl[0], index, ace)) throw failure("GetAce");
           const bytes = Buffer.from(koffi.decode(ace[0], "uint8_t", 8));
           if (
             bytes[0] !== 0 ||
             bytes[1] !== (directory ? 3 : 0) ||
-            bytes.readUInt32LE(4) !== 0x1f01ff ||
             bytes.readUInt16LE(2) < 20 ||
             bytes.readUInt16LE(2) > 76
           )
@@ -415,7 +468,15 @@ async function load(): Promise<Native> {
             koffi.decode(ace[0], 8, "uint8_t", bytes.readUInt16LE(2) - 8),
           );
           const aceSid = sidString(sidBytes);
-          if ((aceSid !== sid && aceSid !== "S-1-5-18") || seen.has(aceSid))
+          const expectedMask =
+            installation && aceSid !== "S-1-5-18" ? 0x1200a9 : 0x1f01ff;
+          if (
+            bytes.readUInt32LE(4) !== expectedMask ||
+            (aceSid !== sid &&
+              aceSid !== "S-1-5-18" &&
+              !(publicBrowser && aceSid === "S-1-5-32-545")) ||
+            seen.has(aceSid)
+          )
             refuse("Unexpected or duplicate private fixture trustee.");
           seen.add(aceSid);
         }
@@ -455,6 +516,8 @@ async function load(): Promise<Native> {
     filename: string,
     directory: boolean,
     sid?: string,
+    installation = false,
+    publicBrowser = false,
   ): Identity {
     const info = Buffer.alloc(52);
     if (!getInfo(handle, info)) throw failure("GetFileInformationByHandle");
@@ -479,15 +542,181 @@ async function load(): Promise<Native> {
       throw failure("GetVolumeInformationByHandleW");
     if (fs.toString("utf16le").split("\0")[0] !== "NTFS")
       refuse("Fixture paths require NTFS.");
-    if (sid !== undefined) checkAcl(handle, sid, directory);
+    if (sid !== undefined)
+      checkAcl(handle, sid, directory, installation, publicBrowser);
     return {
       path: filename,
       volume: info.readUInt32LE(28),
       file: info.subarray(44, 52).toString("hex"),
     };
   }
+  function pin(
+    filename: string,
+    directory: boolean,
+    sid?: string,
+    installation = false,
+    publicBrowser = false,
+  ): ReadLease {
+    const handle = open(
+      filename,
+      directory ? 0x20081 : 0x80020000,
+      1,
+      null,
+      3,
+      0x02200000,
+    );
+    let identity: Identity;
+    try {
+      identity = inspectHandle(
+        handle,
+        filename,
+        directory,
+        sid,
+        installation,
+        publicBrowser,
+      );
+    } catch (error) {
+      return preserving(
+        () => {
+          throw error;
+        },
+        () => close(handle),
+      );
+    }
+    let closed = false;
+    return {
+      handle,
+      identity,
+      read(buffer) {
+        if (
+          closed ||
+          directory ||
+          buffer.byteLength < 1 ||
+          buffer.byteLength > 1024 * 1024
+        )
+          refuse("Invalid pinned installation read.");
+        const count = Buffer.alloc(4);
+        if (!read(handle, buffer, buffer.byteLength, count, null))
+          throw failure("ReadFile");
+        return count.readUInt32LE();
+      },
+      close() {
+        if (!closed) {
+          close(handle);
+          closed = true;
+        }
+      },
+    };
+  }
   return {
     principal,
+    pinRead: pin,
+    pinInstallation: (filename, directory, sid, publicBrowser = false) =>
+      pin(filename, directory, sid, true, publicBrowser),
+    createInstallationEntry(filename, directory, sid) {
+      const handle = withSecurity(sid, directory, (attributes) => {
+        if (directory) {
+          if (!createDirectory(`\\\\?\\${filename}`, attributes))
+            throw failure("CreateDirectoryW(installation)");
+          return open(filename, 0x60081, 3, null, 3, 0x02200000);
+        }
+        return open(filename, 0xc0060000, 1, attributes, 1, 0x80200000);
+      });
+      let identity: Identity;
+      try {
+        identity = inspectHandle(handle, filename, directory, sid);
+      } catch (error) {
+        return preserving(
+          () => {
+            throw error;
+          },
+          () => close(handle),
+        );
+      }
+      let finalized = false;
+      let closed = false;
+      return {
+        handle,
+        identity,
+        write(bytes) {
+          if (
+            closed ||
+            finalized ||
+            directory ||
+            bytes.byteLength > 1024 * 1024
+          )
+            refuse(
+              "Installation entry is closed/finalized or write exceeds its bound.",
+            );
+          if (!bytes.byteLength) return;
+          const count = Buffer.alloc(4);
+          if (!write(handle, bytes, bytes.byteLength, count, null))
+            throw failure("WriteFile(installation)");
+          if (count.readUInt32LE() !== bytes.byteLength)
+            refuse("Incomplete installation write.");
+        },
+        finalize(publicBrowser = false) {
+          if (closed || finalized || principal() !== sid)
+            refuse(
+              "Installation entry is closed/finalized or principal changed.",
+            );
+          const actual = inspectHandle(handle, filename, directory, sid);
+          if (
+            actual.file !== identity.file ||
+            actual.volume !== identity.volume
+          )
+            refuse(
+              "Owned installation entry identity changed before finalization.",
+            );
+          if (!directory && !flush(handle))
+            throw failure("FlushFileBuffers(installation)");
+          const descriptor: unknown[] = [null];
+          const flags = directory ? "OICI" : "";
+          const sddl = `O:${sid}D:P(A;${flags};FRFX;;;${sid})(A;${flags};FA;;;SY)${publicBrowser ? `(A;${flags};FRFX;;;BU)` : ""}`;
+          if (!convertDescriptor(sddl, 1, descriptor, Buffer.alloc(4)))
+            throw failure("Installation security descriptor");
+          preserving(
+            () => {
+              const acl: unknown[] = [null];
+              const present = Buffer.alloc(4);
+              if (
+                !descriptorDacl(descriptor[0], present, acl, Buffer.alloc(4)) ||
+                !present.readUInt32LE() ||
+                !acl[0]
+              )
+                throw failure("Installation descriptor DACL");
+              const code = setSecurity(
+                handle,
+                1,
+                0x80000004,
+                null,
+                null,
+                acl[0],
+                null,
+              );
+              if (code !== 0)
+                throw failure("SetSecurityInfo(owned installation)", code);
+              finalized = true;
+              inspectHandle(
+                handle,
+                filename,
+                directory,
+                sid,
+                true,
+                publicBrowser,
+              );
+            },
+            () => free(descriptor[0]),
+          );
+        },
+        close() {
+          if (!closed) {
+            close(handle);
+            closed = true;
+          }
+        },
+      };
+    },
     localAppData() {
       // FOLDERID_LocalAppData, GUID fields in native little-endian layout.
       const id = Buffer.from("8527b3f1ba6fcf4f9d557b8e7f157091", "hex");

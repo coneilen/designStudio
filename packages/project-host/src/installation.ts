@@ -1,0 +1,637 @@
+import { createHash, randomUUID } from "node:crypto";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { HostBoundaryError } from "@design-studio/host";
+import {
+  boundedFile,
+  decodeInventory,
+  digest,
+  encodeInventory,
+  exactTree,
+  INSTALL_LIMITS,
+  type InventoryFile,
+  physical,
+} from "./installation-manifest.js";
+import { guardResolution } from "./installation-resolver.js";
+import {
+  type Identity,
+  type InstallationEntry,
+  type Lease,
+  loadNative,
+  type Native,
+  type ReadLease,
+  refuse,
+} from "./native.js";
+
+export interface FixtureInstallationPaths {
+  readonly node: string;
+  readonly bootstrapEntry: string;
+  readonly cliEntry: string;
+  readonly rendererEntry: string;
+  readonly fixtureCatalogRoot: string;
+  readonly browserRoot: string;
+  readonly sqliteBinding: string;
+}
+export interface FixtureInstallationLease {
+  readonly paths: FixtureInstallationPaths;
+  readonly identity: string;
+  recheck(): Promise<void>;
+  close(): Promise<void>;
+}
+interface ReleasePolicy {
+  version: 1;
+  manifestSha256: string;
+  catalogSha256: string;
+}
+interface Metadata {
+  policy: ReleasePolicy;
+  manifest: Buffer;
+  bootstrapInventory: Buffer;
+  files: readonly InventoryFile[];
+  bootstrapFiles: readonly InventoryFile[];
+  identity: string;
+}
+interface Receipt {
+  version: 1;
+  sid: string;
+  child: string;
+  identity: string;
+  root: Identity;
+}
+interface Verified {
+  readonly files: readonly string[];
+  readonly leases: ReadLease[];
+  readonly identities: readonly Identity[];
+}
+const active = new WeakMap<
+  FixtureInstallationLease,
+  { files: readonly string[]; root: string; live: boolean; guards: number }
+>();
+let bootstrapOrigin: string | undefined;
+const same = (a: Identity, b: Identity) =>
+  a.path === b.path && a.file === b.file && a.volume === b.volume;
+
+function release(leases: readonly Lease[]): void {
+  const errors: unknown[] = [];
+  for (const lease of [...leases].reverse()) {
+    try {
+      lease.close();
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  if (errors.length)
+    throw new AggregateError(
+      errors,
+      "Installation native handle release failed.",
+      { cause: errors[0] },
+    );
+}
+async function rollbackError(
+  error: unknown,
+  leases: readonly Lease[],
+): Promise<never> {
+  try {
+    release(leases);
+  } catch (cleanup) {
+    throw new AggregateError(
+      [error, cleanup],
+      "Installation verification and release failed.",
+      { cause: error },
+    );
+  }
+  throw error;
+}
+async function withLeases<T>(
+  leases: readonly Lease[],
+  operation: () => Promise<T>,
+): Promise<T> {
+  let value: T;
+  try {
+    value = await operation();
+  } catch (error) {
+    return rollbackError(error, leases);
+  }
+  release(leases);
+  return value;
+}
+async function metadata(root: string): Promise<Metadata> {
+  const policyBytes = await boundedFile(
+    path.join(root, "bootstrap", "release-policy.json"),
+    1024,
+  );
+  const policy: ReleasePolicy = JSON.parse(policyBytes.toString("utf8"));
+  if (
+    policy?.version !== 1 ||
+    !/^[a-f0-9]{64}$/.test(policy.manifestSha256) ||
+    !/^[a-f0-9]{64}$/.test(policy.catalogSha256) ||
+    !policyBytes.equals(
+      Buffer.from(
+        JSON.stringify({
+          version: 1,
+          manifestSha256: policy.manifestSha256,
+          catalogSha256: policy.catalogSha256,
+        }),
+      ),
+    )
+  )
+    refuse("Invalid trusted bootstrap release policy.");
+  const manifest = await boundedFile(
+    path.join(root, "payload-inventory.json"),
+    INSTALL_LIMITS.manifestBytes,
+  );
+  if (digest(manifest) !== policy.manifestSha256)
+    refuse("Payload inventory differs from trusted bootstrap policy.");
+  const bootstrapInventory = await boundedFile(
+    path.join(root, "bootstrap-inventory.json"),
+    INSTALL_LIMITS.manifestBytes,
+  );
+  return {
+    policy,
+    manifest,
+    bootstrapInventory,
+    files: decodeInventory(manifest),
+    bootstrapFiles: decodeInventory(bootstrapInventory),
+    identity: digest(Buffer.concat([manifest, bootstrapInventory])),
+  };
+}
+function allFiles(meta: Metadata): readonly InventoryFile[] {
+  const files = [
+    ...meta.files.map((file) => ({ ...file, path: `payload/${file.path}` })),
+    ...meta.bootstrapFiles.map((file) => ({
+      ...file,
+      path: `bootstrap/${file.path}`,
+    })),
+    {
+      path: "payload-inventory.json",
+      bytes: meta.manifest.length,
+      sha256: digest(meta.manifest),
+    },
+    {
+      path: "bootstrap-inventory.json",
+      bytes: meta.bootstrapInventory.length,
+      sha256: digest(meta.bootstrapInventory),
+    },
+  ];
+  encodeInventory(files);
+  return files;
+}
+function checkHash(lease: ReadLease, expected: InventoryFile): void {
+  const buffer = Buffer.alloc(1024 * 1024);
+  const hash = createHash("sha256");
+  let total = 0;
+  for (;;) {
+    const count = lease.read(buffer);
+    if (!count) break;
+    total += count;
+    if (total > expected.bytes)
+      refuse("Installation file exceeds manifest byte length.");
+    hash.update(buffer.subarray(0, count));
+  }
+  if (total !== expected.bytes || hash.digest("hex") !== expected.sha256)
+    refuse("Installation file bytes differ from the reviewed release.");
+}
+async function verifyTree(
+  native: Native,
+  root: string,
+  files: readonly InventoryFile[],
+  sid?: string,
+): Promise<Verified> {
+  const leases: ReadLease[] = [];
+  try {
+    // Pin the root before enumerating; retained handles are not a hostile-owner namespace sandbox.
+    leases.push(
+      sid
+        ? native.pinInstallation(root, true, sid)
+        : native.pinRead(root, true),
+    );
+    const directories = await exactTree(root, files);
+    for (const directory of directories.slice(1)) {
+      const relative = path.relative(root, directory);
+      const browser =
+        relative === path.join("payload", "browser") ||
+        relative.startsWith(`payload${path.sep}browser${path.sep}`);
+      leases.push(
+        sid
+          ? native.pinInstallation(directory, true, sid, browser)
+          : native.pinRead(directory, true),
+      );
+    }
+    for (const file of files) {
+      const filename = physical(root, file.path);
+      const lease = sid
+        ? native.pinInstallation(
+            filename,
+            false,
+            sid,
+            file.path.startsWith("payload/browser/"),
+          )
+        : native.pinRead(filename, false);
+      leases.push(lease);
+      checkHash(lease, file);
+    }
+    return {
+      files: files.map((file) => physical(root, file.path)),
+      leases,
+      identities: leases.map((lease) => lease.identity),
+    };
+  } catch (error) {
+    return rollbackError(error, leases);
+  }
+}
+function paths(root: string): FixtureInstallationPaths {
+  return Object.freeze({
+    node: path.join(root, "bootstrap", "runtime", "node.exe"),
+    bootstrapEntry: path.join(root, "bootstrap", "launch.mjs"),
+    cliEntry: path.join(root, "payload", "packages", "cli", "dist", "main.js"),
+    rendererEntry: path.join(
+      root,
+      "payload",
+      "packages",
+      "application",
+      "dist",
+      "render-worker.js",
+    ),
+    fixtureCatalogRoot: path.join(root, "payload", "fixtures", "foundation"),
+    browserRoot: path.join(root, "payload", "browser"),
+    sqliteBinding: path.join(root, "payload", "native", "better_sqlite3.node"),
+  });
+}
+function required(meta: Metadata): void {
+  const files = new Map(meta.files.map((file) => [file.path, file]));
+  for (const name of [
+    "packages/cli/dist/main.js",
+    "packages/application/dist/render-worker.js",
+    "node_modules/@design-studio/project-host/dist/index.js",
+    "native/better_sqlite3.node",
+    "browser/chromium_headless_shell-1243/chrome-headless-shell-win64/chrome-headless-shell.exe",
+  ])
+    if (!files.has(name))
+      refuse(`Release is missing required installed role ${name}.`);
+  if (
+    files.get("fixtures/foundation/manifest.json")?.sha256 !==
+    meta.policy.catalogSha256
+  )
+    refuse("Release fixture catalog differs from trusted bootstrap policy.");
+  const bootstrapFiles = new Set(meta.bootstrapFiles.map((file) => file.path));
+  for (const name of [
+    "runtime/node.exe",
+    "launch.mjs",
+    "install.mjs",
+    "release-policy.json",
+    "node_modules/@design-studio/project-host/dist/installation.js",
+  ])
+    if (!bootstrapFiles.has(name))
+      refuse(`Release is missing trusted bootstrap role ${name}.`);
+}
+async function namespace(
+  native: Native,
+  sid: string,
+  create: boolean,
+): Promise<{ root: string; leases: Lease[] }> {
+  const folder = native.localAppData();
+  const parsed = path.win32.parse(folder);
+  if (
+    !/^[A-Za-z]:\\$/.test(parsed.root) ||
+    folder.split("\\").length > 32 ||
+    folder.length > 200
+  )
+    refuse("Installation KnownFolder is outside supported local path bounds.");
+  const leases: Lease[] = [];
+  let root = parsed.root;
+  try {
+    leases.push(native.inspect(root, true));
+    for (const part of folder
+      .slice(parsed.root.length)
+      .split("\\")
+      .filter(Boolean)) {
+      root = path.join(root, part);
+      leases.push(native.inspect(root, true));
+    }
+    for (const part of ["DesignStudio", "installations"]) {
+      root = path.join(root, part);
+      if (create) {
+        try {
+          native.createDirectory(root, sid);
+        } catch (error) {
+          if (
+            !(error instanceof HostBoundaryError) ||
+            error.code !== "CONFLICT"
+          )
+            throw error;
+        }
+      }
+      leases.push(native.inspect(root, true, sid));
+    }
+    return { root, leases };
+  } catch (error) {
+    return rollbackError(error, leases);
+  }
+}
+
+/** Trusted bootstrap only; never exported through the package public entrypoint. */
+export function establishBootstrapOrigin(root: string): void {
+  root = path.resolve(root);
+  if (bootstrapOrigin !== undefined && bootstrapOrigin !== root)
+    refuse("Bootstrap origin cannot change in a process.");
+  if (
+    !path.isAbsolute(root) ||
+    process.execPath.toLowerCase() !== paths(root).node.toLowerCase() ||
+    process.version !== "v24.21.0" ||
+    process.execArgv.length !== 0 ||
+    process.platform !== "win32" ||
+    process.arch !== "x64" ||
+    Object.keys(process.env).some(
+      (key) => /^(NODE_OPTIONS|NODE_PATH)$/i.test(key) && process.env[key],
+    )
+  )
+    refuse(
+      "Launch with the explicitly trusted pinned bootstrap; runtime injection is forbidden.",
+    );
+  bootstrapOrigin = root;
+}
+
+/** The local offline installer invokes this only after the user selects BOTH release identities. */
+export async function installCandidate(
+  root: string,
+  approvedManifest: string,
+  approvedBootstrap: string,
+): Promise<string> {
+  if (!path.isAbsolute(root))
+    refuse("Candidate root must be an explicit local absolute path.");
+  root = path.resolve(root);
+  const meta = await metadata(root);
+  required(meta);
+  if (
+    approvedManifest !== digest(meta.manifest) ||
+    approvedBootstrap !== digest(meta.bootstrapInventory)
+  )
+    refuse(
+      "Both exact user-selected release identities must match. Hashes alone do not establish review/provenance.",
+    );
+  const native = await loadNative();
+  const sid = native.principal();
+  const source = await verifyTree(native, root, allFiles(meta));
+  const held: Lease[] = [...source.leases];
+  const entries: InstallationEntry[] = [];
+  return withLeases(held, async () => {
+    const parent = await namespace(native, sid, true);
+    held.push(...parent.leases);
+    const reservation = path.join(
+      parent.root,
+      Buffer.from(meta.identity, "hex").toString("base64url"),
+    );
+    native.createDirectory(reservation, sid);
+    held.push(native.inspect(reservation, true, sid));
+    const child = randomUUID();
+    const target = path.join(reservation, child);
+    const directories = await exactTree(root, allFiles(meta));
+    for (const directory of directories) {
+      const destination = path.join(target, path.relative(root, directory));
+      const entry = native.createInstallationEntry(destination, true, sid);
+      entries.push(entry);
+      held.push(entry);
+    }
+    const buffer = Buffer.alloc(1024 * 1024);
+    for (const file of allFiles(meta)) {
+      const output = native.createInstallationEntry(
+        physical(target, file.path),
+        false,
+        sid,
+      );
+      entries.push(output);
+      held.push(output);
+      const input = native.pinRead(physical(root, file.path), false);
+      held.push(input);
+      await withLeases([input, output], async () => {
+        const hash = createHash("sha256");
+        let total = 0;
+        for (;;) {
+          const count = input.read(buffer);
+          if (!count) break;
+          total += count;
+          if (total > file.bytes) refuse("Candidate changed while copying.");
+          hash.update(buffer.subarray(0, count));
+          output.write(buffer.subarray(0, count));
+        }
+        if (total !== file.bytes || hash.digest("hex") !== file.sha256)
+          refuse("Candidate changed while copying.");
+        output.finalize(file.path.startsWith("payload/browser/"));
+      });
+    }
+    for (const entry of [...entries].reverse()) {
+      if (
+        directories.some(
+          (directory) =>
+            path.join(target, path.relative(root, directory)) ===
+            entry.identity.path,
+        )
+      ) {
+        const relative = path.relative(target, entry.identity.path);
+        entry.finalize(
+          relative === path.join("payload", "browser") ||
+            relative.startsWith(`payload${path.sep}browser${path.sep}`),
+        );
+      }
+      entry.close();
+    }
+    const checked = await verifyTree(native, target, allFiles(meta), sid);
+    await withLeases(checked.leases, async () => {
+      const rootIdentity = checked.identities[0];
+      if (!rootIdentity) refuse("Installation root verification missing.");
+      const receipt: Receipt = {
+        version: 1,
+        sid,
+        child,
+        identity: meta.identity,
+        root: rootIdentity,
+      };
+      native.createFile(
+        path.join(reservation, `${randomUUID()}.pending`),
+        sid,
+        Buffer.from(JSON.stringify(receipt)),
+        path.join(reservation, "registration.json"),
+      );
+    });
+    return paths(target).bootstrapEntry;
+  });
+}
+
+export async function verifyFixtureInstallation(): Promise<FixtureInstallationLease> {
+  if (process.platform !== "win32" || process.arch !== "x64")
+    throw new HostBoundaryError(
+      "UNSUPPORTED_HOST",
+      "Offline fixture installation currently supports only Windows x64.",
+      true,
+    );
+  if (!bootstrapOrigin) {
+    const ownFile = fileURLToPath(import.meta.url);
+    for (const area of ["bootstrap", "payload"]) {
+      const suffix = path.join(
+        area,
+        "node_modules",
+        "@design-studio",
+        "project-host",
+        "dist",
+        "installation.js",
+      );
+      if (ownFile.endsWith(`${path.sep}${suffix}`))
+        establishBootstrapOrigin(ownFile.slice(0, -suffix.length - 1));
+    }
+  }
+  if (!bootstrapOrigin)
+    refuse(
+      "ACTION_REQUIRED: no user-approved offline release has established this bootstrap. Never approve current-worktree hashes implicitly.",
+    );
+  return verifyInstalledRoot(bootstrapOrigin);
+}
+
+/** Internal verification engine; the public API establishes the trusted bootstrap origin first. */
+export async function verifyInstalledRoot(
+  root: string,
+): Promise<FixtureInstallationLease> {
+  root = path.resolve(root);
+  const meta = await metadata(root);
+  required(meta);
+  const native = await loadNative();
+  const sid = native.principal();
+  const parent = await namespace(native, sid, false);
+  const reservation = path.join(
+    parent.root,
+    Buffer.from(meta.identity, "hex").toString("base64url"),
+  );
+  let verified: Verified | undefined;
+  try {
+    parent.leases.push(native.inspect(reservation, true, sid));
+    const receiptPath = path.join(reservation, "registration.json");
+    parent.leases.push(native.inspect(receiptPath, false, sid));
+    const receiptBytes = await boundedFile(receiptPath, 4096);
+    const receipt: Receipt = JSON.parse(receiptBytes.toString());
+    if (
+      receipt?.version !== 1 ||
+      receipt.sid !== sid ||
+      receipt.identity !== meta.identity ||
+      typeof receipt.child !== "string" ||
+      !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(
+        receipt.child,
+      ) ||
+      path.join(reservation, receipt.child) !== root
+    )
+      refuse(
+        "Installation registration differs from current native principal/approved bootstrap.",
+      );
+    if (
+      !receiptBytes.equals(
+        Buffer.from(
+          JSON.stringify({
+            version: 1,
+            sid,
+            child: receipt.child,
+            identity: meta.identity,
+            root: receipt.root,
+          }),
+        ),
+      )
+    )
+      refuse("Installation registration is noncanonical.");
+    verified = await verifyTree(native, root, allFiles(meta), sid);
+    if (
+      !verified.identities[0] ||
+      !receipt.root ||
+      !same(verified.identities[0], receipt.root)
+    )
+      refuse("Registered installation root identity changed.");
+    if (native.principal() !== sid)
+      refuse("Native principal changed during installation verification.");
+    const held = verified;
+    let closed = false;
+    let closing = false;
+    const state = { files: held.files, root, live: true, guards: 0 };
+    const lease: FixtureInstallationLease = Object.freeze({
+      paths: paths(root),
+      identity: meta.identity,
+      async recheck() {
+        if (closed || closing || native.principal() !== sid)
+          refuse("Installation lease is closed or principal changed.");
+        const checked = await verifyTree(native, root, allFiles(meta), sid);
+        await withLeases(checked.leases, async () => {
+          if (
+            checked.identities.length !== held.identities.length ||
+            checked.identities.some(
+              (identity, index) =>
+                !held.identities[index] ||
+                !same(identity, held.identities[index]),
+            ) ||
+            !(await boundedFile(receiptPath, 4096)).equals(receiptBytes)
+          )
+            refuse("Installation identity/registration changed.");
+          for (const ancestor of parent.leases) {
+            const check = native.inspect(
+              ancestor.identity.path,
+              ancestor.identity.path !== receiptPath,
+              ancestor.identity.path.startsWith(
+                path.join(native.localAppData(), "DesignStudio"),
+              )
+                ? sid
+                : undefined,
+            );
+            await withLeases([check], async () => {
+              if (!same(check.identity, ancestor.identity))
+                refuse("Installation ancestor changed.");
+            });
+          }
+          if (closed || closing)
+            refuse("Installation lease closed during recheck.");
+          if (native.principal() !== sid)
+            refuse("Native principal changed during installation recheck.");
+        });
+      },
+      async close() {
+        if (closed) return;
+        if (state.guards)
+          refuse(
+            "Close installation guards only after actual worker/job quiescence, before releasing the installation lease.",
+          );
+        closing = true;
+        state.live = false;
+        release([...parent.leases, ...held.leases]);
+        closed = true;
+      },
+    });
+    active.set(lease, state);
+    return lease;
+  } catch (error) {
+    return rollbackError(error, [
+      ...parent.leases,
+      ...(verified?.leases ?? []),
+    ]);
+  }
+}
+
+export function registerFixtureInstallationGuards(
+  lease: FixtureInstallationLease,
+): { close(): void } {
+  const state = active.get(lease);
+  if (!state?.live)
+    refuse(
+      "Module guards require this process's live native-verified installation lease.",
+    );
+  const guard = guardResolution(
+    state.files,
+    ["bootstrap", "payload"].map((area) => ({
+      scope: path.join(state.root, area),
+      modules: path.join(state.root, area, "node_modules"),
+    })),
+  );
+  state.guards++;
+  let closed = false;
+  return Object.freeze({
+    close() {
+      if (!closed) {
+        guard.close();
+        state.guards--;
+        closed = true;
+      }
+    },
+  });
+}
