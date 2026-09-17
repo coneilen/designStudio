@@ -9,7 +9,13 @@ import {
 } from "@design-studio/contracts";
 import Database from "better-sqlite3";
 import { afterEach, expect, test } from "vitest";
-import { LocalStore, type StorageOptions } from "../src/index.js";
+import {
+  decodeBackup,
+  encodeBackup,
+  LocalStore,
+  type StorageOptions,
+} from "../src/index.js";
+import { storedJob } from "../src/job-codec.js";
 import type {
   JobCompletion,
   JobSubmission,
@@ -193,6 +199,234 @@ async function completion(
   };
   return { record: result.record, output };
 }
+
+test.each([
+  { path: "worker", expired: false },
+  { path: "worker", expired: true },
+  { path: "recovery", expired: false },
+  { path: "recovery", expired: true },
+] as const)(
+  "$path interruption retains a worker slot until confirmed stop (expired=$expired)",
+  async ({ path, expired }) => {
+    const f = await setup(1);
+    const first = await claim(f, ["resource-a"]);
+    const next = value(
+      await f.store.jobs.create(
+        f.submission("job-other", ["resource-b"]),
+        f.ctx("other"),
+      ),
+    );
+    const claimNext = () =>
+      f.store.jobs.claim(
+        next.job.id,
+        { state: "queued", rowVersion: next.rowVersion },
+        "worker2",
+        1000,
+        f.ctx("other"),
+      );
+    expect(await claimNext()).toMatchObject({ error: { code: "CONFLICT" } });
+    if (path === "recovery" && expired) f.advance(1000);
+    const interrupted = value(
+      path === "worker"
+        ? await f.store.jobs.update(
+            first.job.id,
+            fence(first),
+            { kind: "interrupt", error },
+            f.ctx(),
+          )
+        : await f.store.jobs.reconcile(
+            first.job.id,
+            first.rowVersion,
+            { kind: "interrupt", error },
+            f.ctx("recovery"),
+          ),
+    );
+    if (path === "worker" && expired) f.advance(1000);
+    expect(interrupted.job.lease).toEqual(first.job.lease);
+    expect(await claimNext()).toMatchObject({ error: { code: "CONFLICT" } });
+    await f.reopen();
+    expect(await claimNext()).toMatchObject({ error: { code: "CONFLICT" } });
+    expect(value(await f.store.jobs.get(next.job.id, f.ctx("other")))).toEqual(
+      next,
+    );
+    const resolved = value(
+      await f.store.jobs.reconcile(
+        first.job.id,
+        interrupted.rowVersion,
+        {
+          kind: "resolved",
+          decision: "cancelled",
+          evidenceRef: "confirmed-worker-stopped",
+          stoppedLeaseId: required(first.job.lease).id,
+          effects: [],
+          abandonedStageIds: [],
+        },
+        f.ctx("recovery"),
+      ),
+    );
+    expect(resolved.job.lease).toBeUndefined();
+    expect(value(await claimNext()).job.status).toBe("running");
+  },
+);
+
+test("restored leases remain historical quarantine, not destination worker slots", async () => {
+  const f = await setup(1);
+  const first = await claim(f, ["resource-a"]);
+  const backup = value(await f.store.backup(f.ctx("backup")));
+  const destination = await mkdtemp(join(tmpdir(), "historical worker slots "));
+  roots.push(destination);
+  const disk = await diskFixture(destination);
+  const options = {
+    ...f.options,
+    databasePath: join(destination, "state.sqlite"),
+    fileSystem: disk.fs,
+    maintenance: disk.maintenance,
+  };
+  let store = await LocalStore.open(options);
+  stores.push(store);
+  value(await store.restore(backup, f.ctx("restore")));
+  const historical = value(await store.jobs.get(first.job.id, f.ctx()));
+  expect(historical.job.lease).toEqual(first.job.lease);
+  expect(historical).toMatchObject({ restoredLease: true });
+  expect(historical.generation).toBeGreaterThan(first.generation);
+  const exported = value(await store.backup(f.ctx("backup")));
+  expect(decodeBackup(encodeBackup(exported, 26214400), 26214400)).toEqual(
+    exported,
+  );
+  for (const invalid of [
+    { ...historical, restoredLease: false },
+    { ...historical, generation: required(historical.job.lease).fencingToken },
+    { ...historical, job: { ...historical.job, lease: undefined } },
+    { ...first, restoredLease: true },
+  ])
+    expect(() => storedJob(invalid)).toThrow();
+  store.close();
+  store = await LocalStore.open(options);
+  stores.push(store);
+  const blocked = value(
+    await store.jobs.create(
+      f.submission("job-blocked", ["resource-a"]),
+      f.ctx("blocked"),
+    ),
+  );
+  expect(
+    await store.jobs.claim(
+      blocked.job.id,
+      { state: "queued", rowVersion: blocked.rowVersion },
+      "worker2",
+      1000,
+      f.ctx("blocked"),
+    ),
+  ).toMatchObject({ error: { code: "CONFLICT" } });
+  const next = value(
+    await store.jobs.create(
+      f.submission("job-other", ["resource-b"]),
+      f.ctx("other"),
+    ),
+  );
+  const destinationWorker = value(
+    await store.jobs.claim(
+      next.job.id,
+      { state: "queued", rowVersion: next.rowVersion },
+      "worker2",
+      1000,
+      f.ctx("other"),
+    ),
+  );
+  expect(destinationWorker.job.status).toBe("running");
+  const resolved = value(
+    await store.jobs.reconcile(
+      first.job.id,
+      historical.rowVersion,
+      {
+        kind: "resolved",
+        decision: "queued",
+        evidenceRef: "confirmed-historical-stop",
+        stoppedLeaseId: required(first.job.lease).id,
+        effects: [],
+        abandonedStageIds: [],
+      },
+      f.ctx("recovery"),
+    ),
+  );
+  expect(resolved).not.toHaveProperty("restoredLease");
+  expect(resolved.job.lease).toBeUndefined();
+  expect(
+    await store.jobs.claim(
+      first.job.id,
+      { state: "queued", rowVersion: resolved.rowVersion },
+      "worker1",
+      1000,
+      f.ctx(),
+    ),
+  ).toMatchObject({ error: { code: "CONFLICT" } });
+  value(
+    await store.jobs.update(
+      next.job.id,
+      fence(destinationWorker),
+      { kind: "wait", error },
+      f.ctx("other"),
+    ),
+  );
+  const newExecution = value(
+    await store.jobs.claim(
+      first.job.id,
+      { state: "queued", rowVersion: resolved.rowVersion },
+      "worker1",
+      1000,
+      f.ctx(),
+    ),
+  );
+  expect(newExecution).not.toHaveProperty("restoredLease");
+  expect(newExecution.job.status).toBe("running");
+  expect(
+    await store.jobs.claim(
+      blocked.job.id,
+      { state: "queued", rowVersion: blocked.rowVersion },
+      "worker3",
+      1000,
+      f.ctx("blocked"),
+    ),
+  ).toMatchObject({ error: { code: "CONFLICT" } });
+  // The source execution is still unconfirmed: destination restore did not free its slot.
+  const sourceNext = value(
+    await f.store.jobs.create(f.submission("job-source"), f.ctx("source")),
+  );
+  expect(
+    await f.store.jobs.claim(
+      sourceNext.job.id,
+      { state: "queued", rowVersion: sourceNext.rowVersion },
+      "worker3",
+      1000,
+      f.ctx("source"),
+    ),
+  ).toMatchObject({ error: { code: "CONFLICT" } });
+});
+
+test("interrupted workers without resource keys also retain their global slot", async () => {
+  const f = await setup(1);
+  const running = await claim(f);
+  value(
+    await f.store.jobs.update(
+      running.job.id,
+      fence(running),
+      { kind: "interrupt", error },
+      f.ctx(),
+    ),
+  );
+  const next = value(
+    await f.store.jobs.create(f.submission("job-other"), f.ctx("other")),
+  );
+  expect(
+    await f.store.jobs.claim(
+      next.job.id,
+      { state: "queued", rowVersion: next.rowVersion },
+      "worker2",
+      1000,
+      f.ctx("other"),
+    ),
+  ).toMatchObject({ error: { code: "CONFLICT" } });
+});
 
 test("creates authoritative jobs, owns snapshots, deduplicates by logical operation and protects inputs", async () => {
   const f = await setup();

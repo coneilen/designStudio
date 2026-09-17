@@ -157,7 +157,7 @@ exported. Shared Job/Lease/Receipt/schema version 1.0 remains unchanged.
 | `get(id, context)`, `getJobReceipt(id, context)` | Authorize before lookup; completed reads verify original-owner logical scope, authoritative Job/receipt binding, protected output refs and actual bytes. Observers need not be the submitting actor. |
 | `scan(query, context)` | Explicit state list, limit, optional due cutoff and `(createdAt,id)` cursor. Only IDs covered by current explicit job-read grants are selected. Stable oldest-created/ID ordering; no wildcard/existence-only polling. |
 | `getStages(id, context)` | Bounded exact stage-journal snapshot under root/job-read authority; metadata is evidence, never cleanup permission. |
-| `claim(id, expected, ownerId, durationMs, context)` | Exact state/version; queued or due retry only. Atomically acquires every sorted key or none, increments attempt and durable job/resource generations, enforces trusted worker ceiling, attempts and deadlines. Expired active jobs still occupy capacity until reconciliation. |
+| `claim(id, expected, ownerId, durationMs, context)` | Exact state/version; queued or due retry only. Atomically acquires every sorted key or none, increments attempt and durable job/resource generations, enforces trusted worker ceiling, attempts and deadlines. Retained execution leases occupy capacity even when interrupted or expired, until a confirmed-stop transition releases them. |
 | `heartbeat(id, expected, extensionMs, context)` | Original live lease required, including at transaction exit. Extension cannot resurrect a lease and is capped by original job/current context/current grant deadline. |
 | `update(id, expected, command, context)` | Discriminated progress, reserve/settle usage, wait/retry/fail/interrupt, or acknowledge-cancel. No arbitrary patch. Wait/retry/fail/cancel acknowledgment means the trusted handler has actually stopped; unresolved effects prohibit release. Interrupt quarantines resources. |
 | `requestCancel(id, expectedVersion, context)` | Current authorized caller need not own worker lease. Receipt wins first; running becomes cancel-requested, including when effects remain unresolved. Safe nonrunning work cancels; uncertain work requires reconciliation. |
@@ -186,6 +186,11 @@ returns a typed limit, never silently prunes history. Progress is monotonic and
 below 1 until final completion. All counters use checked safe-integer increments.
 Resource generations persist after release; expiry alone never frees quarantine.
 This is per-store serialization, not cross-project physical-device exclusivity.
+Both worker interruption and recovery interruption retain the execution's worker
+slot, including after reopen and lease expiry. Generation invalidation fences
+mutations; it does not prove the old callback stopped. Trusted resolved recovery
+or a confirmed-stop worker transition must release the lease before another job
+can use that slot, even when the jobs have disjoint resource keys.
 GC also protects paths in the durable stage journal, including published bytes
 left by a failed final transaction. This foundation conservatively retains that
 physical evidence with job history; stage-file discard does not prune blob history.
@@ -365,6 +370,15 @@ mandatory publication barrier. Restore increments job versions/generations and
 resource counters, turns live/uncertain executions into interrupted jobs with
 quarantined reservations, and marks imported stages historical/recovery-needed.
 It never resumes a transplanted lease or host staging capability.
+The optional private `StoredJob.restoredLease: true` marks imported,
+generation-invalidated lease history. It is valid only on interrupted jobs with
+a retained lease and does not consume a destination worker slot: restore did not
+launch that execution there. Resource quarantine and exact stopped-lease recovery
+remain required, and the source store's slot is unaffected. Confirmed release
+clears this marker; a fresh claim is a new locally counted execution. Existing
+v3 rows without the marker conservatively count any retained lease, including
+older restored histories, until trusted reconciliation. No shared Job schema,
+SQLite layout/version, or legacy receipt contract changed for this distinction.
 
 ## Test evidence and remaining gates
 
@@ -397,6 +411,15 @@ fault points, revision/head rollback, ABA/quarantine, cancel/commit ordering,
 operation-aware replay, restore invalidation, v1/v2 migration backup/rollback,
 bounded scans, exact four-worker and 20,000-job admission limits, and zero paid
 defaults. No uncontrolled race sleeps or user stores are used.
+
+The retained-worker admission follow-up observed RED for worker/recovery
+interruption with both unexpired and expired leases. Its regressions confirm
+disjoint-resource claims stay blocked across reopen until trusted stop
+acknowledgment, including workers with no resource keys. Restore tests distinguish
+historical lease evidence from destination worker slots, preserve source occupancy
+and resource quarantine, validate/roundtrip the private marker, and verify a new
+post-recovery execution counts normally. Scoped verification: 117 storage unit
+tests and four storage/native smoke tests, with build, typecheck and package lint.
 
 `jobs-host.smoke.test.ts` composes fresh v3 SQLite with the actual trusted local
 session authenticator, branded context snapshots, F02 canonical bytes and native

@@ -791,7 +791,10 @@ export class StoredJobs implements JobRepository {
                 throw new StorageError("LIMIT", "Job attempts exhausted.");
               const active = this.host.db
                 .prepare<[], { count: number }>(
-                  "SELECT count(*) AS count FROM jobs WHERE state IN ('running','cancel-requested')",
+                  `SELECT count(*) AS count FROM jobs
+                   WHERE state IN ('running','cancel-requested')
+                     OR (json_type(data,'$.job.lease') IS NOT NULL
+                       AND coalesce(json_type(data,'$.restoredLease'),'') <> 'true')`,
                 )
                 .get();
               if (!active || active.count >= this.enabled().maxWorkers)
@@ -825,6 +828,7 @@ export class StoredJobs implements JobRepository {
               record.resources = resources;
               record.job.status = "running";
               record.job.attempt = increment(record.job.attempt);
+              delete record.restoredLease;
               record.job.lease = {
                 id: leaseId,
                 ownerId: input.ownerId,
@@ -938,6 +942,7 @@ export class StoredJobs implements JobRepository {
     if (!quarantine) {
       record.resources = [];
       delete record.job.lease;
+      delete record.restoredLease;
     }
   }
   private reserve(record: StoredJob, id: string, amount: JobUsage) {
@@ -1750,6 +1755,7 @@ export class StoredJobs implements JobRepository {
         record.job.error = interruptedError;
         delete record.job.nextEligibleAttempt;
       }
+      if (record.job.lease) record.restoredLease = true;
       this.host.db
         .prepare("INSERT INTO jobs VALUES (?,?,?,?,?,?)")
         .run(

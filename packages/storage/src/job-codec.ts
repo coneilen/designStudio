@@ -129,7 +129,7 @@ export function storedJob(input: unknown): StoredJob {
       "usage",
       "effects",
     ],
-    ["inputRevision", "finalOutputSha256"],
+    ["inputRevision", "finalOutputSha256", "restoredLease"],
   );
   const submission = fields(
     data.submission,
@@ -263,6 +263,17 @@ export function storedJob(input: unknown): StoredJob {
         "Job lease generation is inconsistent.",
       );
   }
+  if (
+    data.restoredLease !== undefined &&
+    (data.restoredLease !== true ||
+      job.status !== "interrupted" ||
+      !job.lease ||
+      job.lease.fencingToken >= integer(data.generation))
+  )
+    throw new StorageError(
+      "INTEGRITY",
+      "Restored lease evidence must be interrupted and generation-invalidated.",
+    );
   if (
     (job.status === "running" || job.status === "cancel-requested") &&
     !job.lease

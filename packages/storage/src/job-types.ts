@@ -70,6 +70,8 @@ export interface StoredJob {
   rowVersion: number;
   generation: number;
   resources: JobReservation[];
+  /** Imported lease evidence, not an execution admitted by this destination store. */
+  restoredLease?: true;
   createdAt: string;
   updatedAt: string;
   progressSequence: number;
