@@ -39,6 +39,36 @@ importers:
         specifier: 4.1.11
         version: 4.1.11(@types/node@24.13.4)(vite@8.2.2(@types/node@24.13.4)(yaml@2.8.1))
 
+  packages/application:
+    dependencies:
+      '@design-studio/assets':
+        specifier: workspace:*
+        version: link:../assets
+      '@design-studio/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@design-studio/design-ir':
+        specifier: workspace:*
+        version: link:../design-ir
+      '@design-studio/host':
+        specifier: workspace:*
+        version: link:../host
+      '@design-studio/jobs':
+        specifier: workspace:*
+        version: link:../jobs
+      '@design-studio/project-host':
+        specifier: workspace:*
+        version: link:../project-host
+      '@design-studio/renderer':
+        specifier: workspace:*
+        version: link:../renderer
+      '@design-studio/renderer-host':
+        specifier: workspace:*
+        version: link:../renderer-host
+      '@design-studio/storage':
+        specifier: workspace:*
+        version: link:../storage
+
   packages/assets:
     dependencies:
       '@design-studio/contracts':
@@ -60,6 +90,15 @@ importers:
       '@types/sax':
         specifier: 1.2.7
         version: 1.2.7
+
+  packages/cli:
+    dependencies:
+      '@design-studio/application':
+        specifier: workspace:*
+        version: link:../application
+      '@design-studio/contracts':
+        specifier: workspace:*
+        version: link:../contracts
 
   packages/contracts:
     dependencies:

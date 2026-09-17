@@ -1,0 +1,48 @@
+{
+  "name": "@design-studio/application",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./runtime": {
+      "types": "./dist/fixture-application.d.ts",
+      "import": "./dist/fixture-application.js"
+    },
+    "./download": {
+      "types": "./dist/download.d.ts",
+      "import": "./dist/download.js"
+    },
+    "./installed": {
+      "types": "./dist/installed.d.ts",
+      "import": "./dist/installed.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "generated"
+  ],
+  "engines": {
+    "node": "24.21.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "openapi:generate": "node scripts/generate-openapi.mjs",
+    "openapi:check": "node scripts/generate-openapi.mjs --check"
+  },
+  "dependencies": {
+    "@design-studio/contracts": "workspace:*",
+    "@design-studio/design-ir": "workspace:*",
+    "@design-studio/host": "workspace:*",
+    "@design-studio/project-host": "workspace:*",
+    "@design-studio/storage": "workspace:*",
+    "@design-studio/assets": "workspace:*",
+    "@design-studio/renderer": "workspace:*",
+    "@design-studio/renderer-host": "workspace:*",
+    "@design-studio/jobs": "workspace:*"
+  }
+}
