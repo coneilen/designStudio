@@ -72,46 +72,74 @@ process.on("message", async (message) => {
       previous = now;
       ticks++;
     }, 10);
-    await delay(30);
-    const capture = captureInstallationForTest(handles);
-    const cpu = process.cpuUsage();
-    const utilization = performance.eventLoopUtilization();
-    const handlesBefore = handles();
-    const started = performance.now();
-    let durations;
     try {
-      durations = await Promise.all(
-        Array.from({ length: parallel }, async () => {
-          const start = performance.now();
-          await leases[0].checkCurrent();
-          return performance.now() - start;
-        }),
-      );
-    } finally {
+      await delay(30);
+      const capture = captureInstallationForTest(handles);
+      const cpu = process.cpuUsage();
+      const utilization = performance.eventLoopUtilization();
+      const handlesBefore = handles();
+      const started = performance.now();
+      let durations;
+      try {
+        const outcomes = await Promise.allSettled(
+          Array.from({ length: parallel }, async () => {
+            const start = performance.now();
+            await leases[0].checkCurrent();
+            return performance.now() - start;
+          }),
+        );
+        const failures = outcomes.filter(
+          (result) => result.status === "rejected",
+        );
+        if (failures.length)
+          throw new AggregateError(
+            failures.map((result) => result.reason),
+            "Diagnostic checkpoint batch failed.",
+            { cause: failures[0].reason },
+          );
+        durations = outcomes.map((result) => {
+          if (result.status !== "fulfilled")
+            throw new Error("Unexpected unsettled diagnostic result.");
+          return result.value;
+        });
+      } catch (primary) {
+        try {
+          capture.close();
+        } catch (diagnostic) {
+          throw new AggregateError(
+            [primary, diagnostic],
+            "Checkpoint and diagnostic capture failed.",
+            { cause: primary },
+          );
+        }
+        throw primary;
+      }
       capture.close();
+      const wallMs = performance.now() - started;
+      const cpuDelta = process.cpuUsage(cpu);
+      const elu = performance.eventLoopUtilization(utilization);
+      await delay(30);
+      clearInterval(heartbeat);
+      process.send({
+        kind: "result",
+        parallel,
+        durationsMs: durations,
+        wallMs,
+        maxHeartbeatGapMs: maxGapMs,
+        maxHeartbeatLatenessMs: Math.max(0, maxGapMs - 10),
+        ticks,
+        cpuUserUs: cpuDelta.user,
+        cpuSystemUs: cpuDelta.system,
+        eventLoopActiveMs: elu.active,
+        eventLoopIdleMs: elu.idle,
+        handlesBefore,
+        handlesAfter: handles(),
+        rssBytes: process.memoryUsage.rss(),
+        samples: capture.samples,
+      });
+    } finally {
+      clearInterval(heartbeat);
     }
-    const wallMs = performance.now() - started;
-    const cpuDelta = process.cpuUsage(cpu);
-    const elu = performance.eventLoopUtilization(utilization);
-    await delay(30);
-    clearInterval(heartbeat);
-    process.send({
-      kind: "result",
-      parallel,
-      durationsMs: durations,
-      wallMs,
-      maxHeartbeatGapMs: maxGapMs,
-      maxHeartbeatLatenessMs: Math.max(0, maxGapMs - 10),
-      ticks,
-      cpuUserUs: cpuDelta.user,
-      cpuSystemUs: cpuDelta.system,
-      eventLoopActiveMs: elu.active,
-      eventLoopIdleMs: elu.idle,
-      handlesBefore,
-      handlesAfter: handles(),
-      rssBytes: process.memoryUsage.rss(),
-      samples: capture.samples,
-    });
   } catch (error) {
     process.send({
       kind: "error",

@@ -14,6 +14,7 @@ import {
   verifyFixtureInstallation,
   verifyInstalledRoot,
 } from "../src/installation.js";
+import { captureInstallationForTest } from "../src/installation-diagnostics.js";
 import {
   digest,
   encodeInventory,
@@ -113,6 +114,56 @@ async function ownedInstallation(
   });
 }
 const windows = test.skipIf(process.platform !== "win32");
+windows(
+  "diagnostic sampling failure cannot replace native checkpoint failure or strand owned handles",
+  async () => {
+    await ownedInstallation(async (root) => {
+      const release = await candidate(root);
+      const entry = await installCandidate(
+        release.root,
+        release.manifest,
+        release.bootstrap,
+      );
+      const lease = await verifyInstalledRoot(
+        path.dirname(path.dirname(entry)),
+      );
+      const native = await loadNative();
+      const real = native.pinInstallation.bind(native);
+      const primary = new Error("injected native checkpoint failure");
+      const sampling = new Error("injected diagnostic sampler failure");
+      const live = new Set<object>();
+      const spy = vi
+        .spyOn(native, "pinInstallation")
+        .mockImplementation((...args) => {
+          if (args[0] === lease.paths.cliEntry) throw primary;
+          const pin = real(...args);
+          const token = {};
+          live.add(token);
+          return {
+            ...pin,
+            close() {
+              pin.close();
+              live.delete(token);
+            },
+          };
+        });
+      const capture = captureInstallationForTest(() => {
+        throw sampling;
+      });
+      try {
+        await expect(lease.checkCurrent()).rejects.toBe(primary);
+        expect(live.size).toBe(0);
+        expect(() => capture.close()).toThrow(/diagnostic capture failed/i);
+        expect(capture.failure.samplingErrors).toBe(1);
+        const next = captureInstallationForTest(() => 0);
+        next.close();
+      } finally {
+        spy.mockRestore();
+        await lease.close();
+      }
+    });
+  },
+);
 windows(
   "checkCurrent keeps all fresh native checks but skips only continuously pinned file reads",
   async () => {

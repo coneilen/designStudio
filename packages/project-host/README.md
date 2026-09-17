@@ -577,3 +577,18 @@ yielding between complete native operations is a possible separately reviewed
 responsiveness remedy, not implemented here and not a demonstrated cure for
 the actual failure. Further actual-flow phase capture requires coordinator
 approval; this diagnostic must not trigger repeated packaging or weaken checks.
+
+Diagnostic failure isolation: timing/phase/end callbacks never throw sampling
+or saturation faults into the checkpoint's security or cleanup flow. The
+collector retains only the first sampling cause plus bounded numeric
+`failure: {samplingErrors, overflowed, droppedSamples}` state and stops storing
+samples after a fault. Trace end is idempotent and always decrements activity,
+including failed start/end sampling. After all checks settle, `capture.close()`
+detaches the collector and **throws explicitly** for any capture fault or
+overflow; a partial/faulted capture must never be reported as valid evidence.
+The diagnostic child waits for all concurrent checkpoints to settle, preserves
+any original checkpoint failure as the cause when capture reporting also fails,
+and clears its heartbeat on every result path. Focused tests cover the exact
+2,048-sample boundary, start/phase/end sampler faults, duplicate end, and native
+checkpoint failure with all temporary handles released. No performance probe
+was repeated for this reporting-only correction.
