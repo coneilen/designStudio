@@ -5,14 +5,13 @@ contracts remain `@design-studio/contracts` schema 1.0. The private SQLite schem
 is version 2. No renderer, asset decoder, authorization issuer, job scheduler,
 handoff compiler, live provider, or competing filesystem implementation is here.
 
-**Production composition is gated, not implicitly ready.** The stable native
-SQLite backend is exercised on Windows. The required real host publication
-durability gate is not yet satisfied: F04's Node filesystem establishes
-file-flushed atomic visibility, not power-loss-durable directory entries.
-`ensurePublicationDurable` must fail when that capability is unavailable;
-storage then commits **no** artifact/revision/job reference. Tests use an
-explicit test-only durability acknowledgment. Neither those fakes nor SQLite
-WAL tests establish filesystem power-loss safety.
+**Production composition requires explicit trusted policies.** The stable
+SQLite backend and the host's opt-in `windows-ntfs-write-through-v1` publication
+profile are exercised together by the root Windows integration suite.
+`ensurePublicationDurable` still fails for generic or unknown publication
+evidence; no permissive fallback is provided. Package-isolated tests retain
+their explicitly simulated boundary acknowledgments. Neither these tests nor
+the native OS-request profile constitute a hardware power-cut guarantee.
 
 ## Stable backend and reproducible preparation
 
@@ -226,7 +225,8 @@ reconciliation.
 `ensurePublicationDurable(artifacts, context)` is mandatory before database
 reference commits, including restores. Wrap F04's same-named root-scoped
 capability when integrated. Its current unavailable directory-entry durability
-must remain a typed failure. There is **no production success default**.
+for generic publication must remain a typed failure; the opt-in NTFS profile
+verifies its owned native publication evidence instead. There is **no production success default**.
 The local-disk test adapter in `tests/support.ts` is not a production host layer,
 has deliberately simplified filesystem behavior, and claims no hostile-writer,
 power-loss or macOS guarantee.

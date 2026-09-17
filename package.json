@@ -23,6 +23,9 @@
   "devDependencies": {
     "@biomejs/biome": "2.5.12",
     "@design-studio/contracts": "workspace:*",
+    "@design-studio/design-ir": "workspace:*",
+    "@design-studio/host": "workspace:*",
+    "@design-studio/storage": "workspace:*",
     "@design-studio/workspace-smoke": "workspace:*",
     "@types/node": "24.13.4",
     "typescript": "7.0.2",

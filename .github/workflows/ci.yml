@@ -37,7 +37,10 @@ jobs:
         with:
           run_install: false
       - name: Install from the committed lockfile
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Prepare the pinned Windows SQLite prebuild
+        if: runner.os == 'Windows'
+        run: pnpm --filter @design-studio/storage prepare:native
       - name: Lint and static analysis
         run: pnpm lint
       - name: Build workspace packages in dependency order

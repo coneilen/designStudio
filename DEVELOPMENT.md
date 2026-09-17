@@ -74,6 +74,7 @@ prefix each command with `npx --yes pnpm@11.26.0` as in the README.
 | Command | Purpose |
 | --- | --- |
 | `pnpm install --frozen-lockfile` | Restore exactly the committed dependency graph. |
+| `pnpm --filter @design-studio/storage prepare:native` | Explicit Windows x64 preparation of the pinned, verified SQLite prebuild; dependency install scripts stay disabled. |
 | `pnpm lint` | Read-only Biome formatting/static analysis checks. |
 | `pnpm format` | Apply Biome formatting/import fixes to owned code/config; excludes source specifications and feasibility documents. |
 | `pnpm build` | Build registered workspace packages in dependency order, including contract drift checking, into ignored `dist` directories. |
@@ -139,3 +140,23 @@ frozen install followed by lint, dependency-ordered build, typecheck, unit, and 
 `windows-latest` and `macos-latest`. The official runner inventory mapped these
 to Windows Server 2025 x64 and macOS 26 arm64 when configured; aliases can move.
 Neither hosted CI nor macOS was executed during this local bootstrap.
+
+## Native foundation integration
+
+Use `pnpm install --frozen-lockfile --ignore-scripts` for native optional packages;
+the explicit storage preparation command supplies only its verified Windows
+prebuild through `nativeBinding`. No dependency source-build fallback is enabled.
+
+`tests/storage-host.smoke.test.ts` composes the actual public DesignIR
+canonicalizer, local session authenticator, branded context snapshots, NTFS
+write-through publication and SQLite store. It exercises a real initial commit,
+close/reopen with a new key reusing a trusted committed blob, and an authorized
+backup restored through real destination publication. Fresh native proof
+absence after restart remains unavailable; historical store assurance is not
+misrepresented as a reconstructed host receipt.
+
+The fixture provisioning/backup authorities accept only newly owned test roots
+and backups registered from the authenticated test source. They are not a
+production project-provisioning or backup-issuer implementation. These cases
+do not exercise live credentials, user files, migration-backup durability,
+hardware power-cut behavior or macOS execution.
