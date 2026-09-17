@@ -31,6 +31,27 @@ export interface OperationScope {
   resourceId: string;
   operation: Operation;
 }
+const ownedContexts = new WeakMap<OperationContext, string>();
+function assertAuthorizationUnchanged(context: OperationContext): void {
+  const initial = ownedContexts.get(context);
+  if (initial !== undefined && initial !== JSON.stringify(context.authorization))
+    throw new HostBoundaryError("FORBIDDEN", "Authorization changed after the operation snapshot.");
+}
+export function snapshotOperationContext(context: OperationContext): OperationContext {
+  if (ownedContexts.has(context)) {
+    assertAuthorizationUnchanged(context);
+    return context;
+  }
+  const { signal, clock, ...request } = context;
+  if (!validateContract("OperationRequestContext", request).success)
+    throw new HostBoundaryError("INVALID_INPUT", "Invalid operation context.");
+  const owned: OperationContext = Object.freeze({
+    ...request, budget: Object.freeze({ ...request.budget }),
+    authorization: context.authorization, signal, clock,
+  });
+  ownedContexts.set(owned, JSON.stringify(owned.authorization));
+  return owned;
+}
 
 export class SystemClock implements Clock {
   now(): number {
@@ -54,6 +75,7 @@ export function authorizeOperation(
   scope: OperationScope,
   authority: Authority,
 ): void {
+  assertAuthorizationUnchanged(context);
   const { clock, signal, ...request } = context;
   if (!validateContract("OperationRequestContext", request).success)
     throw new HostBoundaryError("INVALID_INPUT", "Invalid operation context.");
@@ -96,17 +118,22 @@ export function authorizeOperation(
 }
 
 export class OperationGuard {
+  readonly context: OperationContext;
+  private readonly scope: OperationScope;
   readonly expiresAt: number;
   private input = 0;
   private output = 0;
   private readonly limits: Readonly<Budget>;
   constructor(
-    readonly context: OperationContext,
-    private readonly scope: OperationScope,
+    context: OperationContext,
+    scope: OperationScope,
     private readonly authority: Authority,
     timeoutMs = context.budget.maxDurationMs,
     limits: Readonly<Budget> = DEFAULT_BUDGETS,
   ) {
+    this.context = snapshotOperationContext(context);
+    context = this.context;
+    this.scope = Object.freeze({ ...scope });
     authorizeOperation(context, scope, authority);
     if (!validateContract("Budget", limits).success)
       throw new HostBoundaryError(
@@ -220,10 +247,11 @@ export function complete<T>(context: OperationContext, value: T): Outcome<T> {
 
 export async function boundary<T>(
   context: OperationContext,
-  operation: () => Promise<T>,
+  operation: (context: OperationContext) => Promise<T>,
 ): Promise<Outcome<T>> {
   try {
-    return complete(context, await operation());
+    context = snapshotOperationContext(context);
+    return complete(context, await operation(context));
   } catch (error) {
     if (!(error instanceof HostBoundaryError)) throw error;
     return {

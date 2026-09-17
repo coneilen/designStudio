@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   authorizeOperation,
   OperationGuard,
+  snapshotOperationContext,
   SystemClock,
 } from "../src/guards.js";
 
@@ -15,6 +16,22 @@ const scope = {
 const authority = () => true;
 
 describe("trusted scoped context", () => {
+  it("owns request/budget metadata but preserves exact auth provenance and rejects later auth mutation", () => {
+    const input = syntheticContext();
+    const owned = snapshotOperationContext(input);
+    expect(owned).not.toBe(input);
+    expect(owned.authorization).toBe(input.authorization);
+    expect(owned.signal).toBe(input.signal);
+    expect(owned.clock).toBe(input.clock);
+    expect(snapshotOperationContext(owned)).toBe(owned);
+    expect(Object.isFrozen(input)).toBe(false);
+    input.requestId = "changed";
+    input.budget.maxInputBytes = 1;
+    expect(owned.requestId).toBe("request_synthetic");
+    expect(owned.budget.maxInputBytes).not.toBe(1);
+    input.authorization.actorId = "other_actor";
+    expect(() => authorizeOperation(owned, scope, authority)).toThrow(/mutat|changed/i);
+  });
   it("requires trusted provenance in addition to schema/grants", () => {
     expect(() =>
       authorizeOperation(syntheticContext(), scope, () => false),
