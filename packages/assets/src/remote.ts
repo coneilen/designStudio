@@ -136,10 +136,12 @@ export async function fetchRemote(
       const url = urlFor(next, origins);
       bound("EXTERNAL_CALLS", calls, limits.maxExternalCalls);
       await awaitBounded(dependencies.authorize(context, url.origin));
+      checkpoint();
       const hostname = url.hostname.replace(/^\[|\]$/gu, "");
       const addresses = isIP(hostname)
         ? [hostname]
         : await awaitBounded(dependencies.resolve(hostname, controller.signal));
+      checkpoint();
       if (
         !addresses.length ||
         addresses.length > 64 ||
@@ -164,6 +166,7 @@ export async function fetchRemote(
           return result;
         });
       response = await awaitBounded(pending);
+      checkpoint();
       if (
         !publicAddress(response.peerAddress) ||
         ipaddr.parse(response.peerAddress).toNormalizedString() !==

@@ -167,7 +167,10 @@ export class AssetPipeline {
         "AUTH_CONTRACT",
         "Trusted gate must return an explicit permission revision and offline policy",
       );
-    return access;
+    return {
+      permissionScope: access.permissionScope,
+      offlineAllowed: access.offlineAllowed,
+    };
   }
 
   async stageSnapshot(
@@ -342,6 +345,13 @@ export class AssetPipeline {
     checkpoint();
     bound("SNAPSHOT_BYTES", totalBytes, limits.maxSnapshotAssetBytes);
     bound("OPERATION_OUTPUT_BYTES", totalBytes, limits.maxOutputBytes);
+    resourceMetadata((hash) => ({
+      id: hash,
+      path: `blobs/${hash}`,
+      mediaType: "application/octet-stream",
+      byteLength: get(hash).byteLength,
+      sha256: hash,
+    }));
     const staged: StagedArtifact[] = [];
     const artifacts = new Map<string, Artifact>();
     try {
@@ -392,51 +402,77 @@ export class AssetPipeline {
       if (!result) fail("PIPELINE_STATE", "Missing stage receipt");
       return result;
     };
-    return {
-      staged,
-      totalBytes,
-      permissionScope: access.permissionScope,
-      images: imagePlans.map((plan) => ({
-        mediaType: plan.mediaType,
-        original: artifact(plan.original),
-        resource: {
-          id: plan.input.id,
-          artifact: artifact(plan.selected),
-          width: plan.width,
-          height: plan.height,
-          colorSpace: plan.colorSpace,
-          alpha: plan.alpha,
-          license: {
-            ...plan.input.license,
-            notice: artifact(sha256(plan.input.notice)),
+    function resourceMetadata(
+      artifact: (hash: string) => Artifact,
+    ): Pick<StagedSnapshot, "images" | "fonts"> {
+      const result: Pick<StagedSnapshot, "images" | "fonts"> = {
+        images: imagePlans.map((plan) => ({
+          mediaType: plan.mediaType,
+          original: artifact(plan.original),
+          resource: {
+            id: plan.input.id,
+            artifact: artifact(plan.selected),
+            width: plan.width,
+            height: plan.height,
+            colorSpace: plan.colorSpace,
+            alpha: plan.alpha,
+            license: {
+              ...plan.input.license,
+              notice: artifact(sha256(plan.input.notice)),
+            },
+            source: plan.input.source,
+            usageNodeIds: plan.input.usageNodeIds,
+            verification: plan.sanitized ? "sanitized" : "decoded",
+            ...(plan.sanitized
+              ? {
+                  derivativeOf: {
+                    id: artifact(plan.original).id,
+                    sha256: plan.original,
+                  },
+                }
+              : {}),
           },
-          source: plan.input.source,
-          usageNodeIds: plan.input.usageNodeIds,
-          verification: plan.sanitized ? "sanitized" : "decoded",
-          ...(plan.sanitized
-            ? {
-                derivativeOf: {
-                  id: artifact(plan.original).id,
-                  sha256: plan.original,
-                },
-              }
-            : {}),
-        },
-      })),
-      fonts: fontPlans.map((plan) => ({
-        face: plan.face,
-        resource: {
-          ...plan.input.face,
-          artifact: artifact(plan.hash),
-          license: {
-            ...plan.input.face.license,
-            notice: artifact(sha256(plan.input.notice)),
+        })),
+        fonts: fontPlans.map((plan) => ({
+          face: plan.face,
+          resource: {
+            ...plan.input.face,
+            artifact: artifact(plan.hash),
+            license: {
+              ...plan.input.face.license,
+              notice: artifact(sha256(plan.input.notice)),
+            },
+            availability: "verified",
+            glyphCoverage: "fixture-verified",
           },
-          availability: "verified",
-          glyphCoverage: "fixture-verified",
-        },
-      })),
-    };
+        })),
+      };
+      if (
+        result.images.some(
+          (image) => !validateContract("AssetResource", image.resource).success,
+        ) ||
+        result.fonts.some(
+          (font) => !validateContract("FontResource", font.resource).success,
+        )
+      )
+        fail(
+          "RESOURCE_METADATA",
+          "Prepared or returned resource metadata violates the shared contract",
+        );
+      return result;
+    }
+    try {
+      return {
+        staged,
+        totalBytes,
+        permissionScope: access.permissionScope,
+        ...resourceMetadata(artifact),
+      };
+    } catch (error) {
+      if (error instanceof AssetError)
+        throw new AssetStagingError(staged, error.diagnostic.code);
+      throw error;
+    }
   }
 
   async readCached(
@@ -445,18 +481,27 @@ export class AssetPipeline {
     context: OperationContext,
     lookup: CacheLookup,
   ) {
+    const ownedRequest = structuredClone(request);
     checkContext(context);
+    const projectId = context.projectId;
+    const requestId = context.requestId;
     const started = context.clock.now();
     const maxDurationMs = context.budget.maxDurationMs;
     const checkpoint = () => {
       checkContext(context);
+      if (context.projectId !== projectId || context.requestId !== requestId)
+        fail("CACHE_SCOPE", "Operation identity changed during cache access");
       bound(
         "DURATION",
         Math.ceil(context.clock.now() - started),
         maxDurationMs,
       );
     };
-    const access = await this.access(request.artifactRootId, context, "read");
+    const access = await this.access(
+      ownedRequest.artifactRootId,
+      context,
+      "read",
+    );
     checkpoint();
     if (mode === "offline" && !access.offlineAllowed)
       fail(
@@ -464,13 +509,13 @@ export class AssetPipeline {
         "Retained bytes are not permitted for offline use",
       );
     const key = cacheIdentity({
-      ...request,
-      projectId: context.projectId,
+      ...ownedRequest,
+      projectId,
       permissionScope: access.permissionScope,
       adapterVersion: ASSET_PROFILE.adapterVersion,
       schemaVersion: ASSET_PROFILE.schemaVersion,
     });
-    const cached = await lookup(key);
+    const cached = structuredClone(await lookup(key));
     checkpoint();
     if (!cached)
       fail(
@@ -479,7 +524,7 @@ export class AssetPipeline {
       );
     if (
       cached.key !== key ||
-      cached.projectId !== context.projectId ||
+      cached.projectId !== projectId ||
       cached.permissionScope !== access.permissionScope ||
       !validateContract("Artifact", cached.artifact).success
     )
@@ -497,7 +542,11 @@ export class AssetPipeline {
       cached.artifact.byteLength,
       context.budget.maxOutputBytes,
     );
-    const current = await this.access(request.artifactRootId, context, "read");
+    const current = await this.access(
+      ownedRequest.artifactRootId,
+      context,
+      "read",
+    );
     checkpoint();
     if (
       current.permissionScope !== access.permissionScope ||
@@ -505,7 +554,10 @@ export class AssetPipeline {
     )
       fail("CACHE_SCOPE", "Permission changed during cache access");
     const result = await this.dependencies.filesystem.read(
-      { artifactRootId: request.artifactRootId, path: cached.artifact.path },
+      {
+        artifactRootId: ownedRequest.artifactRootId,
+        path: cached.artifact.path,
+      },
       context,
     );
     if (result.status !== "complete")
@@ -513,10 +565,7 @@ export class AssetPipeline {
         "CACHE_READ",
         "Cached artifact is unavailable; no implicit refresh/fallback",
       );
-    if (
-      result.projectId !== context.projectId ||
-      result.requestId !== context.requestId
-    )
+    if (result.projectId !== projectId || result.requestId !== requestId)
       fail("CACHE_SCOPE", "Filesystem response scope mismatch");
     checkpoint();
     inputLimit(result.value, context.budget);

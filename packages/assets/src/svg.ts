@@ -170,10 +170,17 @@ export function sanitizeSvg(bytes: Uint8Array, limits: Budget) {
     ancestry.pop();
   };
   parser.write(text).close();
-  if (roots !== 1 || depth !== 0 || width <= 0 || height <= 0)
+  if (
+    roots !== 1 ||
+    depth !== 0 ||
+    width <= 0 ||
+    height <= 0 ||
+    !Number.isSafeInteger(width) ||
+    !Number.isSafeInteger(height)
+  )
     fail(
       "SVG_UNSUPPORTED",
-      "One complete root with positive explicit width and height is required",
+      "One complete root with positive explicit integer width and height is required",
     );
   bound(
     "RASTER_PIXELS",

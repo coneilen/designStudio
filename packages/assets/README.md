@@ -22,6 +22,10 @@ network client, cache store, publication or garbage collector.
   `{key, projectId, permissionScope, artifact}` or `undefined`. Returned bytes
   are copied and hash/size verified. Offline freshness is `unknown/offline`;
   online cache reads are `not-checked`, not evidence of source freshness.
+  Requests (including dependency arrays) are owned before the first await;
+  lookup records are owned immediately after lookup. Later caller/store
+  mutations cannot replace the authorized root, key or artifact identity.
+  Trusted authorization objects, live signals and clocks are not cloned.
 - `cacheIdentity(CacheIdentity)` hashes project, artifact root, permission
   revision, source hash, sorted dependency hashes, adapter/schema/derivative
   versions. Retrieval URLs never participate as durable resource identities.
@@ -56,6 +60,9 @@ is separate evidence; do not mutate stage receipts before F03 commits them.
 Original bytes, sanitized derivatives and unmodified license notices are
 separate content-addressed blobs. Provenance and usage remain in resource
 metadata. Neither inspection nor sanitization changes source evidence.
+Prepared image/font resource metadata is checked against shared contracts
+before any write, then checked again using actual stage receipts before
+success. A post-stage metadata failure retains receipts for recovery.
 
 `AssetError.diagnostic` contains a stable code/message and measured/allowed
 values for budget failures. `AssetStagingError` includes all known completed
@@ -70,7 +77,7 @@ commit, retention and deletion (including an interrupted write with no receipt).
 | --- | --- | --- |
 | PNG | Signature, CRC/order/length checks; dimension/pixel/RGBA output preflight; capped zlib inflate with exact decoded stream length; actual pngjs decode; measured alpha | Only 8-bit noninterlaced RGB/RGBA. JPEG and WebP are signature-classified but have **no decoder support**. Palette/grayscale/16-bit/interlacing/APNG/tRNS/ICC and unknown chunks are rejected. |
 | Color | Explicit sRGB chunk is recorded as sRGB; absent sRGB remains `unknown`; standard gAMA and pHYs accepted without treating them as proof of primaries | No ICC conversion, EXIF orientation, wide gamut or color-fidelity promise. |
-| SVG | Strict UTF-8/XML reconstructed from allowed `svg`, `g`, `title`, `rect`, `circle`, `ellipse`, `line`; bounded numeric geometry, hex colors and opacity; separate derivative hash | No paths/polygons/transforms, CSS, visible text, images, use/refs, gradients, masks, filters, animation, handlers, script, foreign content, entities/DTD/CDATA/comments/processing instructions. Unsupported features are rejected, not silently stripped. |
+| SVG | Strict UTF-8/XML reconstructed from allowed `svg`, `g`, `title`, `rect`, `circle`, `ellipse`, `line`; positive integer intrinsic width/height, bounded numeric geometry, hex colors and opacity; separate derivative hash | Fractional intrinsic dimensions are unsupported (never rounded); fractional child geometry remains supported. No paths/polygons/transforms, CSS, visible text, images, use/refs, gradients, masks, filters, animation, handlers, script, foreign content, entities/DTD/CDATA/comments/processing instructions. Unsupported features are rejected, not silently stripped. |
 | Fonts | Static standalone TrueType sfnt table checksums/ranges, head/maxp/loca bounds, actual Unicode names, OS/2 weight/style/fsType, cmap4/12 requested-code-point coverage | No WOFF/WOFF2/TTC/CFF/variable/color fonts, shaping, hint execution, glyph rasterization or font installation. This is a face/coverage inspector, **not a complete glyph-program sanitizer or browser font-use proof**. F06 retains engine font sanitization and actual-use checks. |
 | Remote | Allowlisted HTTPS origin and each redirect; all DNS answers public; address-pinned transport contract and actual-peer check; byte/time/call limits, cancellation, no auth-failure fallback | Only policy orchestration over injected DNS/transport was tested. No native transport is shipped and no real remote asset fetch was performed. |
 
@@ -132,6 +139,9 @@ and implicit redirects/decompression, and return actual `peerAddress`,
 `status`, optional `location/contentLength/contentEncoding`, byte-stream `body`
 and synchronous `close()`. DNS is revalidated for every redirect; mixed
 public/private answers, local/metadata/link-local/transition addresses fail.
+Cancellation, current authorization and elapsed duration are rechecked after
+awaited authorization and DNS preparation, before initiating DNS or transport;
+an expired preparation step cannot initiate the next external action.
 HTTP compression is unsupported. Signed URLs and underlying exception messages
 are not included in returned metadata/diagnostics.
 
@@ -174,3 +184,11 @@ an explicitly test-owned boundary, deterministic adversarial XML/font data,
 and fake DNS/transport only. Separate-process smoke tests import built exports.
 No macOS, live Figma, device, native network adapter, actual browser font use,
 renderer golden, or integrated F03/F04 production execution is claimed here.
+
+The focused F05 review follow-up added 15 unique cases: six preparation
+expiry/cancellation/duration cases, four concurrent request/cache-identity
+mutations, two fractional SVG viewport rejections, two pre/post-stage metadata
+validation cases, and one positive fractional-geometry/integer-viewport case.
+Fourteen failures were observed before their corresponding fixes; the positive
+geometry case preserves supported behavior. No profile expansion or native
+transport was added.

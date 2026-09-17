@@ -4,10 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
   FileSystemBoundary,
+  LicenseEvidence,
   OperationContext,
   ResourceSnapshot,
 } from "@design-studio/contracts";
-import { DEFAULT_BUDGETS } from "@design-studio/contracts";
+import { DEFAULT_BUDGETS, validateContract } from "@design-studio/contracts";
 import { describe, expect, it, vi } from "vitest";
 import {
   AssetPipeline,
@@ -117,6 +118,183 @@ function arrange() {
   };
 }
 describe("scoped immutable staging without publication or DB ownership", () => {
+  it.each(["prepared", "returned"] as const)(
+    "validates %s resource metadata rather than only stage artifacts",
+    async (phase) => {
+      const { fs, authorize } = arrange();
+      let license: LicenseEvidence | undefined;
+      const pipeline = new AssetPipeline({
+        filesystem: fs,
+        authorize,
+        rightsAuthority: (evidence) => {
+          license = evidence;
+          if (phase === "prepared") evidence.id = "";
+          return true;
+        },
+      });
+      if (phase === "returned") {
+        const originalStage = fs.stage;
+        fs.stage = vi.fn<FileSystemBoundary["stage"]>(async (...args) => {
+          const result = await originalStage(...args);
+          if (!license) throw new Error("Expected captured rights evidence");
+          license.id = "";
+          return result;
+        });
+      }
+      const pending = pipeline.stageSnapshot("root", [image()], context());
+      if (phase === "prepared") {
+        await expect(pending).rejects.toThrow(/RESOURCE_METADATA/);
+        expect(fs.stage).not.toHaveBeenCalled();
+      } else {
+        await expect(pending).rejects.toMatchObject({
+          boundaryStatus: "RESOURCE_METADATA",
+          staged: [
+            expect.objectContaining({ stagingId: "stage1" }),
+            expect.objectContaining({ stagingId: "stage2" }),
+          ],
+        });
+      }
+    },
+  );
+  it.each(["authorization", "read"] as const)(
+    "owns lookup identity across the awaited %s boundary",
+    async (phase) => {
+      const { pipeline, fs, authorize, staged } = arrange();
+      staged.set(asset.artifact.path, Buffer.from(bytes));
+      const replacement = Buffer.from("replacement bytes");
+      staged.set("replaced", replacement);
+      const record = {
+        key: "",
+        projectId: "p",
+        permissionScope: "permitted-v1",
+        artifact: structuredClone(asset.artifact),
+      };
+      const mutate = () => {
+        record.artifact.path = "replaced";
+        record.artifact.sha256 = sha256(replacement);
+        record.artifact.byteLength = replacement.length;
+      };
+      if (phase === "authorization") {
+        authorize
+          .mockImplementationOnce(async () => ({
+            permissionScope: "permitted-v1",
+            offlineAllowed: true,
+          }))
+          .mockImplementationOnce(async () => {
+            mutate();
+            return { permissionScope: "permitted-v1", offlineAllowed: true };
+          });
+      } else {
+        const originalRead = fs.read;
+        fs.read = vi.fn<FileSystemBoundary["read"]>(async (...args) => {
+          const result = await originalRead(...args);
+          mutate();
+          return result;
+        });
+      }
+      const result = await pipeline.readCached(
+        {
+          artifactRootId: "root",
+          sourceSha256: sha256(bytes),
+          dependencyHashes: [sha256(notice)],
+          derivativeVersion: "1",
+        },
+        "offline",
+        context(),
+        async (key) => {
+          record.key = key;
+          return record;
+        },
+      );
+      expect(result.artifact).toEqual(asset.artifact);
+      expect(result.bytes).toEqual(bytes);
+      expect(vi.mocked(fs.read).mock.calls[0]?.[0]).toMatchObject({
+        path: asset.artifact.path,
+      });
+    },
+  );
+  it.each(["authorization", "lookup"] as const)(
+    "owns request fields and dependency arrays before awaited %s",
+    async (phase) => {
+      const { pipeline, fs, authorize, staged } = arrange();
+      staged.set(asset.artifact.path, Buffer.from(bytes));
+      const request = {
+        artifactRootId: "root",
+        sourceSha256: sha256(bytes),
+        dependencyHashes: [sha256(notice)],
+        derivativeVersion: "1",
+      };
+      const expectedKey = cacheIdentity({
+        ...request,
+        projectId: "p",
+        permissionScope: "permitted-v1",
+        adapterVersion: "assets-1.0.0",
+        schemaVersion: "1.0",
+      });
+      const mutate = () => {
+        request.artifactRootId = "otherRoot";
+        request.sourceSha256 = sha256("other source");
+        request.dependencyHashes[0] = sha256("other dependency");
+        request.derivativeVersion = "changed";
+      };
+      if (phase === "authorization")
+        authorize.mockImplementationOnce(async () => {
+          mutate();
+          return { permissionScope: "permitted-v1", offlineAllowed: true };
+        });
+      const lookup = vi.fn(async (key: string) => {
+        if (phase === "lookup") mutate();
+        return {
+          key,
+          projectId: "p",
+          permissionScope: "permitted-v1",
+          artifact: asset.artifact,
+        };
+      });
+      const ctx = context();
+      await pipeline.readCached(request, "offline", ctx, lookup);
+      expect(lookup).toHaveBeenCalledWith(expectedKey);
+      expect(authorize.mock.calls).toEqual([
+        [ctx, "root", "read"],
+        [ctx, "root", "read"],
+      ]);
+      expect(fs.read).toHaveBeenCalledWith(
+        { artifactRootId: "root", path: asset.artifact.path },
+        ctx,
+      );
+    },
+  );
+  it.each(['width="20.5" height="10"', 'width="20" height="10.5"'])(
+    "rejects fractional intrinsic SVG dimensions before staging: %s",
+    async (dimensions) => {
+      const { pipeline, fs } = arrange();
+      const input = {
+        ...image(),
+        bytes: Buffer.from(
+          `<svg xmlns="http://www.w3.org/2000/svg" ${dimensions}><rect width="1.5" height="2.5"/></svg>`,
+        ),
+      };
+      await expect(
+        pipeline.stageSnapshot("root", [input], context()),
+      ).rejects.toThrow(/SVG_UNSUPPORTED/);
+      expect(fs.stage).not.toHaveBeenCalled();
+    },
+  );
+  it("keeps fractional shape geometry in integer viewports and returns schema-valid resources", async () => {
+    const { pipeline } = arrange();
+    const input = {
+      ...image(),
+      bytes: Buffer.from(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10"><rect x="0.5" width="1.5" height="2.5"/></svg>',
+      ),
+    };
+    const result = await pipeline.stageSnapshot("root", [input], context());
+    expect(result.images).toHaveLength(1);
+    for (const image of result.images)
+      expect(validateContract("AssetResource", image.resource).success).toBe(
+        true,
+      );
+  });
   it("checks cache lookup elapsed time before opening a file", async () => {
     const { pipeline, fs } = arrange();
     const ctx = context();

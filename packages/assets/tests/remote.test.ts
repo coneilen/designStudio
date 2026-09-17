@@ -44,6 +44,46 @@ function dependencies(): RemoteDependencies {
   };
 }
 describe("remote boundary with fake pinned transport only", () => {
+  it.each([
+    ["authorization", "expiry", "AUTH_EXPIRED"],
+    ["authorization", "cancellation", "CANCELLED"],
+    ["authorization", "duration", "DURATION"],
+    ["DNS", "expiry", "AUTH_EXPIRED"],
+    ["DNS", "cancellation", "CANCELLED"],
+    ["DNS", "duration", "DURATION"],
+  ] as const)(
+    "stops after %s changes %s before the next external action",
+    async (phase, change, code) => {
+      const dep = dependencies();
+      const ctx = context();
+      let now = Date.now();
+      ctx.clock.now = () => now;
+      ctx.authorization.expiresAt = new Date(now + 1000).toISOString();
+      ctx.budget.maxDurationMs = change === "duration" ? 100 : 5000;
+      const controller = new AbortController();
+      ctx.signal = controller.signal;
+      const changeState = () => {
+        if (change === "cancellation") controller.abort();
+        else now += change === "expiry" ? 1001 : 101;
+      };
+      if (phase === "authorization")
+        dep.authorize = vi.fn(async () => {
+          changeState();
+        });
+      else
+        dep.resolve = vi.fn(async () => {
+          changeState();
+          return ["93.184.216.34"];
+        });
+      await expect(
+        fetchRemote("https://assets.example/a", ctx, dep),
+      ).rejects.toThrow(new RegExp(code));
+      expect(dep.resolve).toHaveBeenCalledTimes(
+        phase === "authorization" ? 0 : 1,
+      );
+      expect(dep.transport).not.toHaveBeenCalled();
+    },
+  );
   it("enforces elapsed budgets during immediately-ready streams, not only timer callbacks", async () => {
     const dep = dependencies();
     const ctx = context();
