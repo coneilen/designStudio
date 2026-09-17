@@ -1,6 +1,7 @@
 import { PassThrough } from "node:stream";
 import { expect, it } from "vitest";
 import { PrivateChannel } from "../src/channel.js";
+import { ServiceQuiescence, stoppedFrame } from "../src/service-shutdown.js";
 
 it("notifies the owning lifecycle when closure leaves a truncated protocol frame", async () => {
   const pipe = new PassThrough();
@@ -14,6 +15,48 @@ it("notifies the owning lifecycle when closure leaves a truncated protocol frame
   expect(invalid).toBe(true);
 });
 
+it.each(["header", "payload"] as const)(
+  "invalidates stopped evidence before an error clears a partial %s",
+  async (kind) => {
+    const pipe = new PassThrough();
+    const evidence = new ServiceQuiescence();
+    const channel = new PrivateChannel(
+      pipe,
+      (value) => evidence.observeControl(value),
+      () => evidence.invalidateControl(),
+    );
+    const body = Buffer.from(JSON.stringify(stoppedFrame()));
+    const frame = Buffer.alloc(body.length + 4);
+    frame.writeUInt32BE(body.length);
+    body.copy(frame, 4);
+    const partial =
+      kind === "header"
+        ? Buffer.from([0, 0])
+        : Buffer.from([0, 0, 0, 4, 123, 34]);
+    pipe.write(Buffer.concat([frame, partial]));
+    expect(evidence.acknowledged).toBe(true);
+    pipe.emit("error", new Error("Owned transport error."));
+    expect(evidence.confirms({ code: 8, bytes: new Uint8Array() })).toBe(false);
+    channel.close();
+  },
+);
+it("preserves stopped evidence when transport failure occurs at a complete frame boundary", () => {
+  const pipe = new PassThrough();
+  const evidence = new ServiceQuiescence();
+  const channel = new PrivateChannel(
+    pipe,
+    (value) => evidence.observeControl(value),
+    () => evidence.invalidateControl(),
+  );
+  const body = Buffer.from(JSON.stringify(stoppedFrame()));
+  const frame = Buffer.alloc(body.length + 4);
+  frame.writeUInt32BE(body.length);
+  body.copy(frame, 4);
+  pipe.write(frame);
+  pipe.emit("error", new Error("Owned transport error."));
+  expect(evidence.confirms({ code: 8, bytes: new Uint8Array() })).toBe(true);
+  channel.close();
+});
 it("frames a private message without stdout or environment transport", async () => {
   const pipe = new PassThrough();
   const channel = new PrivateChannel(pipe);

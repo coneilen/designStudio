@@ -25,6 +25,7 @@ const blocked: readonly Command[] = ["serve", "with-session", "fixtures init"];
 function processResult(
   child: ChildProcess,
   onClose?: (exit: ObservedServiceExit) => void,
+  serviceEvidence?: ServiceQuiescence,
 ) {
   let stdout = Buffer.alloc(0);
   let stderrBytes = 0;
@@ -37,6 +38,7 @@ function processResult(
     } else stdout = Buffer.concat([stdout, bytes]);
   });
   child.stderr?.on("data", (bytes: Buffer) => {
+    serviceEvidence?.observeStderr(bytes);
     stderrBytes += bytes.length;
     if (stderrBytes > 65536) {
       error = new ApplicationError("OUTPUT_LIMIT");
@@ -57,6 +59,7 @@ function processResult(
         error = new ApplicationError("PROCESS_FAILED");
       });
       child.once("close", (code) => {
+        serviceEvidence?.endStderr();
         onClose?.({ code, bytes: stdout, ...(error ? { error } : {}) });
         if (error) reject(error);
         else resolve({ code, bytes: stdout });
@@ -123,9 +126,13 @@ export async function launchLocalSession(
   );
   let observedExit: ObservedServiceExit | undefined;
   const evidence = new ServiceQuiescence();
-  const closed = processResult(child, (exit) => {
-    observedExit = exit;
-  });
+  const closed = processResult(
+    child,
+    (exit) => {
+      observedExit = exit;
+    },
+    evidence,
+  );
   // Attach immediately: startup may fail before readiness is consumed.
   void closed.catch(() => {});
   const pipe = child.stdio[3];

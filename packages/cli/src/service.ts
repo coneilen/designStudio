@@ -8,6 +8,7 @@ import {
 } from "@design-studio/application";
 import { openInstalledProject } from "@design-studio/application/installed";
 import { PrivateChannel } from "./channel.js";
+import { emitServiceQuiescence } from "./service-evidence.js";
 import { stoppedFrame } from "./service-shutdown.js";
 
 export class ServiceCleanupRequired extends ApplicationError {
@@ -31,6 +32,22 @@ export async function serve(port: number, controlFd: string | undefined) {
   let apiClosed = false;
   let projectClosed = false;
   let channelClosed = false;
+  let teardownEvidenceWritten = false;
+  const recordErrorTeardown = async (failures: unknown[]) => {
+    if (
+      project &&
+      projectClosed &&
+      (!api || apiClosed) &&
+      !teardownEvidenceWritten
+    ) {
+      try {
+        await emitServiceQuiescence();
+        teardownEvidenceWritten = true;
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+  };
   const closeOwned = async (): Promise<unknown[]> => {
     const failures: unknown[] = [];
     if (api && !apiClosed) {
@@ -97,6 +114,7 @@ export async function serve(port: number, controlFd: string | undefined) {
         continue;
       }
       await control.write(stoppedFrame());
+      teardownEvidenceWritten = true;
       control.close();
       channelClosed = true;
       return success("service_stop", {
@@ -108,12 +126,13 @@ export async function serve(port: number, controlFd: string | undefined) {
     }
   } catch (error) {
     const failures = await closeOwned();
+    await recordErrorTeardown(failures);
     if (failures.length)
-      throw new ServiceCleanupRequired(
-        error,
-        failures,
-        async () => (await closeOwned()).length === 0,
-      );
+      throw new ServiceCleanupRequired(error, failures, async () => {
+        const retryFailures = await closeOwned();
+        await recordErrorTeardown(retryFailures);
+        return retryFailures.length === 0;
+      });
     throw error;
   }
 }

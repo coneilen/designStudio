@@ -71,6 +71,19 @@ kill-on-owner-close alone is not asserted to be renderer Job-empty evidence.
 Owner-close failures are retryable without repeating the dead IPC exchange,
 and successfully released resources are not closed twice.
 
+On an error path with unavailable fd3, the service emits a single private
+`DESIGNCTL_SERVICE_QUIESCENCE` record on its existing owned stderr stream only
+after API teardown and acquired-project cleanup have both completed. This
+bounded record is separate from public stdout, which retains the original
+typed failure under the fixed `service_stop` identity and a nonzero exit.
+The controller incrementally parses only that strict project/request-bound
+record; arbitrary stderr is not authority and is not forwarded. Release still
+requires actual child close and a matching complete failure envelope, and close
+continues to report interruption rather than success. Missing, duplicated,
+oversized, conflicting or truncated records do not authorize release.
+Any transport failure invalidates unfinished control-frame evidence before
+clearing its buffer; a later stderr record cannot rescue an invalid stream.
+
 `preview` returns verified PNG artifact metadata with an unapproved warning;
 it never launches a browser. `artifacts get` optionally writes only to
 `--output-root foundation_outputs --output-relative <path>` using native verified

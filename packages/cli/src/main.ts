@@ -19,12 +19,14 @@ import { callApi } from "./client.js";
 import { writeOutput } from "./output.js";
 
 const requestId = randomUUID();
+let failureRequestId: string = requestId;
 let result: ResponseEnvelope;
 let json = process.argv.slice(2).includes("--json");
 let wait = false;
 let selectedExit: number | undefined;
 try {
   const args = parseArguments(process.argv.slice(2));
+  if (args.command === "serve") failureRequestId = "service_stop";
   json = args.values.values.json ?? false;
   wait =
     args.command === "jobs wait" ||
@@ -180,7 +182,7 @@ try {
 } catch (error) {
   selectedExit = undefined;
   const safe = safeError(error);
-  result = failure(requestId, safe.code, safe.jobId);
+  result = failure(failureRequestId, safe.code, safe.jobId);
 }
 process.exitCode = selectedExit ?? exitCode(result, wait);
 try {

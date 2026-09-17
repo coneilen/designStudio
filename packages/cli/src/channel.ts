@@ -12,7 +12,7 @@ export class PrivateChannel {
   constructor(
     private readonly pipe: Duplex,
     observe?: (value: JsonValue) => void,
-    invalidProtocol?: () => void,
+    private readonly invalidProtocol?: () => void,
   ) {
     pipe.on("data", (input: Buffer) => {
       if (this.failure) return;
@@ -58,16 +58,11 @@ export class PrivateChannel {
       }
     });
     pipe.on("error", () => this.fail());
-    pipe.on("end", () => {
-      if (this.bytes.length !== 0) invalidProtocol?.();
-      this.fail();
-    });
-    pipe.on("close", () => {
-      if (this.bytes.length !== 0) invalidProtocol?.();
-      this.fail();
-    });
+    pipe.on("end", () => this.fail());
+    pipe.on("close", () => this.fail());
   }
   private fail() {
+    if (this.bytes.length !== 0) this.invalidProtocol?.();
     this.failure ??= new ApplicationError("TRANSPORT_UNAVAILABLE", 503);
     this.bytes.fill(0);
     this.bytes = Buffer.alloc(0);
@@ -108,11 +103,18 @@ export class PrivateChannel {
           this.fail();
           reject(new ApplicationError("DEADLINE_EXCEEDED", 504));
         }, 5000);
-        this.pipe.write(frame, (error) => {
-          clearTimeout(timer);
-          if (error) reject(new ApplicationError("TRANSPORT_UNAVAILABLE"));
-          else resolve();
-        });
+        try {
+          this.pipe.write(frame, (error) => {
+            clearTimeout(timer);
+            if (error) {
+              this.fail();
+              reject(new ApplicationError("TRANSPORT_UNAVAILABLE"));
+            } else resolve();
+          });
+        } catch (error) {
+          this.fail();
+          reject(error);
+        }
       });
     } finally {
       if (timer) clearTimeout(timer);
