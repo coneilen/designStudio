@@ -73,7 +73,8 @@ with generic `application/octet-stream` media type. This asserts byte integrity,
 **not media validity**. Consumers must keep semantic MIME/decoding evidence
 separate and never modify the staged metadata. A staged artifact belongs to
 this instance, project, actor, session and request. `publish(staged, context)`
-verifies those identities, exact metadata and actual bytes, then atomically
+validates and snapshots the complete staging ID/artifact request before enqueue.
+It verifies those identities, exact metadata and actual bytes, then atomically
 links on the same filesystem without replacing an existing destination and
 removes its staging link. Existing destinations conflict, even with equal bytes.
 If link succeeds but stage unlink fails, the result is `interrupted` /
@@ -85,6 +86,11 @@ an interrupted publication; reconcile it first.
 No caller-visible partial file is published. `discard` removes only an owned
 unpublished stage. `close()` cleans only this instance's private staging files;
 never existing project data. Mutation/read operations serialize per instance.
+Previously accepted work drains before queued close. Every queued operation
+rechecks the lifecycle before accessing files: work queued behind a successful
+close fails with `FORBIDDEN`, including reads and stages, without creating files.
+Repeated close is safe. A close rejected for interrupted publication leaves
+the boundary usable for the existing owned-retry recovery path.
 F03 owns cross-instance maintenance, database references and crash recovery.
 
 Published paths round-trip without assuming the input and artifact roots match:
@@ -296,6 +302,7 @@ Focused tests first failed for missing modules, then passed with implementations
 A concurrent first-stage regression separately failed before serialization
 was added. Additional observed RED/GREEN regressions cover post-link unlink
 failure/recovery, overlarge caller budgets, secret arrays/keys/typed errors,
+publication-request mutation after enqueue, close-then-stage/read ordering,
 and mutation of process arguments or staged bytes during asynchronous checks.
 Virtual deadlines use the unmodified contract fake clock; real deadline and
 cancellation cases wait until an owned subprocess is running before stopping it.

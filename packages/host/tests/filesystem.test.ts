@@ -123,6 +123,119 @@ it("pins operation identity before awaiting stage work rather than borrowing lat
     status: "complete",
   });
 });
+it("captures the complete publication request before enqueue so later mutation cannot select another stage", async () => {
+  const first = value(
+    await files.stage(
+      { artifactRootId: "output", path: "first.bin" },
+      Uint8Array.of(1),
+      context,
+    ),
+  );
+  const second = value(
+    await files.stage(
+      { artifactRootId: "output", path: "second.bin" },
+      Uint8Array.of(2),
+      context,
+    ),
+  );
+  const input = structuredClone(first);
+  const queuedWork = files.stage(
+    { artifactRootId: "output", path: "queued.bin" },
+    Uint8Array.of(3),
+    context,
+  );
+  const publication = files.publish(input, context);
+  input.stagingId = second.stagingId;
+  input.artifact = structuredClone(second.artifact);
+  expect(await publication).toMatchObject({
+    status: "complete",
+    value: first.artifact,
+  });
+  expect(
+    value(
+      await files.read(
+        { artifactRootId: "output", path: "first.bin" },
+        context,
+      ),
+    ),
+  ).toEqual(Uint8Array.of(1));
+  expect(
+    await files.read({ artifactRootId: "output", path: "second.bin" }, context),
+  ).toMatchObject({ error: { code: "RESOURCE_UNRESOLVED" } });
+  expect(await files.publish(second, context)).toMatchObject({
+    status: "complete",
+  });
+  value(await queuedWork);
+});
+
+it("rejects stage and read queued after close without recreating staging files", async () => {
+  await writeFile(
+    path.join(temporary, "input", "source.bin"),
+    Uint8Array.of(7),
+  );
+  const closing = files.close();
+  const staging = files.stage(
+    { artifactRootId: "output", path: "after-close/result.bin" },
+    Uint8Array.of(3),
+    context,
+  );
+  const reading = files.read(
+    { artifactRootId: "input", path: "source.bin" },
+    context,
+  );
+  await closing;
+  expect(await staging).toMatchObject({
+    status: "failed",
+    error: { code: "FORBIDDEN" },
+  });
+  expect(await reading).toMatchObject({
+    status: "failed",
+    error: { code: "FORBIDDEN" },
+  });
+  expect(await readdir(path.join(temporary, "output"))).toEqual([]);
+  expect(
+    await files.stage(
+      { artifactRootId: "output", path: "later.bin" },
+      Uint8Array.of(4),
+      context,
+    ),
+  ).toMatchObject({ error: { code: "FORBIDDEN" } });
+  expect(
+    await files.read({ artifactRootId: "input", path: "source.bin" }, context),
+  ).toMatchObject({ error: { code: "FORBIDDEN" } });
+});
+
+it("drains previously accepted stages reads and publications before successful close", async () => {
+  const staged = value(
+    await files.stage(
+      { artifactRootId: "output", path: "published.bin" },
+      Uint8Array.of(1),
+      context,
+    ),
+  );
+  const staging = files.stage(
+    { artifactRootId: "output", path: "unpublished.bin" },
+    Uint8Array.of(2),
+    context,
+  );
+  const publishing = files.publish(staged, context);
+  const reading = files.read(
+    { artifactRootId: "output", path: "published.bin" },
+    context,
+  );
+  const closing = files.close();
+  value(await staging);
+  expect(await publishing).toMatchObject({
+    status: "complete",
+    value: staged.artifact,
+  });
+  expect(value(await reading)).toEqual(Uint8Array.of(1));
+  await closing;
+  expect(await readdir(path.join(temporary, "output"))).toEqual([
+    "published.bin",
+  ]);
+  await expect(files.close()).resolves.toBeUndefined();
+});
 it("reads bounded binary and publishes atomically under a distinct output root", async () => {
   const bytes = Uint8Array.from([0, 255, 13, 10, 128]);
   await writeFile(path.join(temporary, "input", "source.bin"), bytes);

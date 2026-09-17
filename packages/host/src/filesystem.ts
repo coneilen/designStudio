@@ -195,8 +195,18 @@ export class ProjectFileSystem implements FileSystemBoundary {
         "Unknown publication durability profile.",
       );
   }
-  private serial<T>(operation: () => Promise<T>): Promise<T> {
-    const result = this.tail.then(operation);
+  private serial<T>(
+    operation: () => Promise<T>,
+    allowClosed = false,
+  ): Promise<T> {
+    const result = this.tail.then(() => {
+      if (this.closed && !allowClosed)
+        throw new HostBoundaryError(
+          "FORBIDDEN",
+          "Filesystem boundary is closed.",
+        );
+      return operation();
+    });
     // Release the queue on failure; the original promise still reports the error.
     this.tail = result.then(
       () => {},
@@ -566,36 +576,75 @@ export class ProjectFileSystem implements FileSystemBoundary {
     input: StagedArtifact,
     context: OperationContext,
   ): Promise<Outcome<Artifact>> {
-    return this.execute(context, async (context) => {
-      if (!validateContract("Artifact", input.artifact).success)
+    return boundary(context, async (context) => {
+      if (
+        !validateContract("JsonValue", input).success ||
+        !validateContract("StableId", input?.stagingId).success ||
+        !validateContract("Artifact", input?.artifact).success
+      )
         throw new HostBoundaryError(
           "ARTIFACT_INTEGRITY",
           "Invalid staged artifact.",
         );
       const staged = structuredClone(input);
-      const { pending, guard } = this.own(staged.stagingId, context);
-      if (
-        !validateContract("Artifact", staged.artifact).success ||
-        Object.keys(pending.staged.artifact).some(
-          (key) =>
-            Reflect.get(staged.artifact, key) !==
-            Reflect.get(pending.staged.artifact, key),
+      return this.serial(async () => {
+        const { pending, guard } = this.own(staged.stagingId, context);
+        if (
+          !validateContract("Artifact", staged.artifact).success ||
+          Object.keys(pending.staged.artifact).some(
+            (key) =>
+              Reflect.get(staged.artifact, key) !==
+              Reflect.get(pending.staged.artifact, key),
+          )
         )
-      )
-        throw new HostBoundaryError(
-          "ARTIFACT_INTEGRITY",
-          "Staged metadata was modified.",
-        );
-      pending.busy = true;
-      try {
-        await this.checkStaging(pending.root);
-        if (pending.nativeState) {
-          const destination = await this.resolve(
-            pending.root,
-            staged.artifact.path,
+          throw new HostBoundaryError(
+            "ARTIFACT_INTEGRITY",
+            "Staged metadata was modified.",
           );
+        pending.busy = true;
+        try {
+          await this.checkStaging(pending.root);
+          if (pending.nativeState) {
+            const destination = await this.resolve(
+              pending.root,
+              staged.artifact.path,
+            );
+            const bytes = await this.readBytes(
+              destination,
+              guard,
+              pending.identity,
+            );
+            if (
+              bytes.byteLength !== pending.staged.artifact.byteLength ||
+              sha256(bytes) !== pending.staged.artifact.sha256
+            )
+              throw new HostBoundaryError(
+                "ARTIFACT_INTEGRITY",
+                "Interrupted native publication bytes changed.",
+              );
+            const proof = await this.nativePublisher.resume(
+              destination,
+              pending.nativeState,
+              guard,
+            );
+            await this.recordNativeReceipt(pending, proof);
+            this.pending.delete(staged.stagingId);
+            return structuredClone(pending.staged.artifact);
+          }
+          if (pending.publishedDestination) {
+            await this.resolve(pending.root, staged.artifact.path);
+            await this.finishPublishedPair(
+              pending.path,
+              pending.publishedDestination,
+              pending.staged.artifact,
+              guard,
+              pending.identity,
+            );
+            this.pending.delete(staged.stagingId);
+            return structuredClone(pending.staged.artifact);
+          }
           const bytes = await this.readBytes(
-            destination,
+            pending.path,
             guard,
             pending.identity,
           );
@@ -605,86 +654,53 @@ export class ProjectFileSystem implements FileSystemBoundary {
           )
             throw new HostBoundaryError(
               "ARTIFACT_INTEGRITY",
-              "Interrupted native publication bytes changed.",
+              "Staged bytes do not match artifact metadata.",
             );
-          const proof = await this.nativePublisher.resume(
-            destination,
-            pending.nativeState,
-            guard,
+          const destination = await this.resolve(
+            pending.root,
+            staged.artifact.path,
           );
-          await this.recordNativeReceipt(pending, proof);
-          this.pending.delete(staged.stagingId);
-          return structuredClone(pending.staged.artifact);
-        }
-        if (pending.publishedDestination) {
-          await this.resolve(pending.root, staged.artifact.path);
+          guard.check();
+          if (this.options.publicationProfile === WINDOWS_PUBLICATION_PROFILE) {
+            const proof = await this.nativePublisher.publish(
+              pending.path,
+              destination,
+              pending.staged.artifact.byteLength,
+              guard,
+            );
+            pending.nativeState = proof.identity;
+            await this.recordNativeReceipt(pending, proof);
+            this.pending.delete(staged.stagingId);
+            return structuredClone(pending.staged.artifact);
+          }
+          // Same-filesystem hard-link publication is atomic and never replaces an existing file.
+          await io(() => link(pending.path, destination));
+          pending.publishedDestination = destination;
           await this.finishPublishedPair(
             pending.path,
-            pending.publishedDestination,
+            destination,
             pending.staged.artifact,
             guard,
             pending.identity,
-          );
-          this.pending.delete(staged.stagingId);
-          return structuredClone(pending.staged.artifact);
-        }
-        const bytes = await this.readBytes(
-          pending.path,
-          guard,
-          pending.identity,
-        );
-        if (
-          bytes.byteLength !== pending.staged.artifact.byteLength ||
-          sha256(bytes) !== pending.staged.artifact.sha256
-        )
-          throw new HostBoundaryError(
-            "ARTIFACT_INTEGRITY",
-            "Staged bytes do not match artifact metadata.",
-          );
-        const destination = await this.resolve(
-          pending.root,
-          staged.artifact.path,
-        );
-        guard.check();
-        if (this.options.publicationProfile === WINDOWS_PUBLICATION_PROFILE) {
-          const proof = await this.nativePublisher.publish(
-            pending.path,
-            destination,
-            pending.staged.artifact.byteLength,
-            guard,
-          );
-          pending.nativeState = proof.identity;
-          await this.recordNativeReceipt(pending, proof);
-          this.pending.delete(staged.stagingId);
-          return structuredClone(pending.staged.artifact);
-        }
-        // Same-filesystem hard-link publication is atomic and never replaces an existing file.
-        await io(() => link(pending.path, destination));
-        pending.publishedDestination = destination;
-        await this.finishPublishedPair(
-          pending.path,
-          destination,
-          pending.staged.artifact,
-          guard,
-          pending.identity,
-          false,
-        );
-        this.pending.delete(staged.stagingId);
-        return structuredClone(pending.staged.artifact);
-      } catch (error) {
-        if (error instanceof NativePublicationInterrupted)
-          pending.nativeState = error.identity;
-        if (pending.publishedDestination || pending.nativeState)
-          throw new HostBoundaryError(
-            "OUTPUT_UNCERTAIN",
-            "Destination is visible but publication cleanup is incomplete; retry/reconcile the exact owned pair.",
             false,
-            { cause: error },
           );
-        throw error;
-      } finally {
-        pending.busy = false;
-      }
+          this.pending.delete(staged.stagingId);
+          return structuredClone(pending.staged.artifact);
+        } catch (error) {
+          if (error instanceof NativePublicationInterrupted)
+            pending.nativeState = error.identity;
+          if (pending.publishedDestination || pending.nativeState)
+            throw new HostBoundaryError(
+              "OUTPUT_UNCERTAIN",
+              "Destination is visible but publication cleanup is incomplete; retry/reconcile the exact owned pair.",
+              false,
+              { cause: error },
+            );
+          throw error;
+        } finally {
+          pending.busy = false;
+        }
+      });
     });
   }
   discard(
@@ -721,7 +737,7 @@ export class ProjectFileSystem implements FileSystemBoundary {
     });
   }
   close(): Promise<void> {
-    return this.serial(() => this.cleanup());
+    return this.serial(() => this.cleanup(), true);
   }
   get publicationDurability(): string {
     return this.options.publicationProfile === WINDOWS_PUBLICATION_PROFILE
