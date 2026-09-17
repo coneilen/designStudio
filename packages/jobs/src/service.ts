@@ -870,8 +870,10 @@ export class JobService {
                 });
               continue;
             }
+            const remainingJobMs =
+              Date.parse(record.job.deadline) - this.options.clock.now();
             if (
-              this.options.clock.now() >= Date.parse(record.job.deadline) ||
+              remainingJobMs <= 0 ||
               record.job.attempt >= record.job.budget.maxAttempts
             ) {
               await this.repair(
@@ -907,7 +909,7 @@ export class JobService {
                     own(record),
                     controller.signal,
                   ),
-                  this.authorityTimeoutMs,
+                  Math.min(this.authorityTimeoutMs, remainingJobMs),
                   () => controller.abort(),
                 ),
                 record.job.id,

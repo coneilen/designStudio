@@ -159,6 +159,10 @@ duplicate stage was consumed.
 
 Library defaults: lease5000ms, heartbeat about one-third of lease, poll100ms,
 retry backoff1000ms, authority allowance5000ms, shutdown allowance5000ms.
+Execution issuance is capped by the lesser of the configured authority allowance
+and the immutable job deadline's remaining time; expired jobs never invoke the
+execution issuer. Observation and recovery retain their purpose-specific
+allowance so current authority can reconcile an expired job.
 Leases/shutdown/authority allowances are finite and at most30000ms; poll must
 not exceed heartbeat and heartbeat is below lease. Storage further caps leases
 by job/context/grant deadlines. F03 holds its queue during publication I/O:
