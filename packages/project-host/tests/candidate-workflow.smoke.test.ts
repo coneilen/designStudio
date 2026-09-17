@@ -7,6 +7,10 @@ import { expect, test, vi } from "vitest";
 import { installCandidate, verifyInstalledRoot } from "../src/installation.js";
 import { digest } from "../src/installation-manifest.js";
 import { type InstallationEntry, loadNative } from "../src/native.js";
+import {
+  offlineRestorePaths,
+  withOfflineRestoreDiagnostics,
+} from "./offline-restore.js";
 import { ownedTest, weakenTestAcl } from "./support.js";
 
 const workspace = fileURLToPath(new URL("../../../", import.meta.url));
@@ -23,6 +27,7 @@ const execute = promisify(execFile);
 test.skipIf(process.env.FIXTURE_INSTALL_CANDIDATE_GATE !== "1")(
   "complete offline candidate with synthetic F08 entries installs and child independently verifies real native closure",
   async () => {
+    const restore = offlineRestorePaths(workspace, process.env);
     await ownedTest(async (root) => {
       const stage = path.join(root, "workspace");
       await mkdir(path.join(stage, "packages"), { recursive: true });
@@ -99,27 +104,29 @@ test.skipIf(process.env.FIXTURE_INSTALL_CANDIDATE_GATE !== "1")(
         path.join(workspace, "pnpm-lock.yaml"),
         path.join(stage, "pnpm-lock.yaml"),
       );
-      await execute(
-        process.execPath,
-        [
-          pnpm,
-          "--dir",
-          stage,
-          "install",
-          "--offline",
-          "--ignore-scripts",
-          "--cache-dir",
-          path.join(workspace, ".cache", "pnpm"),
-          "--store-dir",
-          path.join(workspace, ".tools", "pnpm-store"),
-          "--registry",
-          "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/",
-        ],
-        {
-          timeout: 120000,
-          maxBuffer: 65536,
-          env: { ...process.env, PATH: `${nodeRoot};${process.env.PATH}` },
-        },
+      await withOfflineRestoreDiagnostics(() =>
+        execute(
+          process.execPath,
+          [
+            pnpm,
+            "--dir",
+            stage,
+            "install",
+            "--offline",
+            "--ignore-scripts",
+            "--cache-dir",
+            restore.cache,
+            "--store-dir",
+            restore.store,
+            "--registry",
+            "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/",
+          ],
+          {
+            timeout: 120000,
+            maxBuffer: 65536,
+            env: { ...process.env, PATH: `${nodeRoot};${process.env.PATH}` },
+          },
+        ),
       );
       const output = path.join(root, "candidate");
       await execute(

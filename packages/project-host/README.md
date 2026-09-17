@@ -470,3 +470,15 @@ admission with zero intercepted allocation attempts and unchanged owned-root
 sentinels. Another RED accepted a browser inventory over the byte cap; tests
 now verify acceptance at exactly 8 MiB and refusal one byte beyond. These
 admission tests do not install or approve a production release.
+
+For the synthetic candidate smoke **only**, `FIXTURE_INSTALL_TEST_STORE` and
+`FIXTURE_INSTALL_TEST_CACHE` may select explicit absolute, already populated
+offline pnpm locations. Defaults remain this workspace's `.tools\pnpm-store`
+and `.cache\pnpm`. Relative/drive-relative/empty overrides are rejected before
+test allocation. These paths feed only the nested `--offline --ignore-scripts`
+pnpm restore; they do not alter production installation/verifier paths or add an
+online fallback. Both v11 store content/index and package metadata are required:
+a frozen outer restore using another store does not necessarily populate them.
+Use approved existing quiescent locations rather than merging database indexes.
+Nested restore failures include bounded code, stdout and stderr while preserving
+the original cause; pnpm often reports missing offline metadata on stdout.
