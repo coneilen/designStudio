@@ -594,12 +594,18 @@ export class LocalStore implements ArtifactStore {
       }
       if (request) await this.validateRevision(request, context);
       const published: Artifact[] = [];
+      const needsPublicationBarrier: Artifact[] = [];
       for (const staged of outputs) {
         this.checkpoint(context);
         const existing = this.row("artifacts", staged.artifact.id, "Artifact");
-        const artifact =
-          existing ??
-          unwrap(await this.options.fileSystem.publish(staged, context));
+        if (existing && !this.equal(existing, staged.artifact))
+          throw new StorageError("CONFLICT", "Artifact identity is immutable.");
+        // Only an exact output in a trusted committed transaction can carry
+        // historical barrier assurance across a host-process restart.
+        const reusable = existing && this.hasCommittedPublication(existing);
+        const artifact = reusable
+          ? existing
+          : unwrap(await this.options.fileSystem.publish(staged, context));
         if (!this.equal(artifact, staged.artifact))
           throw new StorageError(
             "INTEGRITY",
@@ -607,6 +613,7 @@ export class LocalStore implements ArtifactStore {
           );
         await this.read(artifact, context);
         published.push(artifact);
+        if (!reusable) needsPublicationBarrier.push(artifact);
       }
       if (request) {
         const evidence = [];
@@ -623,7 +630,11 @@ export class LocalStore implements ArtifactStore {
         }
         await this.options.verifyRevision(request.revision, context, evidence);
       }
-      await this.options.ensurePublicationDurable(published, context);
+      if (needsPublicationBarrier.length !== 0)
+        await this.options.ensurePublicationDurable(
+          needsPublicationBarrier,
+          context,
+        );
       this.checkpoint(context);
       const receipt: CommitReceipt = {
         schemaVersion: "1.0",
@@ -674,6 +685,37 @@ export class LocalStore implements ArtifactStore {
       }
       return receipt;
     });
+  }
+  private hasCommittedPublication(artifact: Artifact): boolean {
+    this.boundRows("receipts");
+    const rows = this.db
+      .prepare<[string], { scope: string; data: string }>(`
+      SELECT receipts.scope, receipts.data FROM receipts
+      JOIN artifact_refs ON artifact_refs.owner_kind='job'
+        AND artifact_refs.owner_id=json_extract(receipts.data,'$.id')
+      WHERE artifact_refs.artifact_id=?
+    `)
+      .all(artifact.id);
+    for (const row of rows) {
+      const receipt = parseContract("CommitReceipt", row.data, "json");
+      const scope = receipt.idempotency;
+      if (
+        receipt.projectId !== this.options.projectId ||
+        scope.projectId !== this.options.projectId ||
+        scope.operation !== "write" ||
+        row.scope !==
+          JSON.stringify([
+            this.options.projectId,
+            scope.actorId,
+            scope.operation,
+            scope.key,
+          ])
+      )
+        continue;
+      if (receipt.outputs.some((output) => this.equal(output, artifact)))
+        return true;
+    }
+    return false;
   }
   private checkBase(request: RevisionCommit): void {
     const head = this.db

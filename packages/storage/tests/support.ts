@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   mkdir,
   readdir,
@@ -60,6 +60,7 @@ export async function diskFixture(root: string) {
   await mkdir(join(root, "blobs"), { recursive: true });
   await mkdir(join(root, "staged"), { recursive: true });
   let sequence = 0;
+  const instance = randomUUID();
   let fault: "stage" | "publish" | undefined;
   const fs: FileSystemBoundary = {
     async read(request, ctx) {
@@ -69,7 +70,7 @@ export async function diskFixture(root: string) {
       );
     },
     async stage(request, value, ctx) {
-      const stagingId = `staged-${++sequence}`;
+      const stagingId = `staged-${instance}-${++sequence}`;
       const artifact: Artifact = {
         id: `blob-${hash(value)}`,
         path: request.path,

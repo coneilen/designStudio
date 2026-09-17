@@ -131,6 +131,32 @@ failures leave at most staged/orphan bytes, never newly committed partial pointe
 Noncomplete host publication preserves interrupted/unavailable/cancelled outcomes
 and error codes, and never invents a receipt.
 
+New-key reuse after a host restart separates historical assurance from new
+publication. An existing artifact bypasses a new host-process barrier only when
+its complete metadata exactly matches an output of a schema-valid committed
+receipt, with its protected job-reference edge and matching project/idempotency
+scope key in the trusted database. Current bytes/hash/length and current
+project/root/permission authorization are still verified. Receipt outputs remain
+complete even when only the newly published subset goes to the current barrier.
+The historical receipt proves that the original storage transaction crossed
+its mandatory publication barrier; it does not reconstruct a host file-identity
+receipt or claim a new native profile/power-cut result.
+
+This relies on `attestLocalDatabase` establishing the provenance and exclusive
+ownership of the database, not merely checking a local-looking pathname.
+Untrusted SQL files must not be opened as trusted stores; use authenticated,
+verified restore. Filesystem presence, an artifact row alone, an orphan,
+a foreign/mismatched receipt or a missing reference edge cannot establish that
+assurance. Objects without it require publication and a current barrier.
+Restore always requires a current barrier for every destination object before
+accepting any imported receipt, even when the backup contains trusted history.
+
+Duplicate stage receipts supplied for reused committed outputs are deliberately
+left available to bounded `recover`: their cleanup cannot change an already
+committed logical receipt. They are discarded only after the existing trusted
+`canDiscardStage` policy and host ownership checks allow it; unknown/live stages
+remain explicitly reported. No automatic cleanup under expired authority occurs.
+
 Public content contracts are imported rather than copied. JSON persistence
 encoding is not a new canonical design format: mandatory `canonicalBytes`
 comes from F02 for fingerprints/review hashes. `verifyRevision` receives the

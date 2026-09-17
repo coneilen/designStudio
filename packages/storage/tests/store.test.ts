@@ -21,6 +21,29 @@ import { bytes, context, diskFixture, hash, revision } from "./support.js";
 
 const roots: string[] = [];
 const stores: LocalStore[] = [];
+async function proofBoundary(root: string) {
+  const disk = await diskFixture(root);
+  const proofs = new Set<string>();
+  const barriers: string[][] = [];
+  const publish = disk.fs.publish;
+  disk.fs.publish = async (staged, ctx) => {
+    const result = await publish(staged, ctx);
+    if (result.status === "complete") proofs.add(JSON.stringify(result.value));
+    return result;
+  };
+  return {
+    ...disk,
+    clearProofs() {
+      proofs.clear();
+    },
+    barriers,
+    async ensurePublicationDurable(artifacts: Artifact[]) {
+      barriers.push(artifacts.map((artifact) => artifact.id));
+      if (artifacts.some((artifact) => !proofs.has(JSON.stringify(artifact))))
+        throw new Error("unknown-instance-publication");
+    },
+  };
+}
 function gate() {
   let resolve: () => void = () => {
     throw new Error("Uninitialized test gate.");
@@ -140,6 +163,159 @@ function event(
 describe.skipIf(process.platform !== "win32" || process.arch !== "x64")(
   "durable local storage (Windows native profile)",
   () => {
+    test("new-key commit reuses trusted committed bytes after boundary proof-cache restart", async () => {
+      const abandoned = new Set<string>();
+      const source = await setup({
+        canDiscardStage: async (id) => abandoned.has(id),
+      });
+      const firstBoundary = await proofBoundary(source.root);
+      source.store.close();
+      const first = await LocalStore.open({
+        ...source.options,
+        fileSystem: firstBoundary.fs,
+        maintenance: firstBoundary.maintenance,
+        ensurePublicationDurable: firstBoundary.ensurePublicationDurable,
+      });
+      stores.push(first);
+      const original = value(
+        await first.commit(
+          await stage(first, ["retained-byte"]),
+          context("first"),
+        ),
+      );
+      first.close();
+      const nextBoundary = await proofBoundary(source.root);
+      const reopened = await LocalStore.open({
+        ...source.options,
+        fileSystem: nextBoundary.fs,
+        maintenance: nextBoundary.maintenance,
+        ensurePublicationDurable: nextBoundary.ensurePublicationDurable,
+      });
+      stores.push(reopened);
+      const duplicate = await stage(reopened, ["retained-byte"]);
+      const receipt = value(
+        await reopened.commit(duplicate, context("new-key")),
+      );
+      expect(receipt.outputs).toEqual(original.outputs);
+      expect(receipt.jobId).toBe("job-new-key");
+      expect(nextBoundary.barriers.flat()).toEqual([]);
+      expect(value(await reopened.getReceipt("new-key", context()))).toEqual(
+        receipt,
+      );
+      const report = value(await reopened.recover(context("recover")));
+      expect(report.stagedRetained).toContain(duplicate[0]?.stagingId);
+      expect(report.missingOrCorrupt).toEqual([]);
+      const mixed = await stage(reopened, ["retained-byte", "fresh-byte"]);
+      const mixedReceipt = value(
+        await reopened.commit(mixed, context("mixed")),
+      );
+      expect(mixedReceipt.outputs).toHaveLength(2);
+      expect(nextBoundary.barriers.at(-1)).toEqual([mixed[1]?.artifact.id]);
+      for (const item of duplicate) abandoned.add(item.stagingId);
+      const cleaned = value(await reopened.recover(context("cleanup")));
+      expect(cleaned.stagedDiscarded).toBe(1);
+      expect(cleaned.stagedRetained).toContain(mixed[0]?.stagingId);
+      expect(cleaned.missingOrCorrupt).toEqual([]);
+      expect(value(await reopened.getReceipt("new-key", context()))).toEqual(
+        receipt,
+      );
+    });
+    test.each([
+      "orphan",
+      "missing-job-edge",
+      "foreign-project",
+      "wrong-scope-key",
+      "wrong-receipt-output",
+      "corrupt-bytes",
+    ] as const)(
+      "does not promote %s to historical publication assurance",
+      async (scenario) => {
+        const source = await setup();
+        const outputs = await stage(source.store, ["evidence-byte"]);
+        const staged = outputs[0];
+        if (!staged) throw new Error("missing fixture");
+        if (scenario === "orphan")
+          value(await source.disk.fs.publish(staged, context()));
+        else value(await source.store.commit(outputs, context("original")));
+        source.store.close();
+        if (scenario === "corrupt-bytes") {
+          await writeFile(
+            join(source.root, ...staged.artifact.path.split("/")),
+            "corrupt",
+          );
+        } else if (scenario !== "orphan") {
+          const db = new Database(source.options.databasePath, {
+            nativeBinding: source.options.nativeBinding,
+          });
+          try {
+            if (scenario === "missing-job-edge")
+              db.prepare(
+                "DELETE FROM artifact_refs WHERE owner_kind='job'",
+              ).run();
+            else if (scenario === "wrong-scope-key")
+              db.prepare("UPDATE receipts SET scope=?").run(
+                '["foreign","actor1","write","original"]',
+              );
+            else
+              db.prepare("UPDATE receipts SET data=json_set(data,?,?)").run(
+                scenario === "foreign-project"
+                  ? "$.projectId"
+                  : "$.outputs[0].sha256",
+                scenario === "foreign-project"
+                  ? "foreign-project"
+                  : "a".repeat(64),
+              );
+          } finally {
+            db.close();
+          }
+        }
+        const restarted = await proofBoundary(source.root);
+        const reopened = await LocalStore.open({
+          ...source.options,
+          fileSystem: restarted.fs,
+          maintenance: restarted.maintenance,
+          ensurePublicationDurable: async (artifacts) => {
+            restarted.clearProofs();
+            await restarted.ensurePublicationDurable(artifacts);
+          },
+        });
+        stores.push(reopened);
+        const duplicate = await stage(reopened, ["evidence-byte"]);
+        expect(
+          (await reopened.commit(duplicate, context("new-key"))).status,
+        ).toBe("failed");
+        expect(
+          value(await reopened.getReceipt("new-key", context())),
+        ).toBeNull();
+        if (scenario !== "corrupt-bytes")
+          expect(restarted.barriers.flat()).toEqual([staged.artifact.id]);
+      },
+    );
+    test("restored-uncommitted objects require current publication proof despite imported receipts", async () => {
+      const source = await setup();
+      value(
+        await source.store.commit(
+          await stage(source.store, ["backup-evidence"]),
+          context("original"),
+        ),
+      );
+      const backup = value(await source.store.backup(context()));
+      const target = await setup({
+        ensurePublicationDurable: async () => {
+          throw new Error("no-current-native-proof");
+        },
+      });
+      expect(
+        (await target.store.restore(backup, context("restore"))).status,
+      ).toBe("failed");
+      expect(
+        value(await target.store.getReceipt("original", context())),
+      ).toBeNull();
+      const staged = await stage(target.store, ["backup-evidence"]);
+      expect(
+        (await target.store.commit(staged, context("adopt-orphan"))).status,
+      ).toBe("failed");
+    });
     test("owns one OS-released writer lease and reopens committed history", async () => {
       const { store, options } = await setup();
       const { rev } = await seed(store);

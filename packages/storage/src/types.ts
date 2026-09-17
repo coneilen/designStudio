@@ -50,7 +50,7 @@ export interface StorageOptions {
   ): Promise<void>;
   ensureDatabaseBackupDurable(path: string): Promise<void>;
   authorize(context: OperationContext, scope: StorageScope): Promise<void>;
-  /** Trusted host provisioning must reject mapped drives/network mounts, unsafe roots and aliases. */
+  /** Attest trusted database provenance, exclusive scope ownership and local media; never adopt untrusted SQL files. */
   attestLocalDatabase(
     path: string,
     scope: {
