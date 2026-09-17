@@ -1707,6 +1707,7 @@ export class LocalStore implements ArtifactStore {
       refs(pin.artifacts);
     }
     if (metadata.storageVersion === 3) {
+      this.jobStore.validateControlGraph(metadata.jobs);
       const jobs = new Map(
         metadata.jobs.map((record) => [record.job.id, record]),
       );

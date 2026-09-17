@@ -428,6 +428,515 @@ test("interrupted workers without resource keys also retain their global slot", 
   ).toMatchObject({ error: { code: "CONFLICT" } });
 });
 
+test("conditional cancellation replays a durable control key after response loss and restart", async () => {
+  const f = await setup();
+  const running = await claim(f, ["resource-a"]);
+  f.fault("after-commit");
+  const accepted = value(
+    await f.store.jobs.cancelWithReceipt(
+      running.job.id,
+      running.rowVersion,
+      f.ctx("cancel-key"),
+    ),
+  );
+  f.fault();
+  expect(accepted.record.job.status).toBe("cancel-requested");
+  expect(accepted.record.rowVersion).toBe(running.rowVersion + 1);
+  expect(accepted.record.job.lease).toEqual(running.job.lease);
+  expect(accepted.record.resources).toEqual(running.resources);
+  expect(accepted.record.job.idempotency).toEqual(running.job.idempotency);
+  expect(accepted.record.requestId).toBe("work");
+  expect(accepted.control).toMatchObject({
+    version: 1,
+    operation: "job-cancel",
+    jobId: running.job.id,
+    actorId: "actor1",
+    projectId: "project1",
+    key: "cancel-key",
+    expectedVersion: running.rowVersion,
+    resultVersion: accepted.record.rowVersion,
+    resultStatus: "cancel-requested",
+  });
+  await f.reopen();
+  expect(
+    value(
+      await f.store.jobs.cancelWithReceipt(
+        running.job.id,
+        running.rowVersion,
+        f.ctx("cancel-key"),
+      ),
+    ),
+  ).toEqual(accepted);
+  const settled = value(
+    await f.store.jobs.update(
+      running.job.id,
+      fence(accepted.record),
+      { kind: "acknowledge-cancel" },
+      f.ctx(),
+    ),
+  );
+  const replay = value(
+    await f.store.jobs.cancelWithReceipt(
+      running.job.id,
+      running.rowVersion,
+      f.ctx("cancel-key"),
+    ),
+  );
+  expect(replay.control).toEqual(accepted.control);
+  expect(replay.record).toEqual(settled);
+});
+
+test("cancel-control key conflicts on changed precondition or target even when target completed", async () => {
+  const f = await setup();
+  const queued = value(
+    await f.store.jobs.create(f.submission("job-queued"), f.ctx("queued")),
+  );
+  const accepted = value(
+    await f.store.jobs.cancelWithReceipt(
+      queued.job.id,
+      queued.rowVersion,
+      f.ctx("cancel"),
+    ),
+  );
+  expect(
+    await f.store.jobs.cancelWithReceipt(
+      queued.job.id,
+      accepted.record.rowVersion,
+      f.ctx("cancel"),
+    ),
+  ).toMatchObject({ error: { code: "CONFLICT" } });
+  const { record, output } = await completion(f, await claim(f));
+  const completed = value(
+    await f.store.jobs.commitJob(record.job.id, fence(record), output, f.ctx()),
+  );
+  expect(
+    await f.store.jobs.cancelWithReceipt(
+      record.job.id,
+      queued.rowVersion,
+      f.ctx("cancel"),
+    ),
+  ).toMatchObject({ error: { code: "CONFLICT" } });
+  const won = value(
+    await f.store.jobs.cancelWithReceipt(record.job.id, 1, f.ctx("new-cancel")),
+  );
+  expect(won.record.job.receipt).toEqual(completed.receipt);
+  expect(won.control.resultStatus).toBe("completed");
+  expect(
+    await f.store.jobs.cancelWithReceipt(record.job.id, 2, f.ctx("new-cancel")),
+  ).toMatchObject({ error: { code: "CONFLICT" } });
+  expect(won.record.job.idempotency).toEqual(record.job.idempotency);
+});
+
+test.each([
+  "job-cancel-after-state",
+  "job-cancel-after-control",
+  "before-commit",
+])(
+  "cancel fault %s rolls back control receipt, cancellation and version atomically",
+  async (point) => {
+    const f = await setup();
+    const running = await claim(f, ["resource-a"]);
+    const baseline = value(await f.store.backup(f.ctx("backup")));
+    f.fault(point);
+    expect(
+      await f.store.jobs.cancelWithReceipt(
+        running.job.id,
+        running.rowVersion,
+        f.ctx("cancel"),
+      ),
+    ).toMatchObject({ status: "failed" });
+    f.fault();
+    expect(value(await f.store.backup(f.ctx("backup")))).toEqual(baseline);
+    expect(
+      value(
+        await f.store.jobs.cancelWithReceipt(
+          running.job.id,
+          running.rowVersion,
+          f.ctx("cancel"),
+        ),
+      ).record.rowVersion,
+    ).toBe(running.rowVersion + 1);
+  },
+);
+
+test("control authorization precedes replay and actor/project scopes cannot leak or overwrite", async () => {
+  const f = await setup();
+  const queued = value(await f.store.jobs.create(f.submission(), f.ctx()));
+  const accepted = value(
+    await f.store.jobs.cancelWithReceipt(
+      queued.job.id,
+      queued.rowVersion,
+      f.ctx("cancel"),
+    ),
+  );
+  f.options.authorize = async (ctx) => {
+    if (ctx.authorization.actorId !== "actor1")
+      throw Object.assign(new Error("Denied synthetic actor"), {
+        code: "FORBIDDEN",
+      });
+  };
+  const denied = f.ctx("cancel");
+  denied.authorization.actorId = "actor2";
+  expect(
+    await f.store.jobs.cancelWithReceipt(
+      queued.job.id,
+      queued.rowVersion,
+      denied,
+    ),
+  ).toMatchObject({ error: { code: "FORBIDDEN" } });
+  expect(
+    await f.store.jobs.cancelWithReceipt(queued.job.id, queued.rowVersion, {
+      ...f.ctx("cancel"),
+      projectId: "project2",
+    }),
+  ).toMatchObject({ status: "failed" });
+  f.options.authorize = async () => {};
+  const other = value(
+    await f.store.jobs.cancelWithReceipt(
+      queued.job.id,
+      accepted.record.rowVersion,
+      denied,
+    ),
+  );
+  expect(other.control.actorId).toBe("actor2");
+  expect(other.control.key).toBe(accepted.control.key);
+  const first = value(
+    await f.store.jobs.cancelWithReceipt(
+      queued.job.id,
+      queued.rowVersion,
+      f.ctx("cancel"),
+    ),
+  );
+  expect(first.control).toEqual(accepted.control);
+  expect(first.record.rowVersion).toBe(other.record.rowVersion);
+});
+
+test("cancel controls survive authenticated backup/restore without reapplying old preconditions", async () => {
+  const f = await setup();
+  const queued = value(await f.store.jobs.create(f.submission(), f.ctx()));
+  const accepted = value(
+    await f.store.jobs.cancelWithReceipt(
+      queued.job.id,
+      queued.rowVersion,
+      f.ctx("cancel"),
+    ),
+  );
+  const backup = decodeBackup(
+    encodeBackup(value(await f.store.backup(f.ctx("backup"))), 26214400),
+    26214400,
+  );
+  const destination = await mkdtemp(join(tmpdir(), "cancel-control restore "));
+  roots.push(destination);
+  const disk = await diskFixture(destination);
+  const store = await LocalStore.open({
+    ...f.options,
+    databasePath: join(destination, "state.sqlite"),
+    fileSystem: disk.fs,
+    maintenance: disk.maintenance,
+  });
+  stores.push(store);
+  value(await store.restore(backup, f.ctx("restore")));
+  const before = value(await store.jobs.get(queued.job.id, f.ctx()));
+  const replay = value(
+    await store.jobs.cancelWithReceipt(
+      queued.job.id,
+      queued.rowVersion,
+      f.ctx("cancel"),
+    ),
+  );
+  expect(replay.control).toEqual(accepted.control);
+  expect(replay.record).toEqual(before);
+  expect(replay.record.rowVersion).toBeGreaterThan(accepted.record.rowVersion);
+});
+
+test("cancel admission is bounded and snapshots control identity before queueing", async () => {
+  const f = await setup();
+  let record = value(await f.store.jobs.create(f.submission(), f.ctx()));
+  const ctx = f.ctx("cancel0");
+  const pending = f.store.jobs.cancelWithReceipt(
+    record.job.id,
+    record.rowVersion,
+    ctx,
+  );
+  ctx.requestId = "mutated";
+  const first = value(await pending);
+  expect(first.control.key).toBe("cancel0");
+  record = first.record;
+  for (let i = 1; i < 128; i++)
+    record = value(
+      await f.store.jobs.cancelWithReceipt(
+        record.job.id,
+        record.rowVersion,
+        f.ctx(`cancel${i}`),
+      ),
+    ).record;
+  expect(
+    await f.store.jobs.cancelWithReceipt(
+      record.job.id,
+      record.rowVersion,
+      f.ctx("overflow"),
+    ),
+  ).toMatchObject({ error: { code: "INPUT_LIMIT" } });
+  expect(
+    value(
+      await f.store.jobs.cancelWithReceipt(
+        record.job.id,
+        first.control.expectedVersion,
+        f.ctx("cancel0"),
+      ),
+    ).record,
+  ).toEqual(record);
+  expect(record.job.budget).toEqual(first.record.job.budget);
+  expect(record.usage).toEqual(first.record.usage);
+});
+
+test.each([
+  "digest",
+  "target",
+  "version",
+  "status",
+  "duplicate-scope",
+] as const)(
+  "restore rejects cancellation-control %s graph tampering",
+  async (kind) => {
+    const f = await setup();
+    const first = value(await f.store.jobs.create(f.submission(), f.ctx()));
+    value(
+      await f.store.jobs.cancelWithReceipt(
+        first.job.id,
+        first.rowVersion,
+        f.ctx("cancel"),
+      ),
+    );
+    const second = value(
+      await f.store.jobs.create(f.submission("job-other"), f.ctx("other")),
+    );
+    value(
+      await f.store.jobs.requestCancel(
+        second.job.id,
+        second.rowVersion,
+        f.ctx("cancel-other"),
+      ),
+    );
+    const backup = value(await f.store.backup(f.ctx("backup")));
+    if (backup.metadata.storageVersion !== 3) throw new Error("Expected v3.");
+    const record = required(
+      backup.metadata.jobs.find((r) => r.job.id === first.job.id),
+    );
+    const control = required(record.cancelControls?.[0]);
+    if (kind === "digest") control.payloadSha256 = "a".repeat(64);
+    else if (kind === "target") control.jobId = second.job.id;
+    else if (kind === "version") control.resultVersion = record.rowVersion + 1;
+    else if (kind === "status") control.resultStatus = "completed";
+    else {
+      const other = required(
+        backup.metadata.jobs.find((r) => r.job.id === second.job.id),
+      );
+      other.cancelControls = [
+        {
+          ...control,
+          jobId: second.job.id,
+          payloadSha256: hash(
+            f.options.canonicalBytes({
+              jobId: second.job.id,
+              expectedVersion: control.expectedVersion,
+            }),
+          ),
+        },
+      ];
+    }
+    backup.sha256 = hash(f.options.canonicalBytes(backup.metadata));
+    const destination = await mkdtemp(
+      join(tmpdir(), "invalid cancel control "),
+    );
+    roots.push(destination);
+    const disk = await diskFixture(destination);
+    const store = await LocalStore.open({
+      ...f.options,
+      databasePath: join(destination, "state.sqlite"),
+      fileSystem: disk.fs,
+      maintenance: disk.maintenance,
+    });
+    stores.push(store);
+    expect(await store.restore(backup, f.ctx("restore"))).toMatchObject({
+      error: { code: "ARTIFACT_INTEGRITY" },
+    });
+    expect(
+      value(await store.backup(f.ctx("backup"))).metadata.artifacts,
+    ).toEqual([]);
+  },
+);
+
+test("aggregate cancellation metadata is bounded before idempotency lookup materializes rows", async () => {
+  const f = await setup();
+  const queued = value(await f.store.jobs.create(f.submission(), f.ctx()));
+  value(
+    await f.store.jobs.cancelWithReceipt(
+      queued.job.id,
+      queued.rowVersion,
+      f.ctx("cancel"),
+    ),
+  );
+  f.store.close();
+  const db = new Database(f.options.databasePath, { nativeBinding });
+  try {
+    // Deliberately oversized trusted-fixture row: request must reject aggregate size before JSON lookup.
+    db.prepare("INSERT INTO jobs VALUES (?,?,?,?,?,?)").run(
+      "capacity",
+      "capacity",
+      "cancelled",
+      queued.createdAt,
+      null,
+      JSON.stringify({ evidence: "x".repeat(26214400) }),
+    );
+  } finally {
+    db.close();
+  }
+  await f.reopen();
+  expect(
+    await f.store.jobs.cancelWithReceipt(
+      queued.job.id,
+      queued.rowVersion,
+      f.ctx("cancel"),
+    ),
+  ).toMatchObject({ error: { code: "INPUT_LIMIT" } });
+});
+
+test("global cancellation-control admission cap rejects additional evidence without truncation", async () => {
+  const f = await setup();
+  const queued = value(await f.store.jobs.create(f.submission(), f.ctx()));
+  f.store.close();
+  const db = new Database(f.options.databasePath, { nativeBinding });
+  try {
+    // Synthetic capacity sentinels target aggregate COUNT, never parsed as authoritative control evidence.
+    const insert = db.prepare("INSERT INTO jobs VALUES (?,?,?,?,?,?)");
+    db.transaction(() => {
+      for (let i = 0; i < 157; i++)
+        insert.run(
+          `capacity${i}`,
+          `capacity${i}`,
+          "cancelled",
+          queued.createdAt,
+          null,
+          JSON.stringify({
+            cancelControls: Array.from(
+              { length: i === 156 ? 32 : 128 },
+              () => ({ key: "capacity" }),
+            ),
+          }),
+        );
+    })();
+  } finally {
+    db.close();
+  }
+  await f.reopen();
+  expect(
+    await f.store.jobs.cancelWithReceipt(
+      queued.job.id,
+      queued.rowVersion,
+      f.ctx("cancel"),
+    ),
+  ).toMatchObject({ error: { code: "INPUT_LIMIT" } });
+  expect(value(await f.store.jobs.get(queued.job.id, f.ctx())).rowVersion).toBe(
+    queued.rowVersion,
+  );
+});
+
+test("cancellation control wins before guarded completion and never releases unconfirmed worker resources", async () => {
+  const f = await setup();
+  const { record, output } = await completion(
+    f,
+    await claim(f, ["resource-a"]),
+  );
+  const cancel = value(
+    await f.store.jobs.cancelWithReceipt(
+      record.job.id,
+      record.rowVersion,
+      f.ctx("cancel"),
+    ),
+  );
+  expect(
+    await f.store.jobs.commitJob(record.job.id, fence(record), output, f.ctx()),
+  ).toMatchObject({ error: { code: "CONFLICT" } });
+  expect(
+    await f.store.jobs.commitJob(
+      record.job.id,
+      fence(cancel.record),
+      output,
+      f.ctx(),
+    ),
+  ).toMatchObject({ error: { code: "CONFLICT" } });
+  expect(cancel.record.job.lease).toEqual(record.job.lease);
+  expect(cancel.record.resources).toEqual(record.resources);
+  expect(cancel.record.job.budget).toEqual(record.job.budget);
+});
+
+test("cancellation-control keys do not collide with original job submission or legacy write keys", async () => {
+  const f = await setup();
+  const queued = value(await f.store.jobs.create(f.submission(), f.ctx()));
+  const original = value(await f.store.getReceipt("seed", f.ctx("seed")));
+  const sameSubmissionKey = value(
+    await f.store.jobs.cancelWithReceipt(
+      queued.job.id,
+      queued.rowVersion,
+      f.ctx(),
+    ),
+  );
+  const sameLegacyKey = value(
+    await f.store.jobs.cancelWithReceipt(
+      queued.job.id,
+      sameSubmissionKey.record.rowVersion,
+      f.ctx("seed"),
+    ),
+  );
+  expect(sameSubmissionKey.control.key).toBe(queued.requestId);
+  expect(sameLegacyKey.control.key).toBe("seed");
+  expect(sameLegacyKey.record.submission).toEqual(queued.submission);
+  expect(sameLegacyKey.record.job.idempotency).toEqual(queued.job.idempotency);
+  expect(value(await f.store.getReceipt("seed", f.ctx("seed")))).toEqual(
+    original,
+  );
+  expect(value(await f.store.jobs.create(f.submission(), f.ctx()))).toEqual(
+    sameLegacyKey.record,
+  );
+});
+
+test("competing cancellation controls serialize exact retries without duplicate accepted versions", async () => {
+  const f = await setup();
+  const running = await claim(f);
+  const retries = await Promise.all(
+    [0, 1].map(() =>
+      f.store.jobs.cancelWithReceipt(
+        running.job.id,
+        running.rowVersion,
+        f.ctx("same-key"),
+      ),
+    ),
+  );
+  const first = value(required(retries[0]));
+  expect(value(required(retries[1]))).toEqual(first);
+  expect(first.record.cancelControls).toHaveLength(1);
+  const differentKeys = await Promise.all(
+    ["second-key", "third-key"].map((key) =>
+      f.store.jobs.cancelWithReceipt(
+        running.job.id,
+        first.record.rowVersion,
+        f.ctx(key),
+      ),
+    ),
+  );
+  expect(
+    differentKeys.filter((result) => result.status === "complete"),
+  ).toHaveLength(1);
+  expect(
+    differentKeys.filter((result) => result.status === "failed"),
+  ).toHaveLength(1);
+  const latest = value(await f.store.jobs.get(running.job.id, f.ctx()));
+  expect(latest.rowVersion).toBe(first.record.rowVersion + 1);
+  expect(latest.cancelControls).toHaveLength(2);
+  expect(latest.job.lease).toEqual(running.job.lease);
+});
+
 test("creates authoritative jobs, owns snapshots, deduplicates by logical operation and protects inputs", async () => {
   const f = await setup();
   const input = f.submission();

@@ -294,6 +294,18 @@ test.runIf(process.platform === "win32" && process.arch === "x64")(
     const second = await run("two");
     expect(second.receipt.outputs).toEqual(first.receipt.outputs);
     expect(second.receipt.idempotency.operation).toBe("render");
+    const cancelContext = {
+      ...owner.context("one"),
+      requestId: "cancel-completed",
+    };
+    const control = value(
+      await connection.store.jobs.cancelWithReceipt(
+        "job-one",
+        1,
+        cancelContext,
+      ),
+    );
+    expect(control.record.job.receipt).toEqual(first.receipt);
     const backup = value(
       await connection.store.backup(owner.context("backup")),
     );
@@ -303,6 +315,15 @@ test.runIf(process.platform === "win32" && process.arch === "x64")(
       new Set([backup.sha256]),
     );
     value(await destination.store.restore(backup, owner.context("restore")));
+    const replay = value(
+      await destination.store.jobs.cancelWithReceipt(
+        "job-one",
+        1,
+        cancelContext,
+      ),
+    );
+    expect(replay.control).toEqual(control.control);
+    expect(replay.record.job.receipt).toEqual(first.receipt);
     expect(
       value(
         await destination.store.jobs.getJobReceipt(
@@ -322,6 +343,78 @@ test.runIf(process.platform === "win32" && process.arch === "x64")(
     expect(
       value(await destination.store.getReceipt("seed", owner.context("seed"))),
     ).not.toBeNull();
+  },
+  30000,
+);
+
+test.runIf(process.platform === "win32" && process.arch === "x64")(
+  "native authority composes conditional cancellation and durable old-precondition replay",
+  async () => {
+    const owner = issuer();
+    const path = await root();
+    let connection = await open(path, owner);
+    const seed = value(
+      await connection.store.stage(inputBytes, owner.context("seed")),
+    );
+    value(await connection.store.commit([seed], owner.context("seed")));
+    const input = { id: seed.artifact.id, sha256: seed.artifact.sha256 };
+    const context = owner.context("one");
+    const queued = value(
+      await connection.store.jobs.create(
+        {
+          id: "job-one",
+          operation: "render",
+          input,
+          resources: {
+            snapshotId: input.id,
+            sha256: input.sha256,
+            componentRegistryRevision: "v1",
+            tokenRegistryRevision: "v1",
+            selectedModes: {},
+          },
+          handlerId: "synthetic",
+          handlerVersion: "v1",
+          authorityRef: "fixture-approval",
+          resourceKeys: [],
+          deadline: context.deadline,
+          budget: { ...DEFAULT_BUDGETS },
+        },
+        context,
+      ),
+    );
+    const cancelContext = { ...owner.context("one"), requestId: "cancel-key" };
+    const accepted = value(
+      await connection.store.jobs.cancelWithReceipt(
+        queued.job.id,
+        queued.rowVersion,
+        cancelContext,
+      ),
+    );
+    expect(accepted.record.job.status).toBe("cancelled");
+    connection.store.close();
+    await connection.files.close();
+    connection = await open(path, owner);
+    expect(
+      value(
+        await connection.store.jobs.cancelWithReceipt(
+          queued.job.id,
+          queued.rowVersion,
+          cancelContext,
+        ),
+      ),
+    ).toEqual(accepted);
+    expect(
+      await connection.store.jobs.cancelWithReceipt(
+        queued.job.id,
+        accepted.record.rowVersion,
+        cancelContext,
+      ),
+    ).toMatchObject({ error: { code: "CONFLICT" } });
+    expect(
+      value(
+        await connection.store.jobs.get(queued.job.id, owner.context("one")),
+      ).requestId,
+    ).toBe("one");
   },
   30000,
 );

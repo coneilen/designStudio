@@ -12,6 +12,7 @@ import {
 import type Database from "better-sqlite3";
 import {
   bounded,
+  cancelControlScope,
   fields,
   increment,
   integer,
@@ -25,6 +26,8 @@ import {
   zeroUsage,
 } from "./job-codec.js";
 import type {
+  JobCancelReceipt,
+  JobCancelResult,
   JobCommand,
   JobCommitResult,
   JobCompletion,
@@ -185,6 +188,18 @@ export class StoredJobs implements JobRepository {
     return record;
   }
   validateBinding(record: StoredJob) {
+    for (const control of record.cancelControls ?? [])
+      if (
+        control.payloadSha256 !==
+        this.host.digest({
+          jobId: control.jobId,
+          expectedVersion: control.expectedVersion,
+        })
+      )
+        throw new StorageError(
+          "INTEGRITY",
+          "Cancellation-control payload digest changed.",
+        );
     const submission = record.submission;
     const expectedDeadline = Math.min(
       Date.parse(submission.deadline),
@@ -1146,33 +1161,206 @@ export class StoredJobs implements JobRepository {
       if (await this.verifyReceipt(initial, context)) return initial;
       return this.transaction(context, () => {
         const record = this.load(id);
-        if (record.rowVersion !== integer(expectedVersion, 1))
-          throw new StorageError("CONFLICT", "Cancellation version changed.");
-        if (
-          terminal.has(record.job.status) ||
-          record.job.status === "cancel-requested"
-        )
-          return record;
-        if (
-          record.job.status === "interrupted" ||
-          (record.job.status !== "running" && this.unresolved(record))
-        )
-          throw new StorageError(
-            "CONFLICT",
-            "Cancellation needs trusted effect reconciliation.",
-          );
-        if (record.job.status === "running")
-          record.job.status = "cancel-requested";
-        else {
-          record.job.status = "cancelled";
-          this.release(record, false);
-          delete record.job.nextEligibleAttempt;
-        }
+        if (!this.cancelState(record, expectedVersion)) return record;
         this.bump(record);
         this.save(record);
         return record;
       });
     });
+  }
+  private cancelState(record: StoredJob, expectedVersion: number): boolean {
+    if (record.rowVersion !== integer(expectedVersion, 1))
+      throw new StorageError("CONFLICT", "Cancellation version changed.");
+    if (
+      terminal.has(record.job.status) ||
+      record.job.status === "cancel-requested"
+    )
+      return false;
+    if (
+      record.job.status === "interrupted" ||
+      (record.job.status !== "running" && this.unresolved(record))
+    )
+      throw new StorageError(
+        "CONFLICT",
+        "Cancellation needs trusted effect reconciliation.",
+      );
+    if (record.job.status === "running") record.job.status = "cancel-requested";
+    else {
+      record.job.status = "cancelled";
+      this.release(record, false);
+      delete record.job.nextEligibleAttempt;
+    }
+    return true;
+  }
+  private controlStats(): { count: number; bytes: number } {
+    const size = this.host.db
+      .prepare<[], { rows: number; bytes: number }>(`
+      SELECT count(*) AS rows,coalesce(sum(length(cast(data AS BLOB))),0) AS bytes FROM jobs
+    `)
+      .get();
+    if (
+      !size ||
+      size.rows > JOB_LIMITS.jobs ||
+      size.bytes > JOB_LIMITS.metadataBytes
+    )
+      throw new StorageError(
+        "LIMIT",
+        "Cancellation lookup exceeds bounded metadata profile.",
+      );
+    const controls = this.host.db
+      .prepare<[], { count: number }>(`
+      SELECT coalesce(sum(json_array_length(data,'$.cancelControls')),0) AS count FROM jobs
+    `)
+      .get();
+    if (!controls || controls.count > JOB_LIMITS.totalCancelControls)
+      throw new StorageError(
+        "LIMIT",
+        "Cancellation lookup exceeds bounded control profile.",
+      );
+    return { count: controls.count, bytes: size.bytes };
+  }
+  cancelWithReceipt(
+    id: string,
+    expectedVersion: number,
+    context: OperationContext,
+  ): Promise<Outcome<JobCancelResult>> {
+    return this.host.snapshot(
+      { id, expectedVersion },
+      context,
+      "write",
+      (input) =>
+        this.host.run(context, "write", async (context) => {
+          await this.authorize(input.id, context, "write");
+          integer(input.expectedVersion, 1);
+          this.controlStats();
+          const identity = {
+            projectId: context.projectId,
+            actorId: context.authorization.actorId,
+            key: context.requestId,
+          };
+          const payloadSha256 = this.host.digest({
+            jobId: input.id,
+            expectedVersion: input.expectedVersion,
+          });
+          const priorRows = this.host.db
+            .prepare<[string, string, string], { id: string }>(`
+          SELECT jobs.id FROM jobs, json_each(jobs.data,'$.cancelControls') AS control
+          WHERE json_extract(control.value,'$.projectId')=?
+            AND json_extract(control.value,'$.actorId')=?
+            AND json_extract(control.value,'$.key')=?
+            AND json_extract(control.value,'$.operation')='job-cancel'
+          LIMIT 2
+        `)
+            .all(identity.projectId, identity.actorId, identity.key);
+          if (priorRows.length > 1)
+            throw new StorageError(
+              "INTEGRITY",
+              "Duplicate cancellation-control scope.",
+            );
+          const priorRow = priorRows[0];
+          if (priorRow) {
+            // The incoming target is authorized; changed-target conflicts reveal no old job metadata.
+            if (priorRow.id !== input.id)
+              throw new StorageError(
+                "CONFLICT",
+                "Cancellation-control key targets a different job.",
+              );
+            const record = this.load(input.id);
+            await this.authorizeInput(record, context);
+            const control = record.cancelControls?.find(
+              (item) =>
+                cancelControlScope(item) === cancelControlScope(identity),
+            );
+            if (!control)
+              throw new StorageError(
+                "INTEGRITY",
+                "Missing cancellation-control receipt.",
+              );
+            if (
+              control.payloadSha256 !== payloadSha256 ||
+              control.expectedVersion !== input.expectedVersion
+            )
+              throw new StorageError(
+                "CONFLICT",
+                "Cancellation-control key has a different precondition.",
+              );
+            await this.verifyReceipt(record, context);
+            return { record, control };
+          }
+          const initial = this.load(input.id);
+          await this.authorizeInput(initial, context);
+          const committed = await this.verifyReceipt(initial, context);
+          const result = this.transaction(context, () => {
+            const record = this.load(input.id);
+            const oldBytes = Buffer.byteLength(JSON.stringify(record), "utf8");
+            const stats = this.controlStats();
+            if (
+              stats.count >= JOB_LIMITS.totalCancelControls ||
+              (record.cancelControls?.length ?? 0) >= JOB_LIMITS.cancelControls
+            )
+              throw new StorageError(
+                "LIMIT",
+                "Cancellation-control capacity reached.",
+              );
+            if (!committed) this.cancelState(record, input.expectedVersion);
+            this.bump(record);
+            this.save(record);
+            this.host.options.fault?.("job-cancel-after-state");
+            const control: JobCancelReceipt = {
+              version: 1,
+              operation: "job-cancel",
+              ...identity,
+              jobId: input.id,
+              expectedVersion: input.expectedVersion,
+              payloadSha256,
+              resultVersion: record.rowVersion,
+              resultStatus: record.job.status,
+              recordedAt: this.timestamp(),
+            };
+            record.cancelControls = [...(record.cancelControls ?? []), control];
+            if (
+              stats.bytes -
+                oldBytes +
+                Buffer.byteLength(JSON.stringify(record), "utf8") >
+              JOB_LIMITS.metadataBytes
+            )
+              throw new StorageError(
+                "LIMIT",
+                "Cancellation-control metadata capacity reached.",
+              );
+            this.save(record);
+            this.host.options.fault?.("job-cancel-after-control");
+            return { record, control };
+          });
+          try {
+            this.host.options.fault?.("after-commit");
+          } catch {
+            return result;
+          }
+          return result;
+        }),
+    );
+  }
+  validateControlGraph(records: StoredJob[]): void {
+    const scopes = new Set<string>();
+    for (const record of records) {
+      storedJob(record);
+      this.validateBinding(record);
+      for (const control of record.cancelControls ?? []) {
+        const scope = cancelControlScope(control);
+        if (scopes.has(scope))
+          throw new StorageError(
+            "INTEGRITY",
+            "Duplicate cancellation-control scope.",
+          );
+        scopes.add(scope);
+      }
+    }
+    if (scopes.size > JOB_LIMITS.totalCancelControls)
+      throw new StorageError(
+        "LIMIT",
+        "Backup cancellation controls exceed bounded profile.",
+      );
   }
   stages(id: string): StoredJobStage[] {
     const rows = this.host.db
@@ -1679,6 +1867,7 @@ export class StoredJobs implements JobRepository {
     );
   }
   backup() {
+    this.controlStats();
     const read = <T>(
       table: "jobs" | "job_resources" | "job_stages",
       parse: (value: unknown) => T,

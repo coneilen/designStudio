@@ -161,6 +161,7 @@ exported. Shared Job/Lease/Receipt/schema version 1.0 remains unchanged.
 | `heartbeat(id, expected, extensionMs, context)` | Original live lease required, including at transaction exit. Extension cannot resurrect a lease and is capped by original job/current context/current grant deadline. |
 | `update(id, expected, command, context)` | Discriminated progress, reserve/settle usage, wait/retry/fail/interrupt, or acknowledge-cancel. No arbitrary patch. Wait/retry/fail/cancel acknowledgment means the trusted handler has actually stopped; unresolved effects prohibit release. Interrupt quarantines resources. |
 | `requestCancel(id, expectedVersion, context)` | Current authorized caller need not own worker lease. Receipt wins first; running becomes cancel-requested, including when effects remain unresolved. Safe nonrunning work cancels; uncertain work requires reconciliation. |
+| `cancelWithReceipt(id, expectedVersion, context)` | Durable conditional control for F07/F08. Uses the caller's `context.requestId` as the control idempotency key, distinct from original submission identity. Returns `{record,control}`; exact retries replay the immutable control plus current authorized record without mutation, even with the old precondition. Changed target/precondition under that key conflicts before checking completion. |
 | `stage(id, expected, bytes, context)` | Copies bytes before enqueue. Atomically reserves cumulative input/output bytes and a version before host I/O. Journals returned exact stage identity before returning a fresh record. Expiry/auth/cancel after I/O retains journal evidence; crash/fault before journal leaves an unknown host stage that cannot be adopted/discarded. Failure requires rereading the current record, not retrying an obsolete version. |
 | `commitJob(id, expected, completion, context)` | Reuses real publication, actual-byte verification, mandatory durability and optional F02 revision/head CAS. Synchronously rechecks original fence/state/version/deadlines/all resource generations inside the one transaction storing artifacts, receipt, protected refs, completed Job and optional revision/head, then releases keys. Returns `{record,receipt}`. |
 | `reconcile(id, expectedVersion, evidence, context)` | Trusted recovery callback precedes receipt decisions. Interrupt invalidates generation and quarantines uncertain ownership. Resolved evidence must acknowledge exact stopped lease/effects before queued/cancelled/failed/waiting state; never resets identity, attempts, usage or deadlines. `abandon-stages` permits explicitly authorized cleanup disposition after completion without changing receipt. |
@@ -176,6 +177,36 @@ request IDs with current authority. Root/job grants are mandatory; inputs requir
 artifact-read (and optional revision-read), final outputs require artifact-write,
 and receipt replay requires artifact-read. F07/F08 issue fresh contexts; storage
 never clones proof, extends expired authority, persists tokens, or acts as issuer.
+
+`JobCancelReceipt` is private version 1 evidence, not a shared output
+`CommitReceipt`. Its scope is current actor + project + `job-cancel` + control
+key; its canonical payload binds `jobId` and `expectedVersion`. It records that
+precondition, its digest, the actual atomically persisted `resultVersion`,
+`resultStatus`, and trusted `recordedAt`. A new successful control increments the
+private rowVersion once, including a terminal/no-state-change decision. State,
+version and evidence persist in the same SQLite transaction. Original Job,
+submission request/idempotency, budgets and worker/resource reservations are not
+rewritten by control bookkeeping. Running cancellation still retains its lease
+and resources until confirmed stop.
+
+Same-key/same-payload retries require current root/job/input authorization and
+current output authorization/integrity when completed. They return the same
+control with the *current* record, not a stale snapshot pretending to be current.
+The control's historical resultVersion may therefore differ from record.rowVersion.
+Same-key changed preconditions or targets conflict, including completed targets.
+A new key still returns committed completion if final publication won the race;
+it does not rewrite the completed shared Job or output receipt. A rejected
+precondition/policy request is not an accepted control and stores no control
+evidence. Existing `requestCancel` retains its original non-idempotent semantics.
+Control keys may equal submission or legacy write keys without namespace collision.
+
+Controls are retained without pruning: `JOB_STORAGE_LIMITS.cancelControls` is
+128 per job and `totalCancelControls` is 20,000 across the store. Lookup/export
+checks 20,000 job rows, 25 MiB aggregate job metadata and aggregate control count
+before JSON receipt traversal/materialization. New admission checks the resulting
+metadata byte size inside the transaction. Exact replay at a count cap remains
+read-only; over-profile databases fail explicitly. No external dependency,
+in-memory dedupe, second DB, outbox or alternate writer is involved.
 
 Fixed foundation bounds exported by `JOB_STORAGE_LIMITS`: 20,000 retained jobs
 (terminal history included), 20,000 resource counters and total journal rows;
@@ -380,6 +411,19 @@ v3 rows without the marker conservatively count any retained lease, including
 older restored histories, until trusted reconciliation. No shared Job schema,
 SQLite layout/version, or legacy receipt contract changed for this distinction.
 
+Cancellation evidence uses optional `StoredJob.cancelControls` in the existing
+v3 `jobs.data` envelope. No SQLite DDL changed, so this is an additive private
+codec extension rather than a database migration: existing rows omit the field
+and mean no accepted controls, with no rewriting or inference. New readers accept
+old v3 backups; older strict readers fail closed on populated controls rather
+than silently dropping them. Each nested receipt has explicit version 1 and
+bounded strict fields. Backup/restore validates original payload digests,
+target/project binding, ordered/result versions, terminal history consistency,
+per-job/global bounds and actor/project/operation/key uniqueness across jobs.
+Restore preserves control receipts while incrementing private job versions;
+old-precondition retries remain valid and do not reapply cancellation.
+Authenticated provenance and current destination publication remain mandatory.
+
 ## Test evidence and remaining gates
 
 RED was observed for the absent native binding, missing store implementation,
@@ -420,6 +464,17 @@ historical lease evidence from destination worker slots, preserve source occupan
 and resource quarantine, validate/roundtrip the private marker, and verify a new
 post-recovery execution counts normally. Scoped verification: 117 storage unit
 tests and four storage/native smoke tests, with build, typecheck and package lint.
+
+Cancellation-control RED observations covered the absent durable port,
+unbounded pre-replay metadata lookup, and contradictory terminal control history.
+Regressions exercise response-loss/old-precondition replay, conflicting payloads
+including completed targets, concurrent controls, actor/project authorization,
+atomic state/version/control rollback, cancellation-versus-completion ordering,
+per-job/global/metadata limits, immutable original keys and authenticated restore
+graph validation. The actual native-host smoke also cancels a queued job, reopens
+and replays its original precondition, and preserves a completed-job control
+through current-barrier restore. Current scoped verification is 135 storage unit
+tests and five storage/native smoke tests, plus build/typecheck/package lint.
 
 `jobs-host.smoke.test.ts` composes fresh v3 SQLite with the actual trusted local
 session authenticator, branded context snapshots, F02 canonical bytes and native

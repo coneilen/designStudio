@@ -99,7 +99,9 @@ export interface StorageOptions {
       | "job-after-stage"
       | "job-after-artifacts"
       | "job-after-receipt"
-      | "job-after-state",
+      | "job-after-state"
+      | "job-cancel-after-state"
+      | "job-cancel-after-control",
   ): void;
 }
 

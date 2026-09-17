@@ -72,6 +72,7 @@ export interface StoredJob {
   resources: JobReservation[];
   /** Imported lease evidence, not an execution admitted by this destination store. */
   restoredLease?: true;
+  cancelControls?: JobCancelReceipt[];
   createdAt: string;
   updatedAt: string;
   progressSequence: number;
@@ -168,6 +169,25 @@ export interface JobCommitResult {
   receipt: CommitReceipt;
 }
 
+export interface JobCancelReceipt {
+  version: 1;
+  operation: "job-cancel";
+  projectId: string;
+  actorId: string;
+  key: string;
+  jobId: string;
+  expectedVersion: number;
+  payloadSha256: string;
+  resultVersion: number;
+  resultStatus: Job["status"];
+  recordedAt: string;
+}
+
+export interface JobCancelResult {
+  record: StoredJob;
+  control: JobCancelReceipt;
+}
+
 export interface JobRepository {
   create(
     input: JobSubmission,
@@ -203,6 +223,11 @@ export interface JobRepository {
     expectedVersion: number,
     context: OperationContext,
   ): Promise<Outcome<StoredJob>>;
+  cancelWithReceipt(
+    id: string,
+    expectedVersion: number,
+    context: OperationContext,
+  ): Promise<Outcome<JobCancelResult>>;
   stage(
     id: string,
     expected: JobWorkerExpected,

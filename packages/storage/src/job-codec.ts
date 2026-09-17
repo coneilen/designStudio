@@ -4,6 +4,7 @@ import {
   validateContract,
 } from "@design-studio/contracts";
 import type {
+  JobCancelReceipt,
   JobUsage,
   StoredJob,
   StoredJobResource,
@@ -17,6 +18,8 @@ export const JOB_LIMITS = Object.freeze({
   keys: 32,
   stages: 128,
   effects: 128,
+  cancelControls: 128,
+  totalCancelControls: 20000,
   scan: 100,
   progress: 10000,
   progressIntervalMs: 50,
@@ -107,6 +110,52 @@ export function resourceKeys(value: unknown): string[] {
     throw new StorageError("INVALID_INPUT", "Duplicate job resource key.");
   return result.sort();
 }
+export function cancelControlScope(
+  control: Pick<JobCancelReceipt, "projectId" | "actorId" | "key">,
+): string {
+  return JSON.stringify([
+    control.projectId,
+    control.actorId,
+    "job-cancel",
+    control.key,
+  ]);
+}
+
+export function cancelControl(input: unknown): JobCancelReceipt {
+  jobCheck("JsonValue", input);
+  const data = fields(input, [
+    "version",
+    "operation",
+    "projectId",
+    "actorId",
+    "key",
+    "jobId",
+    "expectedVersion",
+    "payloadSha256",
+    "resultVersion",
+    "resultStatus",
+    "recordedAt",
+  ]);
+  if (data.version !== 1 || data.operation !== "job-cancel")
+    throw new StorageError(
+      "INTEGRITY",
+      "Unsupported cancellation-control receipt.",
+    );
+  for (const key of ["projectId", "actorId", "key", "jobId"])
+    jobCheck("StableId", data[key]);
+  integer(data.expectedVersion, 1);
+  integer(data.resultVersion, 1);
+  jobCheck("Sha256", data.payloadSha256);
+  jobCheck("Timestamp", data.recordedAt);
+  if (
+    !["cancel-requested", "cancelled", "completed", "failed"].includes(
+      String(data.resultStatus),
+    )
+  )
+    throw new StorageError("INTEGRITY", "Invalid cancellation-control result.");
+  return input as JobCancelReceipt;
+}
+
 export function storedJob(input: unknown): StoredJob {
   jobCheck("JsonValue", input);
   const data = fields(
@@ -129,7 +178,7 @@ export function storedJob(input: unknown): StoredJob {
       "usage",
       "effects",
     ],
-    ["inputRevision", "finalOutputSha256", "restoredLease"],
+    ["inputRevision", "finalOutputSha256", "restoredLease", "cancelControls"],
   );
   const submission = fields(
     data.submission,
@@ -166,6 +215,32 @@ export function storedJob(input: unknown): StoredJob {
   ])
     jobCheck("StableId", data[key]);
   integer(data.rowVersion, 1);
+  const controls = new Set<string>();
+  let previousControlVersion = 0;
+  for (const item of bounded(
+    data.cancelControls === undefined ? [] : data.cancelControls,
+    JOB_LIMITS.cancelControls,
+  )) {
+    const control = cancelControl(item);
+    const scope = cancelControlScope(control);
+    if (
+      controls.has(scope) ||
+      control.jobId !== job.id ||
+      control.projectId !== job.projectId ||
+      control.resultVersion <= previousControlVersion ||
+      control.resultVersion > integer(data.rowVersion) ||
+      (control.resultStatus !== "cancel-requested" &&
+        control.resultStatus !== job.status) ||
+      (control.resultStatus !== "completed" &&
+        control.expectedVersion >= control.resultVersion)
+    )
+      throw new StorageError(
+        "INTEGRITY",
+        "Cancellation-control owner/version binding is inconsistent.",
+      );
+    controls.add(scope);
+    previousControlVersion = control.resultVersion;
+  }
   integer(data.generation);
   integer(job.attempt);
   integer(data.progressSequence, 0, JOB_LIMITS.progress);
