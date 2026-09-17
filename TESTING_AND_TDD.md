@@ -157,3 +157,13 @@ project now extends `configDefaults.exclude` with its smoke-test exclusion,
 preserving default dependency-directory protection. The collector regression
 then passed GREEN, followed by build, strict typecheck, lint and 117 distinct
 unit/smoke cases on the current F01 plus early-F04 integration.
+
+### Integration follow-up: bounded native test concurrency
+
+Combining native process/Job and storage suites exposed three 5-second harness
+timeouts under default file-level concurrency. The same cases passed in a
+single-worker diagnostic run, and the complete suite passed with two workers:
+449 passed and one explicitly unsupported-host-only case skipped on Windows.
+Root Vitest now caps file workers at two to avoid competing executable-hash,
+process startup and native cleanup fixtures overwhelming one shared host.
+This does not change product deadlines, assertions, or runtime job concurrency.
