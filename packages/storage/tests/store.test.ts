@@ -406,8 +406,11 @@ test.each([false, true])(
     }
   },
 );
-async function boundSeed() {
-  const f = await setup({ authorizeArtifactBinding: async () => {} });
+async function boundSeed(overrides: Partial<StorageOptions> = {}) {
+  const f = await setup({
+    authorizeArtifactBinding: async () => {},
+    ...overrides,
+  });
   const outputs = await stage(f.store);
   const rev = revision(
     "bound",
@@ -428,6 +431,162 @@ async function boundSeed() {
   const receipt = value(await f.store.commitRevision(request, context()));
   return { ...f, reference, physical, request, receipt };
 }
+
+test.each([
+  { phase: "semantic", target: "logical", operation: "write" },
+  { phase: "semantic", target: "physical", operation: "read" },
+  { phase: "semantic", target: "physical", operation: "write" },
+  { phase: "durability", target: "logical", operation: "write" },
+  { phase: "durability", target: "physical", operation: "read" },
+  { phase: "durability", target: "physical", operation: "write" },
+] as const)(
+  "restore reauthorizes $target $operation after revocation during $phase",
+  async ({ phase, target, operation }) => {
+    const jobContext = context("restore-submission");
+    const source = await boundSeed({
+      jobs: {
+        clock: jobContext.clock,
+        verifyCompletion: async () => {},
+        authorizeRecovery: async () => {},
+      },
+    });
+    value(
+      await source.store.jobs.create(
+        {
+          id: required(jobContext.jobId),
+          operation: "render",
+          input: source.request.revision.content,
+          resources: source.request.revision.resources,
+          inputRevision: {
+            id: source.request.revision.id,
+            sha256: source.request.revision.content.sha256,
+          },
+          handlerId: "synthetic",
+          handlerVersion: "v1",
+          authorityRef: "fixture-policy",
+          resourceKeys: [],
+          deadline: jobContext.deadline,
+          budget: jobContext.budget,
+        },
+        jobContext,
+      ),
+    );
+    const backup = value(await source.store.backup(context("backup")));
+    if (backup.metadata.storageVersion !== 4) throw new Error("Expected v4.");
+    expect(backup.metadata.artifactBindings).toHaveLength(1);
+    expect(backup.metadata.jobs).toHaveLength(1);
+    expect(backup.metadata.revisions).toHaveLength(1);
+    expect(backup.metadata.heads).toHaveLength(1);
+    expect(backup.metadata.receipts).toHaveLength(1);
+
+    const entered = gate();
+    const proceed = gate();
+    const revokedId =
+      target === "logical" ? source.reference.id : source.physical.id;
+    let revoked = false;
+    const authorizations: {
+      id: string;
+      operation: string;
+      revoked: boolean;
+    }[] = [];
+    const destination = await setup({
+      authorize: async (_ctx, scope) => {
+        authorizations.push({
+          id: scope.resourceId,
+          operation: scope.operation,
+          revoked,
+        });
+        if (
+          revoked &&
+          scope.resourceId === revokedId &&
+          scope.operation === operation
+        )
+          throw Object.assign(
+            new Error("Synthetic current-policy revocation."),
+            { code: "FORBIDDEN" },
+          );
+      },
+      authorizeArtifactBinding: async () => {
+        if (phase === "semantic") {
+          entered.resolve();
+          await proceed.promise;
+        }
+      },
+      ensurePublicationDurable: async () => {
+        if (phase === "durability") {
+          entered.resolve();
+          await proceed.promise;
+        }
+      },
+    });
+    let discarded = 0;
+    let removed = 0;
+    const discard = destination.disk.fs.discard;
+    destination.disk.fs.discard = async (...args) => {
+      discarded++;
+      return discard(...args);
+    };
+    const remove = destination.disk.maintenance.removeBlob;
+    destination.disk.maintenance.removeBlob = async (...args) => {
+      removed++;
+      return remove(...args);
+    };
+    const restoring = destination.store.restore(backup, context("restore"));
+    await entered.promise;
+    revoked = true;
+    proceed.resolve();
+    expect(await restoring).toMatchObject({
+      status: "failed",
+      error: { code: "FORBIDDEN" },
+    });
+    expect(authorizations).toContainEqual({
+      id: revokedId,
+      operation,
+      revoked: true,
+    });
+    expect(discarded).toBe(0);
+    expect(removed).toBe(0);
+    const inventory = await destination.disk.maintenance.inventory();
+    expect(inventory.publishedArtifacts).toEqual(backup.metadata.artifacts);
+    for (const artifact of backup.metadata.artifacts) {
+      const physicalBytes = value(
+        await destination.disk.fs.read(
+          { artifactRootId: "artifact-root", path: artifact.path },
+          context(),
+        ),
+      );
+      expect(physicalBytes).toEqual(
+        required(backup.blobs.find((blob) => blob.sha256 === artifact.sha256))
+          .bytes,
+      );
+    }
+    destination.store.close();
+    const db = new Database(destination.options.databasePath, {
+      nativeBinding: destination.options.nativeBinding,
+    });
+    try {
+      for (const table of [
+        "artifacts",
+        "artifact_bindings",
+        "artifact_refs",
+        "receipts",
+        "revisions",
+        "heads",
+        "jobs",
+        "job_resources",
+        "job_stages",
+        "reviews",
+        "pins",
+      ])
+        expect(
+          db.prepare(`SELECT count(*) AS count FROM ${table}`).get(),
+          table,
+        ).toEqual({ count: 0 });
+    } finally {
+      db.close();
+    }
+  },
+);
 
 test.each([
   "duplicate",

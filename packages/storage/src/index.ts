@@ -1781,6 +1781,12 @@ export class LocalStore implements ArtifactStore {
         await this.read({ ...artifact, path: published.path }, context);
       }
       await this.options.ensurePublicationDurable(metadata.artifacts, context);
+      if (metadata.storageVersion === 4)
+        for (const item of metadata.artifactBindings) {
+          await this.guard(context, "write", "artifact", item.reference.id);
+          await this.guard(context, "read", "artifact", item.artifact.id);
+          await this.guard(context, "write", "artifact", item.artifact.id);
+        }
       this.checkpoint(context);
       this.db.transaction(() => {
         for (const artifact of metadata.artifacts) this.putArtifact(artifact);

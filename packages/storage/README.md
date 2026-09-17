@@ -179,6 +179,11 @@ snapshot and aggregate read budgets still apply. Restore validates hashes,
 physical targets, no chains/shadows, receipt provenance and all protected refs;
 it requires trusted restore/binding authorization and current destination
 publication barriers. It cannot fabricate historical publication assurance.
+After all restore semantic/publication/durability awaits, storage reauthorizes
+logical-write and physical-read/write access immediately before the one import
+transaction. Metadata/deadline checkpoints alone are not live policy verification.
+Revocation at either await boundary leaves the destination database empty while
+retaining exact uncommitted published bytes; no cleanup authority is inferred.
 
 `requestId` is the logical idempotency key for the current shared ArtifactStore
 contract. Scope is project + trusted actor + `write` + requestId; payload
@@ -601,6 +606,14 @@ Final scoped checks for this extension: 164 storage unit tests, eight
 storage/root/native smoke tests, storage build then source/test typecheck and
 package lint; the integrated F07 consumer also builds and passes 122 unit tests.
 Existing pinned tools were invoked directly without installs or root changes.
+The restore-revocation follow-up observed six RED cases: logical-write,
+physical-read and physical-write revocation during either semantic validation or
+durability. Each now fails with `FORBIDDEN`, imports zero artifact/binding/ref/
+receipt/revision/head/job rows, and retains exact physical evidence without
+discard/removal calls.
+Follow-up verification: 170 storage unit tests, eight storage/root/native smoke
+tests and 122 F07 consumer unit tests, with storage/F07 builds, scoped
+source/test typecheck and storage lint.
 
 Remaining integration gates: production F07 scheduler/F08 fresh execution and
 recovery issuer; operation-specific completeness and actual-stop/effect policy;
