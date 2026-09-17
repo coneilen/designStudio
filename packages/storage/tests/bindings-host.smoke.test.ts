@@ -261,12 +261,14 @@ test.runIf(process.platform === "win32" && process.arch === "x64")(
           const resourceEvidence = evidence.find(
             (item) => item.reference.id === resources.id,
           );
-          expect(resourceEvidence?.bytes).toEqual(rawResources);
-          expect(resourceEvidence?.artifact.id).toBe(physical(rawResources).id);
+          if (!resourceEvidence)
+            throw new Error("Required logical resource evidence is missing.");
+          expect(resourceEvidence.bytes).toEqual(rawResources);
+          expect(resourceEvidence.artifact.id).toBe(physical(rawResources).id);
           expect(revision.resources).toEqual(design.resources);
           expect(
             resolveDesign(design, resources, {
-              resourceBytes: resourceEvidence?.bytes,
+              resourceBytes: resourceEvidence.bytes,
             }).closure?.integrity,
           ).toBe("verified-bytes");
         },
