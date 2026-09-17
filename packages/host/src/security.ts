@@ -292,7 +292,7 @@ export class ScopedCredentialStore implements CredentialStore {
     context: OperationContext,
     consumer: (secret: Uint8Array) => Promise<T>,
   ): Promise<Outcome<T>> {
-    return boundary(context, async () => {
+    return boundary(context, async (context) => {
       if (!validateContract("CredentialReference", input).success)
         throw new HostBoundaryError(
           "INVALID_INPUT",

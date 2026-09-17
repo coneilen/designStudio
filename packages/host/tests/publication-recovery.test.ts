@@ -68,6 +68,9 @@ it("reports uncertain publication after a real link succeeds and stage unlink fa
       Buffer.from([42]),
     );
     expect((await lstat(path.join(directory, "result.bin"))).nlink).toBe(2);
+    await expect(files.close()).rejects.toMatchObject({
+      code: "OUTPUT_UNCERTAIN",
+    });
     expect(await files.publish(staged.value, context)).toMatchObject({
       status: "complete",
       value: staged.value.artifact,

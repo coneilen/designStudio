@@ -22,5 +22,8 @@
   "dependencies": {
     "@design-studio/contracts": "workspace:*",
     "@napi-rs/keyring": "2.0.0"
+  },
+  "optionalDependencies": {
+    "koffi": "3.2.1"
   }
 }

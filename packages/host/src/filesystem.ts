@@ -27,6 +27,13 @@ import {
   HostBoundaryError,
   OperationGuard,
 } from "./guards.js";
+import type { NativeFileIdentity } from "./windows-native.js";
+import {
+  NativePublicationInterrupted,
+  type NativePublicationProof,
+  WINDOWS_PUBLICATION_PROFILE,
+  WindowsNtfsPublisher,
+} from "./windows-publication.js";
 
 export interface ProjectRoot {
   id: string;
@@ -42,6 +49,7 @@ export interface ProjectFileSystemOptions {
   authority: Authority;
   roots: readonly ProjectRoot[];
   budgetLimits?: Readonly<Budget>;
+  publicationProfile?: "portable-atomic" | typeof WINDOWS_PUBLICATION_PROFILE;
   authorizeRemoval?: (
     artifact: Artifact,
     context: OperationContext,
@@ -71,6 +79,12 @@ interface Pending {
   sessionId: string;
   busy: boolean;
   publishedDestination?: string;
+  nativeState?: NativeFileIdentity;
+}
+interface NativeReceipt {
+  artifact: Artifact;
+  identity: Stats;
+  proof: NativePublicationProof;
 }
 const sha256 = (bytes: Uint8Array) =>
   createHash("sha256").update(bytes).digest("hex");
@@ -82,6 +96,7 @@ const codeOf = (error: unknown): string | undefined =>
 
 export function portableRelativePath(candidate: string): string {
   if (
+    typeof candidate !== "string" ||
     !candidate ||
     candidate.length > 4096 ||
     path.win32.isAbsolute(candidate) ||
@@ -164,9 +179,22 @@ async function boundedEntries(
 export class ProjectFileSystem implements FileSystemBoundary {
   private readonly roots = new Map<string, Root>();
   private readonly pending = new Map<string, Pending>();
+  private readonly nativeReceipts = new Map<string, NativeReceipt>();
+  private readonly nativePublisher = new WindowsNtfsPublisher();
   private tail: Promise<void> = Promise.resolve();
   private closed = false;
-  private constructor(private readonly options: ProjectFileSystemOptions) {}
+  private constructor(private readonly options: ProjectFileSystemOptions) {
+    if (
+      options.publicationProfile !== undefined &&
+      !["portable-atomic", WINDOWS_PUBLICATION_PROFILE].includes(
+        options.publicationProfile,
+      )
+    )
+      throw new HostBoundaryError(
+        "INVALID_INPUT",
+        "Unknown publication durability profile.",
+      );
+  }
   private serial<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.tail.then(operation);
     // Release the queue on failure; the original promise still reports the error.
@@ -178,9 +206,9 @@ export class ProjectFileSystem implements FileSystemBoundary {
   }
   private execute<T>(
     context: OperationContext,
-    operation: () => Promise<T>,
+    operation: (context: OperationContext) => Promise<T>,
   ): Promise<Outcome<T>> {
-    return this.serial(() => boundary(context, operation));
+    return boundary(context, (owned) => this.serial(() => operation(owned)));
   }
   static async create(
     options: ProjectFileSystemOptions,
@@ -392,7 +420,7 @@ export class ProjectFileSystem implements FileSystemBoundary {
     input: FileRequest,
     context: OperationContext,
   ): Promise<Outcome<Uint8Array>> {
-    return boundary(context, async () => {
+    return boundary(context, async (context) => {
       if (!validateContract("FileRequest", input).success)
         throw new HostBoundaryError("PATH_FORBIDDEN", "Invalid file request.");
       const request = structuredClone(input);
@@ -416,7 +444,7 @@ export class ProjectFileSystem implements FileSystemBoundary {
     bytes: Uint8Array,
     context: OperationContext,
   ): Promise<Outcome<StagedArtifact>> {
-    return boundary(context, async () => {
+    return boundary(context, async (context) => {
       if (!validateContract("FileRequest", input).success)
         throw new HostBoundaryError("PATH_FORBIDDEN", "Invalid file request.");
       const request = structuredClone(input);
@@ -538,7 +566,7 @@ export class ProjectFileSystem implements FileSystemBoundary {
     input: StagedArtifact,
     context: OperationContext,
   ): Promise<Outcome<Artifact>> {
-    return this.execute(context, async () => {
+    return this.execute(context, async (context) => {
       if (!validateContract("Artifact", input.artifact).success)
         throw new HostBoundaryError(
           "ARTIFACT_INTEGRITY",
@@ -561,6 +589,33 @@ export class ProjectFileSystem implements FileSystemBoundary {
       pending.busy = true;
       try {
         await this.checkStaging(pending.root);
+        if (pending.nativeState) {
+          const destination = await this.resolve(
+            pending.root,
+            staged.artifact.path,
+          );
+          const bytes = await this.readBytes(
+            destination,
+            guard,
+            pending.identity,
+          );
+          if (
+            bytes.byteLength !== pending.staged.artifact.byteLength ||
+            sha256(bytes) !== pending.staged.artifact.sha256
+          )
+            throw new HostBoundaryError(
+              "ARTIFACT_INTEGRITY",
+              "Interrupted native publication bytes changed.",
+            );
+          const proof = await this.nativePublisher.resume(
+            destination,
+            pending.nativeState,
+            guard,
+          );
+          await this.recordNativeReceipt(pending, proof);
+          this.pending.delete(staged.stagingId);
+          return structuredClone(pending.staged.artifact);
+        }
         if (pending.publishedDestination) {
           await this.resolve(pending.root, staged.artifact.path);
           await this.finishPublishedPair(
@@ -591,6 +646,18 @@ export class ProjectFileSystem implements FileSystemBoundary {
           staged.artifact.path,
         );
         guard.check();
+        if (this.options.publicationProfile === WINDOWS_PUBLICATION_PROFILE) {
+          const proof = await this.nativePublisher.publish(
+            pending.path,
+            destination,
+            pending.staged.artifact.byteLength,
+            guard,
+          );
+          pending.nativeState = proof.identity;
+          await this.recordNativeReceipt(pending, proof);
+          this.pending.delete(staged.stagingId);
+          return structuredClone(pending.staged.artifact);
+        }
         // Same-filesystem hard-link publication is atomic and never replaces an existing file.
         await io(() => link(pending.path, destination));
         pending.publishedDestination = destination;
@@ -605,7 +672,9 @@ export class ProjectFileSystem implements FileSystemBoundary {
         this.pending.delete(staged.stagingId);
         return structuredClone(pending.staged.artifact);
       } catch (error) {
-        if (pending.publishedDestination)
+        if (error instanceof NativePublicationInterrupted)
+          pending.nativeState = error.identity;
+        if (pending.publishedDestination || pending.nativeState)
           throw new HostBoundaryError(
             "OUTPUT_UNCERTAIN",
             "Destination is visible but publication cleanup is incomplete; retry/reconcile the exact owned pair.",
@@ -622,8 +691,13 @@ export class ProjectFileSystem implements FileSystemBoundary {
     stagingId: string,
     context: OperationContext,
   ): Promise<Outcome<{ discarded: true }>> {
-    return this.execute(context, async () => {
+    return this.execute(context, async (context) => {
       const { pending, guard } = this.own(stagingId, context);
+      if (pending.nativeState)
+        throw new HostBoundaryError(
+          "OUTPUT_UNCERTAIN",
+          "Native publication is already visible; retry its owning publish instead of discarding.",
+        );
       pending.busy = true;
       try {
         await this.checkStaging(pending.root);
@@ -649,25 +723,56 @@ export class ProjectFileSystem implements FileSystemBoundary {
   close(): Promise<void> {
     return this.serial(() => this.cleanup());
   }
-  /** Atomic visibility with file fsync; directory-entry power-loss durability is not established. */
-  readonly publicationDurability =
-    "file-flushed-atomic-visibility-not-power-loss-durable" as const;
+  get publicationDurability(): string {
+    return this.options.publicationProfile === WINDOWS_PUBLICATION_PROFILE
+      ? "documented-ntfs-write-through-request-not-power-cut-tested"
+      : "file-flushed-atomic-visibility-not-power-loss-durable";
+  }
+  private receiptKey(rootId: string, relative: string): string {
+    return `${rootId}\0${relative}`;
+  }
+  private async recordNativeReceipt(
+    pending: Pending,
+    proof: NativePublicationProof,
+  ): Promise<void> {
+    const identity = await io(() => lstat(proof.identity.path));
+    if (
+      !sameFile(identity, pending.identity) ||
+      identity.nlink !== 1 ||
+      identity.isSymbolicLink()
+    )
+      throw new HostBoundaryError(
+        "ARTIFACT_INTEGRITY",
+        "Native publication no longer matches its owned staged file.",
+      );
+    this.nativeReceipts.set(
+      this.receiptKey(pending.root.id, pending.staged.artifact.path),
+      {
+        artifact: structuredClone(pending.staged.artifact),
+        identity,
+        proof: structuredClone(proof),
+      },
+    );
+  }
   ensurePublicationDurable(
     rootId: string,
-    artifacts: readonly Artifact[],
+    input: readonly Artifact[],
     context: OperationContext,
-  ): Promise<Outcome<{ durable: true }>> {
-    return this.execute(context, async () => {
-      const { guard } = this.guard(rootId, context, "write");
+  ): Promise<
+    Outcome<{ durable: true; profile?: typeof WINDOWS_PUBLICATION_PROFILE }>
+  > {
+    return boundary(context, async (context) => {
+      const { root, guard } = this.guard(rootId, context, "write");
       if (
-        !artifacts.length ||
-        artifacts.length > context.budget.maxExpandedNodes
+        !Array.isArray(input) ||
+        !input.length ||
+        input.length > context.budget.maxExpandedNodes
       )
         throw new HostBoundaryError(
           "INVALID_INPUT",
           "Durability verification requires a bounded nonempty artifact set.",
         );
-      for (const artifact of artifacts) {
+      for (const artifact of input) {
         if (!validateContract("Artifact", artifact).success)
           throw new HostBoundaryError(
             "ARTIFACT_INTEGRITY",
@@ -676,11 +781,55 @@ export class ProjectFileSystem implements FileSystemBoundary {
         portableRelativePath(artifact.path);
         guard.consume("input", Buffer.byteLength(JSON.stringify(artifact)));
       }
-      throw new HostBoundaryError(
-        "UNSUPPORTED_FEATURE",
-        "File data was flushed during staging, but host directory-entry power-loss durability is unverified; durable database references require a verified native flush adapter.",
-        true,
-      );
+      const artifacts = structuredClone(input);
+      return this.serial(async () => {
+        guard.check();
+        if (this.options.publicationProfile === WINDOWS_PUBLICATION_PROFILE) {
+          for (const artifact of artifacts) {
+            const receipt = this.nativeReceipts.get(
+              this.receiptKey(rootId, artifact.path),
+            );
+            if (!receipt)
+              throw new HostBoundaryError(
+                "UNSUPPORTED_FEATURE",
+                "No owned native publication evidence exists for this artifact; generic or reconstructed metadata cannot be promoted.",
+                true,
+              );
+            if (
+              Object.keys(receipt.artifact).some(
+                (key) =>
+                  Reflect.get(receipt.artifact, key) !==
+                  Reflect.get(artifact, key),
+              )
+            )
+              throw new HostBoundaryError(
+                "ARTIFACT_INTEGRITY",
+                "Artifact does not match the recorded native publication.",
+              );
+            const absolute = await this.resolve(root, artifact.path);
+            const bytes = await this.readBytes(
+              absolute,
+              guard,
+              receipt.identity,
+            );
+            if (
+              bytes.byteLength !== artifact.byteLength ||
+              sha256(bytes) !== artifact.sha256
+            )
+              throw new HostBoundaryError(
+                "ARTIFACT_INTEGRITY",
+                "Native published bytes changed.",
+              );
+            await this.nativePublisher.verify(absolute, receipt.proof, guard);
+          }
+          return { durable: true, profile: WINDOWS_PUBLICATION_PROFILE };
+        }
+        throw new HostBoundaryError(
+          "UNSUPPORTED_FEATURE",
+          "File data was flushed during staging, but host directory-entry power-loss durability is unverified; durable database references require a verified native flush adapter.",
+          true,
+        );
+      });
     });
   }
   private async finishPublishedPair(
@@ -732,11 +881,12 @@ export class ProjectFileSystem implements FileSystemBoundary {
   }
   reconcilePublication(
     rootId: string,
-    artifact: Artifact,
+    input: Artifact,
     stagingId: string,
     context: OperationContext,
   ): Promise<Outcome<Artifact>> {
-    return this.execute(context, async () => {
+    return this.execute(context, async (context) => {
+      const artifact = Object.freeze({ ...input });
       const { root, guard } = this.guard(rootId, context, "write");
       if (
         !root.managedBlobs ||
@@ -804,7 +954,7 @@ export class ProjectFileSystem implements FileSystemBoundary {
     context: OperationContext,
     maxEntries: number,
   ): Promise<Outcome<ManagedInventory>> {
-    return this.execute(context, async () => {
+    return this.execute(context, async (context) => {
       const { root, guard } = this.guard(rootId, context, "write");
       if (!root.managedBlobs)
         throw new HostBoundaryError(
@@ -891,10 +1041,11 @@ export class ProjectFileSystem implements FileSystemBoundary {
   }
   removeUnreferenced(
     rootId: string,
-    artifact: Artifact,
+    input: Artifact,
     context: OperationContext,
   ): Promise<Outcome<{ removed: true }>> {
-    return this.execute(context, async () => {
+    return this.execute(context, async (context) => {
+      const artifact = Object.freeze({ ...input });
       const { root, guard } = this.guard(rootId, context, "write");
       if (!root.managedBlobs || !this.options.authorizeRemoval)
         throw new HostBoundaryError(
@@ -950,6 +1101,15 @@ export class ProjectFileSystem implements FileSystemBoundary {
         "CONFLICT",
         "Cannot close during publication/discard.",
       );
+    if (
+      [...this.pending.values()].some(
+        (pending) => pending.nativeState || pending.publishedDestination,
+      )
+    )
+      throw new HostBoundaryError(
+        "OUTPUT_UNCERTAIN",
+        "Visible interrupted publications must be reconciled before close; the boundary remains usable for retry.",
+      );
     this.closed = true;
     for (const [id, pending] of this.pending) {
       await this.checkStaging(pending.root);
@@ -973,5 +1133,6 @@ export class ProjectFileSystem implements FileSystemBoundary {
         delete root.staging;
       }
     }
+    this.nativeReceipts.clear();
   }
 }

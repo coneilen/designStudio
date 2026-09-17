@@ -191,7 +191,7 @@ export class ConfiguredToolLocator implements ToolLocator {
     toolId: string,
     context: OperationContext,
   ): Promise<Outcome<LocatedTool>> {
-    return boundary(context, async () => {
+    return boundary(context, async (context) => {
       const tool = await this.approved(toolId, context);
       return {
         identity: tool.identity,
@@ -212,7 +212,7 @@ export class BoundedProcessRunner implements ProcessRunner {
     input: ProcessRequest,
     context: OperationContext,
   ): Promise<Outcome<ProcessResult>> {
-    const outcome = await boundary(context, async () => {
+    const outcome = await boundary(context, async (context) => {
       if (!validateContract("ProcessRequest", input).success)
         throw new HostBoundaryError(
           "INVALID_INPUT",

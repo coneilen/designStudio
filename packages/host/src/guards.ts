@@ -34,10 +34,18 @@ export interface OperationScope {
 const ownedContexts = new WeakMap<OperationContext, string>();
 function assertAuthorizationUnchanged(context: OperationContext): void {
   const initial = ownedContexts.get(context);
-  if (initial !== undefined && initial !== JSON.stringify(context.authorization))
-    throw new HostBoundaryError("FORBIDDEN", "Authorization changed after the operation snapshot.");
+  if (
+    initial !== undefined &&
+    initial !== JSON.stringify(context.authorization)
+  )
+    throw new HostBoundaryError(
+      "FORBIDDEN",
+      "Authorization changed after the operation snapshot.",
+    );
 }
-export function snapshotOperationContext(context: OperationContext): OperationContext {
+export function snapshotOperationContext(
+  context: OperationContext,
+): OperationContext {
   if (ownedContexts.has(context)) {
     assertAuthorizationUnchanged(context);
     return context;
@@ -46,8 +54,11 @@ export function snapshotOperationContext(context: OperationContext): OperationCo
   if (!validateContract("OperationRequestContext", request).success)
     throw new HostBoundaryError("INVALID_INPUT", "Invalid operation context.");
   const owned: OperationContext = Object.freeze({
-    ...request, budget: Object.freeze({ ...request.budget }),
-    authorization: context.authorization, signal, clock,
+    ...request,
+    budget: Object.freeze({ ...request.budget }),
+    authorization: context.authorization,
+    signal,
+    clock,
   });
   ownedContexts.set(owned, JSON.stringify(owned.authorization));
   return owned;

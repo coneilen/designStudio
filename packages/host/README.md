@@ -13,6 +13,16 @@ in production. `LocalSessionAuthenticator.authority` accepts only the exact
 frozen authorization object returned by successful authentication, while it is
 unexpired and unrevoked.
 
+`snapshotOperationContext(context)` owns and freezes request metadata and budget
+before enqueue/await, while retaining the **exact** authorization reference and
+live signal/clock. It never freezes caller data. Auth JSON mutation is rejected
+at checkpoints; cloning authorization would destroy trusted provenance. Applying
+the helper to one of its own snapshots returns the same object. F03's
+`StorageOptions.snapshotOperationContext` composition hook should use this helper
+so nested host calls preserve its exact removal-reservation context identity.
+All host boundary callbacks operate on these snapshots, not lexical caller
+metadata that can change during I/O.
+
 `OperationScope` has `projectId`, optional `actorId`, `resourceKind`,
 `resourceId`, and `operation` (the latter fields use contract types).
 `OperationGuard(context, scope, authority, timeoutMs?, budgetLimits?)` preserves an absolute
@@ -107,13 +117,12 @@ destination, exact expected hash/length and the same two-link inode pair before
 unlinking that specific staging link. It neither removes historical directories
 nor grants general cleanup. Current-instance stages must use owned `publish`.
 
-`publicationDurability` is explicitly
-`file-flushed-atomic-visibility-not-power-loss-durable`. Staging calls file
-`fsync`; **directory-entry persistence across power loss is not established**.
-`ensurePublicationDurable(rootId, artifacts, context)` validates scope/input
-then reports `unavailable` / `UNSUPPORTED_FEATURE` on the current adapter.
-F03 must not create a power-loss-durable commit receipt from this result.
-No callback injection is represented as a working native flush implementation.
+The default `publicationProfile: "portable-atomic"` retains
+`publicationDurability: "file-flushed-atomic-visibility-not-power-loss-durable"`.
+Staging calls file `fsync`; **generic directory-entry persistence across power
+loss is not established**. Its `ensurePublicationDurable` remains explicitly
+unavailable. The opt-in Windows profile below issues and verifies actual native
+OS-request evidence; no callback boolean promotes generic files.
 
 Bounded native feasibility checked the official
 [MoveFileExW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw),
@@ -122,11 +131,91 @@ and [CreateFileW caching](https://learn.microsoft.com/en-us/windows/win32/api/fi
 documentation. `MOVEFILE_WRITE_THROUGH` is `0x8`, not reserved `0x10`; its explicit
 copy/delete flush language does not establish the current same-volume hard-link
 protocol. Write-through file handles document NTFS metadata/rename flushing,
-suggesting a future same-handle no-replace rename adapter, but the end-to-end
-guarantee and package binding remain unverified. Koffi 3.2.1 has exact optional
-Windows prebuilds but also a wrapper install script; fswin 3.25.1108 metadata
-did not establish the required write-through API. Neither was installed or
-executed. No volume flush, administrative access or global change was attempted.
+suggesting a same-handle no-replace rename adapter. The follow-up below establishes
+that the prebuilt binding and actual request sequence work, not a blanket
+hardware/power-loss guarantee. fswin 3.25.1108 metadata did not establish the
+required write-through API and was not installed. No volume flush,
+administrative access or global change was attempted.
+
+### Opt-in Windows NTFS write-through profile
+
+The coordinator-approved initial bounded probe is test-only, under
+`tests/windows-write-through.probe.ts`; it cannot adopt an existing directory.
+It creates a new owned temporary root, checks its identity, restricts operations
+to owned flat filenames, and removes only that root at completion. Koffi 3.2.1
+is now an exact **optional** dependency with exact optional platform prebuilds.
+Installation used `--ignore-scripts`; neither the wrapper's cnoke install script
+nor a compiler was run. The shipped Windows x64 prebuild loaded successfully
+on Node 24.21.0. No new root install/build policy is required.
+
+Two real Windows x64 tests passed on the owned NTFS fixture:
+
+- `CreateFileW` with `GENERIC_READ | GENERIC_WRITE | DELETE` (`0xc0010000`),
+  exclusive share mode `0`, `OPEN_EXISTING` (`3`), and
+  `FILE_FLAG_WRITE_THROUGH | FILE_FLAG_OPEN_REPARSE_POINT` (`0x80200000`);
+  reject directories/reparse points/multiple links, and confirm NTFS through
+  `GetVolumeInformationByHandleW` on that file handle.
+- Successful file preflush, same-handle `SetFileInformationByHandle`
+  `FileRenameInfo` (`3`) with zero `ReplaceIfExists`, correct UTF-16 byte
+  length/alignment, postflush, unchanged volume/file identity and checked
+  `CloseHandle`. Binary bytes, spaces and Unicode filenames survive.
+- Existing-destination rename returns Win32 `183`; neither file changes and
+  the source handle closes. Unowned/traversal inputs are refused.
+
+The probe first failed with a missing harness; initial FFI execution exposed
+the distinction between a null pointer and a numeric `uintptr_t` template
+handle, which was corrected to zero before the native sequence passed.
+
+The concrete feasible route is an **explicit local-NTFS OS-request profile**:
+the [CreateFileW caching contract](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew#caching-behavior)
+documents NTFS flushing metadata/rename changes resulting from write-through
+requests, and
+[FILE_RENAME_INFO](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_rename_info)
+documents no replacement when `ReplaceIfExists` is false. The probe issues that
+same-handle request followed by `FlushFileBuffers`; it does not use
+`MoveFileEx`, copy/delete, delayed operations, volume handles or admin access.
+The precise evidence label is
+`documented-ntfs-write-through-request-not-power-cut-tested`.
+
+Production opt-in is
+`ProjectFileSystem.create({...options, publicationProfile: "windows-ntfs-write-through-v1"})`.
+The lazy adapter in `windows-native.ts` / `windows-publication.ts` uses the tested
+request sequence, verifies the source/destination handle path and NTFS volume/
+file identity, and retains all buffers/handles through synchronous native calls.
+No asynchronous FFI callback outlives its buffer; every successful open has
+checked close handling. Cancellation/deadlines are checked before mutation,
+including after preflush. Once rename commits, flush/close complete even if
+cancellation or a deadline arrives; an uncertain post-rename failure returns
+`interrupted` / `OUTPUT_UNCERTAIN`, never a cancellation-shaped rollback.
+Kernel calls are synchronous/cooperative checkpoints, not forcibly interruptible
+or hard-real-time operations.
+
+On success, the boundary records private, instance-owned root/path/artifact-hash/
+file-identity/profile evidence. `ensurePublicationDurable(rootId, artifacts,
+context)` snapshots the bounded requested set before enqueue, rehashes actual
+bytes, reopens the file to match its native identity/path, and returns
+`{durable:true, profile:"windows-ntfs-write-through-v1"}` only for those receipts.
+It never promotes a generic link publication, a supplied boolean or reconstructed
+metadata. F03's required durability port must propagate all noncomplete outcomes
+and accept the profile explicitly in trusted composition.
+
+After a native post-rename flush failure, the owning `publish` retry verifies the
+recorded committed file identity/hash and flushes it before issuing evidence.
+`discard` cannot remove that visible artifact. A failed `close` on interrupted
+publication leaves the boundary usable for retry. Across instance/process restart,
+native evidence is not invented: unknown orphans remain gated and require trusted
+reference-safe recovery/restaging. Persistent native publication journals are not
+silently inferred from filenames or hashes.
+
+Real production-profile tests cover valid evidence, modified bytes/identity/
+metadata, omitted entries in a mutated caller list, no-replace preservation,
+missing prebuild without unrelated read failure, pre-mutation cancellation,
+post-mutation deadline completion, injected post-rename flush failure, and
+checked HANDLE cleanup/retry. Windows x64 is exercised; Windows arm64/macOS
+execution and power-cut recovery are not claimed. Newly provisioned parent-
+directory persistence, hardware cache behavior and release filesystem/host
+coverage remain separate validation obligations. This explicit local-NTFS
+OS-request profile is not a universal physical durability guarantee.
 
 ## Process and tools
 

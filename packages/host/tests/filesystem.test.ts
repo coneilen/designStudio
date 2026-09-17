@@ -104,6 +104,25 @@ it("snapshots staged bytes before asynchronous path validation", async () => {
     ),
   ).toEqual(Uint8Array.of(42));
 });
+it("pins operation identity before awaiting stage work rather than borrowing later caller metadata", async () => {
+  const original = { ...context };
+  const pending = files.stage(
+    { artifactRootId: "output", path: "context.bin" },
+    Uint8Array.of(1),
+    context,
+  );
+  context.requestId = "changed_request";
+  context.authorization = {
+    ...context.authorization,
+    actorId: "changed_actor",
+  };
+  const result = await pending;
+  expect(result.requestId).toBe(original.requestId);
+  const staged = value(result);
+  expect(await files.publish(staged, original)).toMatchObject({
+    status: "complete",
+  });
+});
 it("reads bounded binary and publishes atomically under a distinct output root", async () => {
   const bytes = Uint8Array.from([0, 255, 13, 10, 128]);
   await writeFile(path.join(temporary, "input", "source.bin"), bytes);

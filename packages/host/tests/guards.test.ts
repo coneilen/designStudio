@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   authorizeOperation,
   OperationGuard,
-  snapshotOperationContext,
   SystemClock,
+  snapshotOperationContext,
 } from "../src/guards.js";
 
 const scope = {
@@ -30,7 +30,9 @@ describe("trusted scoped context", () => {
     expect(owned.requestId).toBe("request_synthetic");
     expect(owned.budget.maxInputBytes).not.toBe(1);
     input.authorization.actorId = "other_actor";
-    expect(() => authorizeOperation(owned, scope, authority)).toThrow(/mutat|changed/i);
+    expect(() => authorizeOperation(owned, scope, authority)).toThrow(
+      /mutat|changed/i,
+    );
   });
   it("requires trusted provenance in addition to schema/grants", () => {
     expect(() =>
