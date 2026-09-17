@@ -39,6 +39,15 @@ export interface ApprovalAssessment {
   waiverEligibleDiagnosticIds: string[];
 }
 
+export interface LogicalArtifactBinding {
+  reference: ArtifactReference;
+  artifact: ArtifactReference;
+}
+
+export interface StoredArtifactBinding extends LogicalArtifactBinding {
+  receiptId: string;
+}
+
 export interface StorageOptions {
   jobs?: JobStorageOptions;
   databasePath: string;
@@ -67,10 +76,19 @@ export interface StorageOptions {
     },
   ): Promise<void>;
   canonicalBytes(value: unknown): Uint8Array;
+  authorizeArtifactBinding?(
+    binding: LogicalArtifactBinding,
+    evidence: { artifact: Artifact; bytes: Uint8Array },
+    context: OperationContext,
+  ): Promise<void>;
   verifyRevision(
     revision: Revision,
     context: OperationContext,
-    evidence: { artifact: Artifact; bytes: Uint8Array }[],
+    evidence: {
+      reference: ArtifactReference;
+      artifact: Artifact;
+      bytes: Uint8Array;
+    }[],
   ): Promise<void>;
   assessApproval(
     approval: ApprovalContext,
@@ -110,6 +128,7 @@ export interface RevisionCommit {
   base: ExpectedBase | null;
   revision: Revision;
   outputs: StagedArtifact[];
+  referenceBindings?: LogicalArtifactBinding[];
 }
 
 export interface StoredReview {
@@ -142,7 +161,16 @@ export interface JobBackupMetadata
   jobStages: StoredJobStage[];
 }
 
-export type BackupMetadata = LegacyBackupMetadata | JobBackupMetadata;
+export interface BoundBackupMetadata
+  extends Omit<JobBackupMetadata, "storageVersion"> {
+  storageVersion: 4;
+  artifactBindings: StoredArtifactBinding[];
+}
+
+export type BackupMetadata =
+  | LegacyBackupMetadata
+  | JobBackupMetadata
+  | BoundBackupMetadata;
 
 export interface ProjectBackup {
   metadata: BackupMetadata;
@@ -158,6 +186,7 @@ export interface RecoveryReport {
 }
 
 export type StorageCode =
+  | "ACTION_REQUIRED"
   | "AUTHORIZATION_CHANGED"
   | "WRITER_BUSY"
   | "UNSUITABLE_FILESYSTEM"

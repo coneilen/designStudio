@@ -10,7 +10,7 @@ import type {
   Outcome,
   StagedArtifact,
 } from "@design-studio/contracts";
-import type { RevisionCommit } from "./types.js";
+import type { LogicalArtifactBinding, RevisionCommit } from "./types.js";
 
 export interface JobSubmission {
   id: string;
@@ -122,12 +122,13 @@ export type JobCommand =
   | { kind: "acknowledge-cancel" };
 
 export interface JobCompletion {
+  referenceBindings?: LogicalArtifactBinding[];
   outputs: StagedArtifact[];
   outputState: NonNullable<Job["outputState"]>;
   comparisonVerdict?: Job["comparisonVerdict"];
   sourceStatus?: Job["sourceStatus"];
   diagnosticIds: string[];
-  revision?: Omit<RevisionCommit, "outputs">;
+  revision?: Omit<RevisionCommit, "outputs" | "referenceBindings">;
 }
 
 export type JobReconciliation =
@@ -157,6 +158,36 @@ export interface JobScan {
 export interface JobPage {
   records: StoredJob[];
   nextCursor: JobScan["cursor"] | null;
+}
+
+export interface JobDiscoveryQuery {
+  jobId?: string;
+  states?: Job["status"][];
+  limit: number;
+  cursor?: { createdAt: string; id: string };
+}
+
+export interface JobDiscoveryDescriptor {
+  jobId: string;
+  projectId: string;
+  actorId: string;
+  requestId: string;
+  operation: Job["operation"];
+  status: Job["status"];
+  rowVersion: number;
+  input: ArtifactReference;
+  resources: Job["resources"];
+  inputRevision?: ArtifactReference & { designId: string };
+  handlerId: string;
+  handlerVersion: string;
+  authorityRef: string;
+  physicalInputs: LogicalArtifactBinding[];
+  outputs: ArtifactReference[];
+}
+
+export interface JobDiscoveryPage {
+  descriptors: JobDiscoveryDescriptor[];
+  nextCursor: JobDiscoveryQuery["cursor"] | null;
 }
 
 export interface JobStageResult {
@@ -189,6 +220,10 @@ export interface JobCancelResult {
 }
 
 export interface JobRepository {
+  discoverOwned(
+    query: JobDiscoveryQuery,
+    context: OperationContext,
+  ): Promise<Outcome<JobDiscoveryPage>>;
   create(
     input: JobSubmission,
     context: OperationContext,
@@ -258,6 +293,16 @@ export interface JobRepository {
 
 /** Composition authority only; never populate from a submitted payload. */
 export interface JobStorageOptions {
+  discovery?: {
+    authorizeOwner(
+      context: OperationContext,
+      scope: {
+        projectId: string;
+        artifactRootId: string;
+        permissionScope: string;
+      },
+    ): Promise<void>;
+  };
   clock: Clock;
   maxWorkers?: number;
   limits?: Budget;

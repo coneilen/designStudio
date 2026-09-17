@@ -21,6 +21,9 @@ const jobSchema = `
   CREATE TABLE job_stages (id TEXT PRIMARY KEY, job TEXT NOT NULL REFERENCES jobs(id), data TEXT NOT NULL);
   CREATE INDEX job_stages_owner ON job_stages(job,id);
 `;
+const bindingSchema = `
+  CREATE TABLE artifact_bindings (logical_id TEXT NOT NULL, hash TEXT NOT NULL, artifact_id TEXT NOT NULL REFERENCES artifacts(id), data TEXT NOT NULL, PRIMARY KEY(logical_id,hash));
+`;
 
 export async function openDatabase(
   options: StorageOptions,
@@ -61,7 +64,7 @@ export async function openDatabase(
       (version === 0 && (tables.length !== 0 || app !== 0)) ||
       (version !== 0 &&
         (app !== applicationId ||
-          (version !== 1 && version !== 2 && version !== 3)))
+          (version !== 1 && version !== 2 && version !== 3 && version !== 4)))
     ) {
       throw new StorageError(
         "SCHEMA_INCOMPATIBLE",
@@ -102,10 +105,11 @@ export async function openDatabase(
           );
         connection.exec("CREATE INDEX artifact_hash ON artifacts(hash)");
         connection.exec(jobSchema);
+        connection.exec(bindingSchema);
         connection.pragma(`application_id = ${applicationId}`);
-        connection.pragma("user_version = 3");
+        connection.pragma("user_version = 4");
       })();
-    } else if (version === 1 || version === 2) {
+    } else if (version === 1 || version === 2 || version === 3) {
       // Every upgrade retains a separate valid database before altering schema.
       const backup = `${path}.migration-v${version}-${randomUUID()}.sqlite`;
       await db.backup(backup);
@@ -125,14 +129,23 @@ export async function openDatabase(
       } finally {
         copy.close();
       }
-      await options.ensureDatabaseBackupDurable(backup);
+      try {
+        await options.ensureDatabaseBackupDurable(backup);
+      } catch (cause) {
+        throw new StorageError(
+          "ACTION_REQUIRED",
+          "Migration requires trusted database-backup durability; the verified backup and original schema are retained.",
+          { cause },
+        );
+      }
       const connection = db;
       connection.transaction(() => {
         if (version === 1)
           connection.exec("CREATE INDEX artifact_hash ON artifacts(hash)");
-        connection.exec(jobSchema);
+        if (version < 3) connection.exec(jobSchema);
+        connection.exec(bindingSchema);
         options.fault?.("migration-before-commit");
-        connection.pragma("user_version = 3");
+        connection.pragma("user_version = 4");
       })();
     }
     const foreignKeys = db.pragma("foreign_key_check");

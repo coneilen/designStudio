@@ -18,6 +18,7 @@ import {
 import { storedJob } from "../src/job-codec.js";
 import type {
   JobCompletion,
+  JobStorageOptions,
   JobSubmission,
   JobWorkerExpected,
   StoredJob,
@@ -62,7 +63,12 @@ function fence(record: StoredJob): JobWorkerExpected {
     resources: record.resources,
   };
 }
-async function setup(maxWorkers = 1) {
+async function setup(
+  maxWorkers = 1,
+  discovery: JobStorageOptions["discovery"] | null = {
+    authorizeOwner: async () => {},
+  },
+) {
   const root = await mkdtemp(join(tmpdir(), "job transactions "));
   roots.push(root);
   const disk = await diskFixture(root);
@@ -99,6 +105,7 @@ async function setup(maxWorkers = 1) {
       maxWorkers,
       verifyCompletion: async () => {},
       authorizeRecovery: async () => {},
+      ...(discovery ? { discovery } : {}),
     },
     fault: (point) => {
       if (point === "before-commit") beforeCommit?.();
@@ -200,6 +207,222 @@ async function completion(
   return { record: result.record, output };
 }
 
+test("trusted owner discovery bootstraps bounded exact grants without reading artifact bytes", async () => {
+  const f = await setup();
+  const first = value(await f.store.jobs.create(f.submission(), f.ctx()));
+  value(await f.store.jobs.create(f.submission("job-other"), f.ctx("other")));
+  f.disk.fs.read = async () => {
+    throw new Error("Discovery must not read bytes.");
+  };
+  const ctx = f.ctx("discovery");
+  ctx.authorization.grants = [];
+  const page = value(await f.store.jobs.discoverOwned({ limit: 1 }, ctx));
+  expect(page.descriptors).toHaveLength(1);
+  expect(page.nextCursor).not.toBeNull();
+  const second = value(
+    await f.store.jobs.discoverOwned(
+      { limit: 1, cursor: required(page.nextCursor) },
+      ctx,
+    ),
+  );
+  expect(second.descriptors).toHaveLength(1);
+  const exact = value(
+    await f.store.jobs.discoverOwned({ jobId: first.job.id, limit: 1 }, ctx),
+  );
+  expect(exact.descriptors[0]).toMatchObject({
+    jobId: first.job.id,
+    actorId: "actor1",
+    requestId: "work",
+    handlerId: "synthetic",
+    physicalInputs: [
+      { reference: first.job.input, artifact: first.job.input },
+      { reference: first.job.input, artifact: first.job.input },
+    ],
+  });
+  expect(exact.descriptors[0]).not.toHaveProperty("budget");
+  expect(exact.descriptors[0]).not.toHaveProperty("lease");
+  expect(
+    value(await f.store.jobs.discoverOwned({ jobId: "missing", limit: 1 }, ctx))
+      .descriptors,
+  ).toEqual([]);
+  const foreign = {
+    ...ctx,
+    authorization: { ...ctx.authorization, actorId: "other-owner" },
+  };
+  expect(
+    value(await f.store.jobs.discoverOwned({ limit: 1 }, foreign)).descriptors,
+  ).toEqual([]);
+  await f.reopen();
+  expect(
+    value(
+      await f.store.jobs.discoverOwned({ jobId: first.job.id, limit: 1 }, ctx),
+    ),
+  ).toEqual(exact);
+});
+
+test("discovery requires dedicated current owner policy before existing or missing lookups", async () => {
+  const missing = await setup(1, null);
+  for (const id of ["job-work", "absent"])
+    expect(
+      await missing.store.jobs.discoverOwned(
+        { jobId: id, limit: 1 },
+        missing.ctx(),
+      ),
+    ).toMatchObject({ error: { code: "FORBIDDEN" } });
+  let revoked = false;
+  const f = await setup(1, {
+    authorizeOwner: async (ctx, scope) => {
+      expect(scope).toEqual({
+        projectId: "project1",
+        artifactRootId: "artifact-root",
+        permissionScope: "permission1",
+      });
+      if (revoked || ctx.authorization.actorId !== "actor1")
+        throw Object.assign(new Error("owner denied"), { code: "FORBIDDEN" });
+    },
+  });
+  value(await f.store.jobs.create(f.submission(), f.ctx()));
+  const foreign = f.ctx("observer");
+  foreign.authorization.actorId = "actor2";
+  expect(await f.store.jobs.discoverOwned({ limit: 1 }, foreign)).toMatchObject(
+    { error: { code: "FORBIDDEN" } },
+  );
+  expect(
+    await f.store.jobs.discoverOwned(
+      { limit: 1 },
+      { ...f.ctx(), projectId: "wrong" },
+    ),
+  ).toMatchObject({ status: "failed" });
+  revoked = true;
+  expect(await f.store.jobs.discoverOwned({ limit: 1 }, f.ctx())).toMatchObject(
+    { error: { code: "FORBIDDEN" } },
+  );
+});
+
+test("discovery owns query/context and rechecks revocation before returning descriptors", async () => {
+  let enter: (() => void) | undefined;
+  let proceed: (() => void) | undefined;
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    proceed = resolve;
+  });
+  let calls = 0;
+  let revoked = false;
+  let revokeAfterLookup = false;
+  const f = await setup(1, {
+    authorizeOwner: async () => {
+      if (++calls === 1) {
+        required(enter)();
+        await gate;
+      }
+      if (revoked || (revokeAfterLookup && calls === 4))
+        throw Object.assign(new Error("revoked"), { code: "FORBIDDEN" });
+    },
+  });
+  value(await f.store.jobs.create(f.submission(), f.ctx()));
+  const query = { jobId: "job-work", limit: 1 };
+  const ctx = f.ctx("observer");
+  const pending = f.store.jobs.discoverOwned(query, ctx);
+  await entered;
+  query.jobId = "unknown";
+  ctx.requestId = "mutated";
+  ctx.budget.maxOutputBytes = 1;
+  required(proceed)();
+  const response = await pending;
+  expect(response.requestId).toBe("observer");
+  expect(value(response).descriptors[0]?.jobId).toBe("job-work");
+  expect(calls).toBe(2);
+  revokeAfterLookup = true;
+  expect(await f.store.jobs.discoverOwned({ limit: 1 }, f.ctx())).toMatchObject(
+    { error: { code: "FORBIDDEN" } },
+  );
+  expect(calls).toBe(4);
+  revoked = true;
+  expect(await f.store.jobs.discoverOwned({ limit: 1 }, f.ctx())).toMatchObject(
+    { error: { code: "FORBIDDEN" } },
+  );
+  expect(
+    await f.store.jobs.discoverOwned({ limit: 101 }, f.ctx()),
+  ).toMatchObject({ error: { code: "INPUT_LIMIT" } });
+});
+
+test.each(["reject", "expire", "mutate-auth", "revoke"] as const)(
+  "tracked job binding verifier %s preserves fencing and uncommitted evidence",
+  async (failure) => {
+    const f = await setup();
+    const { record, output } = await completion(f, await claim(f));
+    const physical = required(output.outputs[0]).artifact;
+    const ctx = f.ctx();
+    let revoked = false;
+    f.options.authorize = async (_ctx, scope) => {
+      if (revoked && scope.operation === "write")
+        throw Object.assign(new Error("revoked"), { code: "FORBIDDEN" });
+    };
+    f.options.authorizeArtifactBinding = async () => {
+      if (failure === "reject") throw new Error("semantic denial");
+      if (failure === "expire") f.advance(1000);
+      if (failure === "mutate-auth") ctx.authorization.actorId = "mutated";
+      if (failure === "revoke") revoked = true;
+    };
+    output.referenceBindings = [
+      {
+        reference: { id: "logical-result", sha256: physical.sha256 },
+        artifact: { id: physical.id, sha256: physical.sha256 },
+      },
+    ];
+    expect(
+      await f.store.jobs.commitJob(record.job.id, fence(record), output, ctx),
+    ).toMatchObject({ status: "failed" });
+    revoked = false;
+    expect(
+      value(await f.store.jobs.getJobReceipt(record.job.id, f.ctx())),
+    ).toBeNull();
+    expect(
+      value(await f.store.jobs.get(record.job.id, f.ctx())).rowVersion,
+    ).toBe(record.rowVersion);
+    expect(
+      value(await f.store.jobs.getStages(record.job.id, f.ctx())),
+    ).toHaveLength(1);
+    expect(value(await f.store.collectGarbage(f.ctx())).deleted).toEqual([]);
+  },
+);
+
+test("tracked completion binds logical output atomically and discovery verifies output metadata only", async () => {
+  const f = await setup();
+  f.options.authorizeArtifactBinding = async () => {};
+  const { record, output } = await completion(f, await claim(f));
+  const physical = required(output.outputs[0]).artifact;
+  output.referenceBindings = [
+    {
+      reference: { id: "logical-result", sha256: physical.sha256 },
+      artifact: { id: physical.id, sha256: physical.sha256 },
+    },
+  ];
+  const complete = value(
+    await f.store.jobs.commitJob(record.job.id, fence(record), output, f.ctx()),
+  );
+  expect(
+    value(
+      await f.store.verify(
+        required(output.referenceBindings[0]).reference,
+        f.ctx(),
+      ),
+    ),
+  ).toEqual(physical);
+  f.disk.fs.read = async () => {
+    throw new Error("corrupt bytes, discovery not success");
+  };
+  const page = value(await f.store.jobs.discoverOwned({ limit: 1 }, f.ctx()));
+  expect(page.descriptors[0]?.outputs).toEqual([
+    { id: physical.id, sha256: physical.sha256 },
+  ]);
+  expect(
+    await f.store.jobs.getJobReceipt(record.job.id, f.ctx()),
+  ).toMatchObject({ status: "failed" });
+  expect(complete.record.job.status).toBe("completed");
+});
 test.each([
   { path: "worker", expired: false },
   { path: "worker", expired: true },
@@ -719,7 +942,7 @@ test.each([
       ),
     );
     const backup = value(await f.store.backup(f.ctx("backup")));
-    if (backup.metadata.storageVersion !== 3) throw new Error("Expected v3.");
+    if (backup.metadata.storageVersion !== 4) throw new Error("Expected v4.");
     const record = required(
       backup.metadata.jobs.find((r) => r.job.id === first.job.id),
     );
@@ -1169,7 +1392,7 @@ test("backup roundtrip retains jobs and stages but invalidates live leases and h
   const f = await setup();
   const { record } = await completion(f, await claim(f, ["device1"]));
   const backup = value(await f.store.backup(f.ctx("backup")));
-  expect(backup.metadata.storageVersion).toBe(3);
+  expect(backup.metadata.storageVersion).toBe(4);
   const destination = await mkdtemp(join(tmpdir(), "restored jobs "));
   roots.push(destination);
   const disk = await diskFixture(destination);
@@ -1195,7 +1418,7 @@ test("v2 migration retains a verified backup and rolls back transactional schema
   const db = new Database(f.options.databasePath, { nativeBinding });
   try {
     db.exec(
-      "DROP TABLE job_stages; DROP TABLE job_resources; DROP TABLE jobs; PRAGMA user_version=2",
+      "DROP TABLE artifact_bindings; DROP TABLE job_stages; DROP TABLE job_resources; DROP TABLE jobs; PRAGMA user_version=2",
     );
   } finally {
     db.close();
@@ -1314,7 +1537,7 @@ test("staging reserves cumulative bytes before I/O and retains returned identity
   expect(record.usage.outputBytes).toBe(6);
   expect(record.rowVersion).toBeGreaterThan(running.rowVersion);
   const backup = value(await f.store.backup(f.ctx("backup")));
-  if (backup.metadata.storageVersion !== 3) throw new Error("Expected v3.");
+  if (backup.metadata.storageVersion !== 4) throw new Error("Expected v4.");
   expect(backup.metadata.jobStages).toHaveLength(1);
   expect(backup.metadata.jobStages[0]?.disposition).toBe("recovery-needed");
   expect(
@@ -1429,7 +1652,7 @@ test("immutable submission proof survives backup roundtrip and tampered private 
   const f = await setup();
   await claim(f);
   const backup = value(await f.store.backup(f.ctx("backup")));
-  if (backup.metadata.storageVersion !== 3) throw new Error("Expected v3.");
+  if (backup.metadata.storageVersion !== 4) throw new Error("Expected v4.");
   required(backup.metadata.jobs[0]).usage.externalCalls = 10;
   backup.sha256 = hash(f.options.canonicalBytes(backup.metadata));
   const destination = await mkdtemp(join(tmpdir(), "tampered jobs "));
@@ -1643,7 +1866,7 @@ test("job backup rejects a running job missing one of its all-or-none reservatio
   const f = await setup();
   await claim(f, ["key1"]);
   const backup = value(await f.store.backup(f.ctx("backup")));
-  if (backup.metadata.storageVersion !== 3) throw new Error("Expected v3.");
+  if (backup.metadata.storageVersion !== 4) throw new Error("Expected v4.");
   required(backup.metadata.jobs[0]).resources = [];
   backup.metadata.jobResources = [];
   backup.sha256 = hash(f.options.canonicalBytes(backup.metadata));
@@ -1823,7 +2046,7 @@ test("v2 migration cannot proceed without the mandatory backup durability acknow
   const db = new Database(f.options.databasePath, { nativeBinding });
   try {
     db.exec(
-      "DROP TABLE job_stages; DROP TABLE job_resources; DROP TABLE jobs; PRAGMA user_version=2",
+      "DROP TABLE artifact_bindings; DROP TABLE job_stages; DROP TABLE job_resources; DROP TABLE jobs; PRAGMA user_version=2",
     );
   } finally {
     db.close();
@@ -1836,7 +2059,7 @@ test("v2 migration cannot proceed without the mandatory backup durability acknow
     );
   };
   await expect(LocalStore.open(f.options)).rejects.toMatchObject({
-    code: "IO_FAILURE",
+    code: "ACTION_REQUIRED",
   });
   expect(requestedBackup).toContain(".migration-v2-");
   const unchanged = new Database(f.options.databasePath, { nativeBinding });
@@ -1867,8 +2090,9 @@ test("v2 backup import preserves legacy receipts without inventing historical jo
     jobs: _jobs,
     jobResources: _resources,
     jobStages: _stages,
+    artifactBindings: _bindings,
     ...legacy
-  } = backup.metadata as Extract<typeof backup.metadata, { storageVersion: 3 }>;
+  } = backup.metadata as Extract<typeof backup.metadata, { storageVersion: 4 }>;
   backup.metadata = { storageVersion: 2, ...legacy };
   backup.sha256 = hash(f.options.canonicalBytes(backup.metadata));
   const destination = await mkdtemp(join(tmpdir(), "legacy backup jobs "));

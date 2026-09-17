@@ -2,7 +2,7 @@
 
 F03 local storage core, package version 1.0.0. Shared artifact/revision/review
 contracts remain `@design-studio/contracts` schema 1.0. The private SQLite schema
-is version 3. No renderer, asset decoder, authorization issuer, job scheduler,
+is version 4. No renderer, asset decoder, authorization issuer, job scheduler,
 handoff compiler, live provider, or competing filesystem implementation is here.
 
 **Production composition requires explicit trusted policies.** The stable
@@ -121,6 +121,65 @@ signal and clock references remain live for cancellation/deadlines.
 | `encodeBackup`, `decodeBackup` | Bounded versioned UTF-8 JSON/base64 transport; duplicate keys, invalid encodings and unsupported shapes fail. Decoding does not authenticate approval provenance. |
 | `jobs` | Optional trusted-composition persistent job repository, using this same writer/queue and guarded publication transaction; see below. |
 
+### Logical references without physical artifact relabeling
+
+`LogicalArtifactBinding` is `{reference: ArtifactReference, artifact:
+ArtifactReference}`. The reference is a logical `(id, sha256)` pair, while
+`artifact` identifies the exact physical output with the same SHA-256.
+`RevisionCommit.referenceBindings?` and `JobCompletion.referenceBindings?`
+accept a bounded list. For a job revision completion, put bindings on the
+completion, not its nested revision. No generic alias mutation or raw SQL API
+is exposed.
+
+The v4 `artifact_bindings` table maps immutable logical pairs to physical
+artifact IDs, within the store's existing project/root/permission binding.
+Different hashes under the same logical ID are distinct pinned versions.
+No chains, physical-ID shadowing, duplicate pairs or retargeting an existing
+pair are accepted. Host stages, publication receipts, artifact IDs/paths/media
+types and source fixture bytes remain verbatim. Bindings must name exact outputs
+of the same commit; already committed outputs can use the existing historically
+verified publication-reuse path, never hash-only orphan adoption.
+
+Any nonempty list requires
+`StorageOptions.authorizeArtifactBinding(binding, {artifact, bytes}, context)`.
+This trusted callback must validate installed catalog/provenance and semantic
+logical identity against the exact physical bytes. Its absence, invalid/bounded
+input, or missing logical-write/physical-read-and-write grants fails before
+publication. Inputs/context are owned before enqueue; callback arguments are
+defensive copies. The host has no staged-read port: actual-byte semantic validation
+runs **after physical publication but before the database transaction**. It is
+not pre-publication validation. Rejection, revocation, mutation or deadline/fence
+loss leaves at most uncommitted physical evidence, never binding/receipt/head/job
+success. Storage does not automatically delete that evidence; tracked stage
+journals and the host's owned recovery rules remain authoritative.
+Policy callbacks run under the existing serialized queue; they must use supplied
+evidence/current host policy and must not reenter queued store operations.
+
+Physical bytes are verified, the callback runs, the real durability barrier is
+required, both-ID authority is rechecked, and mappings/physical retention refs
+commit with the receipt and optional revision/head/job in the same transaction.
+Bindings are part of the logical commit digest only when supplied, preserving
+legacy payload digests when absent. `StoredArtifactBinding` adds the originating
+`receiptId`; resolution validates that exact receipt/output/protected-reference
+graph, not merely any matching hash.
+
+`verify(logicalReference, context)` authorizes the logical ID before binding
+lookup, then the resolved physical ID before returning a byte-verified, unchanged
+physical `Artifact`. Direct physical callers retain their legacy root-scoped
+behavior. Jobs still require their existing explicit input grants, now including
+both sides of a bound reference. Internal revision/review/pin/job retention refs
+point to physical rows, so GC cannot evict logically referenced content.
+`verifyRevision` evidence now carries `{reference, artifact, bytes}`: the first
+field is the exact logical reference, the second the unchanged physical artifact.
+F02 shared contracts and implementation are unchanged.
+
+`BINDING_LIMITS` exports 128 bindings/commit, 20,000/store and a 25-MiB binding
+metadata ceiling. Admission checks bounded metadata/count before publication;
+snapshot and aggregate read budgets still apply. Restore validates hashes,
+physical targets, no chains/shadows, receipt provenance and all protected refs;
+it requires trusted restore/binding authorization and current destination
+publication barriers. It cannot fabricate historical publication assurance.
+
 `requestId` is the logical idempotency key for the current shared ArtifactStore
 contract. Scope is project + trusted actor + `write` + requestId; payload
 identity includes exact output metadata and revision/base/branch content.
@@ -157,6 +216,7 @@ exported. Shared Job/Lease/Receipt/schema version 1.0 remains unchanged.
 | `get(id, context)`, `getJobReceipt(id, context)` | Authorize before lookup; completed reads verify original-owner logical scope, authoritative Job/receipt binding, protected output refs and actual bytes. Observers need not be the submitting actor. |
 | `scan(query, context)` | Explicit state list, limit, optional due cutoff and `(createdAt,id)` cursor. Only IDs covered by current explicit job-read grants are selected. Stable oldest-created/ID ordering; no wildcard/existence-only polling. |
 | `getStages(id, context)` | Bounded exact stage-journal snapshot under root/job-read authority; metadata is evidence, never cleanup permission. |
+| `discoverOwned(query, context)` | Optional trusted owner-only descriptor discovery for narrow issuer bootstrap; no public HTTP route or ordinary object-auth bypass. See below. |
 | `claim(id, expected, ownerId, durationMs, context)` | Exact state/version; queued or due retry only. Atomically acquires every sorted key or none, increments attempt and durable job/resource generations, enforces trusted worker ceiling, attempts and deadlines. Retained execution leases occupy capacity even when interrupted or expired, until a confirmed-stop transition releases them. |
 | `heartbeat(id, expected, extensionMs, context)` | Original live lease required, including at transaction exit. Extension cannot resurrect a lease and is capped by original job/current context/current grant deadline. |
 | `update(id, expected, command, context)` | Discriminated progress, reserve/settle usage, wait/retry/fail/interrupt, or acknowledge-cancel. No arbitrary patch. Wait/retry/fail/cancel acknowledgment means the trusted handler has actually stopped; unresolved effects prohibit release. Interrupt quarantines resources. |
@@ -207,6 +267,43 @@ before JSON receipt traversal/materialization. New admission checks the resultin
 metadata byte size inside the transaction. Exact replay at a count cap remains
 read-only; over-profile databases fail explicitly. No external dependency,
 in-memory dedupe, second DB, outbox or alternate writer is involved.
+
+### Trusted restart discovery
+
+`JobStorageOptions.discovery?: {authorizeOwner(context, scope): Promise<void>}`
+is an additional composition policy, not an issuance callback. `scope` is the
+frozen `{projectId, artifactRootId, permissionScope}`. The policy must authenticate
+the genuine current owner/native project binding and fixed installed catalog.
+Ordinary root authorization plus this policy runs before job lookup, including
+exact-ID lookups and absent results, and owner policy is rechecked before return.
+No configured discovery policy fails closed. Context retains exact proof/signal
+and the trusted shared clock; a caller cannot choose another actor or clock.
+
+`jobs.discoverOwned(JobDiscoveryQuery, context)` returns
+`Outcome<JobDiscoveryPage>`. Query is `{limit, jobId?, states?, cursor?}`, with
+at most 100 entries, optional exact job ID, and the stable `(createdAt,id)`
+cursor. Unknown/foreign-owner exact IDs return an empty authorized page.
+The query is snapshotted before await; no actor selector is accepted. Aggregate
+job metadata/row/control bounds run before row materialization. Data comes from
+the authoritative jobs table, not a second job index.
+
+Each `JobDiscoveryDescriptor` contains `jobId`, `projectId`, `actorId`,
+`requestId`, `operation`, `status`, `rowVersion`, `input`, `resources`,
+optional `inputRevision: {id,sha256,designId}`, `handlerId`, `handlerVersion`,
+`authorityRef`, `physicalInputs` (logical reference plus resolved physical
+reference pairs), and `outputs` (committed physical output references).
+The descriptor omits payload bytes, budgets, controls, leases, effects and secrets.
+Physical input refs must have committed protected evidence; output refs require
+the exact authoritative Job/receipt/physical metadata/protected-ref binding.
+**Discovery never reads bytes or claims successful receipt integrity.** A later
+ordinary authorized `get`/`getJobReceipt` must still verify actual bytes.
+
+F08 independently revalidates every descriptor against the current principal,
+fixed project/design catalog, handler/version and authority policy, then issues
+fresh narrow grants for exact job/revision/logical and physical artifact IDs.
+Descriptors and row versions are evidence for that decision, not authorization.
+F07 can then use the unchanged regular scan/get/claim ports. No wildcard,
+implicit admin, token minting, automatic worker restart or egress is added here.
 
 Fixed foundation bounds exported by `JOB_STORAGE_LIMITS`: 20,000 retained jobs
 (terminal history included), 20,000 resource counters and total journal rows;
@@ -378,23 +475,25 @@ host's durable write boundary; returning encoded bytes does not persist a file.
 
 Fresh empty SQLite databases initialize atomically. Foreign application IDs,
 unknown schema versions, nonempty unversioned databases, wrong project/root/scope
-and SQLite integrity errors fail closed. The supported v1->v3 migration adds the content-hash index and private job tables;
-v2->v3 adds only private job tables. Neither rewrites accepted artifacts/revisions
+and SQLite integrity errors fail closed. The supported v1->v4 migration adds the content-hash index, private job tables and binding table;
+v2->v4 adds jobs and bindings, and v3->v4 adds only bindings. None rewrites accepted artifacts/revisions
 or fabricates historical jobs.
 Version 1 is the tested synthetic predecessor layout, not a claim that an
 earlier storage release or existing user project was migrated.
 Each upgrade first creates a uniquely named `.migration-v<old>-<uuid>.sqlite` backup, reopens
 and integrity-checks it, and calls mandatory `ensureDatabaseBackupDurable`.
-Only then does a transaction alter schema/user_version. Failure retains the
+Only then does a transaction alter schema/user_version. Missing/rejected backup
+durability proof raises typed `ACTION_REQUIRED`, retaining original schema and
+verified backup. No production no-op acknowledgment is provided. Failure retains the
 original schema and backup; automatic destructive rollback is not attempted.
 Restore a retained database backup to a newly provisioned local destination
 with the service stopped, after verifying its version/integrity and matching
 blob inventory. DesignIR schema migrations remain F02 operations creating new
 revisions, not database history rewrites.
 
-New backups carry `storageVersion: 3`, including original submissions, bounded
+New backups carry `storageVersion: 4`, including logical bindings, original submissions, bounded
 usage/effects, durable resource counters and exact stage history. Transport format
-1 also accepts supported v2 metadata without inventing jobs. Restore validates
+1 also accepts supported v2/v3 metadata without inventing jobs or bindings. Restore validates
 nested private shapes, submission digests, limits, receipt/owner/resource/stage
 graph and protected inputs/outputs. All destination blobs still cross the current
 mandatory publication barrier. Restore increments job versions/generations and
@@ -476,7 +575,7 @@ and replays its original precondition, and preserves a completed-job control
 through current-barrier restore. Current scoped verification is 135 storage unit
 tests and five storage/native smoke tests, plus build/typecheck/package lint.
 
-`jobs-host.smoke.test.ts` composes fresh v3 SQLite with the actual trusted local
+`jobs-host.smoke.test.ts` composes fresh v4 SQLite with the actual trusted local
 session authenticator, branded context snapshots, F02 canonical bytes and native
 NTFS publication. It commits jobs, restarts the host, reuses operation-bound
 historical outputs and restores under current destination barriers while
@@ -484,6 +583,24 @@ preserving legacy receipts. The native fixture's migration durability hook
 explicitly fails outside fresh initialization: physical migration backup-file
 durability integration remains unresolved, not replaced with a fake success.
 Logical migration tests explicitly acknowledge simulated durability only.
+
+The v4 extension observed RED for unchanged logical resource-lock resolution,
+missing owner discovery, and publication before absent binding authority was
+checked. Additional regressions cover verifier failure/expiry/auth mutation after
+publication for both legacy revisions and tracked completion, current revocation,
+snapshot ownership, dual-ID access, binding graph corruption/duplicates/shadows,
+v3 migration rollback/backup and v2/v3 import compatibility, and bounded owner
+pagination/exact lookup with no byte reads.
+`bindings-host.smoke.test.ts` accepts the unchanged settings-screen DesignIR,
+raw `resources_synthetic` snapshot (SHA-256 `0bb106f87cc8293727acee68c32d4a5bd83d44690ab1020b6301bdbaf6c502d9`)
+and its logical dependency references through actual NTFS publication, verifies
+the original lock using F02, creates a job, reopens the store and bootstraps fresh
+exact grants from root-only owner discovery. This validates storage/host/F02
+composition, not the full F08 HTTP/renderer/installed-principal flow.
+Final scoped checks for this extension: 164 storage unit tests, eight
+storage/root/native smoke tests, storage build then source/test typecheck and
+package lint; the integrated F07 consumer also builds and passes 122 unit tests.
+Existing pinned tools were invoked directly without installs or root changes.
 
 Remaining integration gates: production F07 scheduler/F08 fresh execution and
 recovery issuer; operation-specific completeness and actual-stop/effect policy;

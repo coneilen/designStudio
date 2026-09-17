@@ -63,6 +63,10 @@ function value<T>(outcome: Outcome<T>): T {
   if (outcome.status !== "complete") throw new Error(JSON.stringify(outcome));
   return outcome.value;
 }
+function required<T>(input: T | undefined): T {
+  if (input === undefined) throw new Error("Missing fixture value.");
+  return input;
+}
 async function setup(overrides: Partial<StorageOptions> = {}) {
   const root = await mkdtemp(join(tmpdir(), "storage \u00e9 "));
   roots.push(root);
@@ -103,6 +107,502 @@ const fixture: { payloads: string[] } = JSON.parse(
     "utf8",
   ),
 );
+test("logical bindings preserve physical publication and protect pinned revision references across restore", async () => {
+  const seen: string[] = [];
+  const { store } = await setup({
+    authorizeArtifactBinding: async (binding, evidence) => {
+      expect(hash(evidence.bytes)).toBe(binding.reference.sha256);
+      expect(evidence.artifact.id).toBe(binding.artifact.id);
+      seen.push(binding.reference.id);
+    },
+    verifyRevision: async (revision, _context, evidence) => {
+      expect(evidence[2]?.reference.id).toBe(revision.resources.snapshotId);
+      expect(evidence[2]?.artifact.id).not.toBe(revision.resources.snapshotId);
+    },
+  });
+  const outputs = await stage(store);
+  const rev = revision(
+    "bound-revision",
+    outputs.map((s) => s.artifact),
+  );
+  rev.resources.snapshotId = "resources_synthetic";
+  const physical = required(outputs[2]).artifact;
+  const reference = { id: "resources_synthetic", sha256: physical.sha256 };
+  const request = {
+    branch: "bound",
+    base: null,
+    revision: rev,
+    outputs,
+    referenceBindings: [
+      { reference, artifact: { id: physical.id, sha256: physical.sha256 } },
+    ],
+  };
+  const receipt = value(await store.commitRevision(request, context()));
+  expect(receipt.outputs[2]).toEqual(physical);
+  expect(value(await store.verify(reference, context()))).toEqual(physical);
+  expect(seen).toEqual(["resources_synthetic"]);
+  expect(value(await store.commitRevision(request, context()))).toEqual(
+    receipt,
+  );
+  const backup = value(await store.backup(context("backup")));
+  expect(backup.metadata.storageVersion).toBe(4);
+  const destination = await setup({ authorizeArtifactBinding: async () => {} });
+  value(
+    await destination.store.restore(
+      decodeBackup(encodeBackup(backup, 26214400), 26214400),
+      context("restore"),
+    ),
+  );
+  expect(value(await destination.store.verify(reference, context()))).toEqual(
+    physical,
+  );
+});
+
+test("bindings fail closed before publication without trusted composition", async () => {
+  const { store, disk } = await setup();
+  const outputs = await stage(store);
+  const rev = revision(
+    "bound",
+    outputs.map((s) => s.artifact),
+  );
+  rev.resources.snapshotId = "logical";
+  const physical = required(outputs[2]).artifact;
+  let publications = 0;
+  const publish = disk.fs.publish;
+  disk.fs.publish = async (...args) => {
+    publications++;
+    return publish(...args);
+  };
+  expect(
+    await store.commitRevision(
+      {
+        branch: "main",
+        base: null,
+        revision: rev,
+        outputs,
+        referenceBindings: [
+          {
+            reference: { id: "logical", sha256: physical.sha256 },
+            artifact: { id: physical.id, sha256: physical.sha256 },
+          },
+        ],
+      },
+      context(),
+    ),
+  ).toMatchObject({ status: "failed", error: { code: "FORBIDDEN" } });
+  expect(publications).toBe(0);
+});
+test.each(["reject", "expire", "mutate-auth", "transaction"] as const)(
+  "logical binding %s after publication leaves no authoritative aliases, receipt or head",
+  async (failure) => {
+    const ctx = context("binding-failure");
+    const { store } = await setup({
+      authorizeArtifactBinding: async () => {
+        if (failure === "reject") throw new Error("Synthetic semantic denial.");
+        if (failure === "expire")
+          ctx.clock.now = () => Date.parse(ctx.deadline);
+        if (failure === "mutate-auth") ctx.authorization.actorId = "changed";
+      },
+      fault: (point) => {
+        if (failure === "transaction" && point === "before-commit")
+          throw new Error("rollback");
+      },
+    });
+    const outputs = await stage(store);
+    const rev = revision(
+      "logical-failure",
+      outputs.map((s) => s.artifact),
+    );
+    rev.resources.snapshotId = "logical-resource";
+    const physical = required(outputs[2]).artifact;
+    expect(
+      await store.commitRevision(
+        {
+          branch: "main",
+          base: null,
+          revision: rev,
+          outputs,
+          referenceBindings: [
+            {
+              reference: { id: "logical-resource", sha256: physical.sha256 },
+              artifact: { id: physical.id, sha256: physical.sha256 },
+            },
+          ],
+        },
+        ctx,
+      ),
+    ).toMatchObject({ status: "failed" });
+    expect(
+      value(await store.getHead(rev.designId, "main", context())),
+    ).toBeNull();
+    expect(
+      value(await store.getReceipt("binding-failure", context())),
+    ).toBeNull();
+    expect(
+      await store.verify(
+        { id: "logical-resource", sha256: physical.sha256 },
+        context(),
+      ),
+    ).toMatchObject({ status: "failed" });
+    expect(value(await store.recover(context())).orphanPaths).toHaveLength(
+      outputs.length,
+    );
+  },
+);
+
+test("binding snapshots are owned and both logical and physical resolve grants are checked", async () => {
+  const { store, options } = await setup({
+    authorizeArtifactBinding: async () => {},
+  });
+  const outputs = await stage(store);
+  const rev = revision(
+    "logical-owned",
+    outputs.map((s) => s.artifact),
+  );
+  rev.resources.snapshotId = "logical-resource";
+  const physical = required(outputs[2]).artifact;
+  const reference = { id: "logical-resource", sha256: physical.sha256 };
+  const request = {
+    branch: "main",
+    base: null,
+    revision: rev,
+    outputs,
+    referenceBindings: [
+      { reference, artifact: { id: physical.id, sha256: physical.sha256 } },
+    ],
+  };
+  const pending = store.commitRevision(request, context());
+  reference.id = "mutated";
+  value(await pending);
+  const visited: string[] = [];
+  options.authorize = async (_ctx, scope) => {
+    visited.push(scope.resourceId);
+    if (scope.resourceId === physical.id)
+      throw Object.assign(new Error("denied"), { code: "FORBIDDEN" });
+  };
+  expect(
+    await store.verify(
+      { id: "logical-resource", sha256: physical.sha256 },
+      context(),
+    ),
+  ).toMatchObject({ error: { code: "FORBIDDEN" } });
+  expect(visited).toContain("logical-resource");
+  expect(visited).toContain(physical.id);
+  visited.length = 0;
+  options.authorize = async (_ctx, scope) => {
+    visited.push(scope.resourceId);
+    if (scope.resourceId === "logical-resource")
+      throw Object.assign(new Error("denied"), { code: "FORBIDDEN" });
+  };
+  expect(
+    await store.verify(
+      { id: "logical-resource", sha256: physical.sha256 },
+      context(),
+    ),
+  ).toMatchObject({ error: { code: "FORBIDDEN" } });
+  expect(visited).not.toContain(physical.id);
+});
+
+test.each(["hash", "duplicate", "chain", "unreferenced"] as const)(
+  "invalid %s binding fails before publication",
+  async (kind) => {
+    const { store, disk } = await setup({
+      authorizeArtifactBinding: async () => {},
+    });
+    const outputs = await stage(store);
+    const rev = revision(
+      "invalid-bound",
+      outputs.map((s) => s.artifact),
+    );
+    const physical = required(outputs[2]).artifact;
+    const binding = {
+      reference: { id: "logical", sha256: physical.sha256 },
+      artifact: { id: physical.id, sha256: physical.sha256 },
+    };
+    const bound = [binding];
+    if (kind === "hash") binding.reference.sha256 = "a".repeat(64);
+    if (kind === "duplicate") bound.push(structuredClone(binding));
+    if (kind === "chain")
+      bound.push({
+        reference: binding.artifact,
+        artifact: { id: "another", sha256: physical.sha256 },
+      });
+    if (kind === "unreferenced") binding.artifact.id = "not-output";
+    let published = 0;
+    const publish = disk.fs.publish;
+    disk.fs.publish = async (...args) => {
+      published++;
+      return publish(...args);
+    };
+    expect(
+      await store.commitRevision(
+        {
+          branch: "main",
+          base: null,
+          revision: rev,
+          outputs,
+          referenceBindings: bound,
+        },
+        context(),
+      ),
+    ).toMatchObject({ status: "failed" });
+    expect(published).toBe(0);
+  },
+);
+
+test.each([false, true])(
+  "v3-to-v4 migration retains backup and rolls back on failure=%s",
+  async (fail) => {
+    const { store, options, root } = await setup();
+    await seed(store);
+    store.close();
+    const db = new Database(options.databasePath, {
+      nativeBinding: options.nativeBinding,
+    });
+    try {
+      db.exec("DROP TABLE artifact_bindings; PRAGMA user_version=3");
+    } finally {
+      db.close();
+    }
+    const operation = LocalStore.open({
+      ...options,
+      fault: (point) => {
+        if (fail && point === "migration-before-commit")
+          throw new Error("injected");
+      },
+    });
+    if (fail) await expect(operation).rejects.toThrow();
+    else {
+      const migrated = await operation;
+      stores.push(migrated);
+      expect(
+        value(await migrated.getReceipt("request1", context())),
+      ).not.toBeNull();
+      migrated.close();
+    }
+    const original = new Database(options.databasePath, {
+      nativeBinding: options.nativeBinding,
+    });
+    try {
+      expect(original.pragma("user_version", { simple: true })).toBe(
+        fail ? 3 : 4,
+      );
+    } finally {
+      original.close();
+    }
+    const copyName = (await readdir(root)).find((name) =>
+      name.includes(".migration-v3-"),
+    );
+    expect(copyName).toBeDefined();
+    const copy = new Database(join(root, copyName ?? ""), {
+      nativeBinding: options.nativeBinding,
+      readonly: true,
+    });
+    try {
+      expect(copy.pragma("integrity_check", { simple: true })).toBe("ok");
+      expect(copy.pragma("user_version", { simple: true })).toBe(3);
+    } finally {
+      copy.close();
+    }
+  },
+);
+async function boundSeed() {
+  const f = await setup({ authorizeArtifactBinding: async () => {} });
+  const outputs = await stage(f.store);
+  const rev = revision(
+    "bound",
+    outputs.map((s) => s.artifact),
+  );
+  rev.resources.snapshotId = "logical-resource";
+  const physical = required(outputs[2]).artifact;
+  const reference = { id: rev.resources.snapshotId, sha256: physical.sha256 };
+  const request = {
+    branch: "main",
+    base: null,
+    revision: rev,
+    outputs,
+    referenceBindings: [
+      { reference, artifact: { id: physical.id, sha256: physical.sha256 } },
+    ],
+  };
+  const receipt = value(await f.store.commitRevision(request, context()));
+  return { ...f, reference, physical, request, receipt };
+}
+
+test.each([
+  "duplicate",
+  "receipt",
+  "hash",
+  "shadow",
+  "missing-target",
+] as const)(
+  "restore refuses %s logical binding evidence without publishing destination data",
+  async (kind) => {
+    const f = await boundSeed();
+    const backup = value(await f.store.backup(context("backup")));
+    if (backup.metadata.storageVersion !== 4) throw new Error("Expected v4.");
+    const entry = required(backup.metadata.artifactBindings[0]);
+    if (kind === "duplicate")
+      backup.metadata.artifactBindings.push(structuredClone(entry));
+    if (kind === "receipt") entry.receiptId = "invented-receipt";
+    if (kind === "hash") entry.reference.sha256 = "a".repeat(64);
+    if (kind === "shadow")
+      entry.reference.id = required(backup.metadata.artifacts[0]).id;
+    if (kind === "missing-target") entry.artifact.id = "invented-physical";
+    backup.sha256 = hash(f.options.canonicalBytes(backup.metadata));
+    let published = 0;
+    const target = await setup({ authorizeArtifactBinding: async () => {} });
+    const publish = target.disk.fs.publish;
+    target.disk.fs.publish = async (...args) => {
+      published++;
+      return publish(...args);
+    };
+    expect(
+      await target.store.restore(backup, context("restore")),
+    ).toMatchObject({ status: "failed" });
+    expect(published).toBe(0);
+    expect(
+      value(await target.store.getHead("design1", "main", context())),
+    ).toBeNull();
+  },
+);
+
+test("logical reference versions are immutable pairs and missing protection fails closed", async () => {
+  const f = await boundSeed();
+  const nextOutputs = await stage(f.store, [
+    "new-content",
+    "new-provenance",
+    "new-resource",
+  ]);
+  const rev = revision(
+    "version-two",
+    nextOutputs.map((s) => s.artifact),
+    ["bound"],
+  );
+  rev.resources.snapshotId = f.reference.id;
+  const physical = required(nextOutputs[2]).artifact;
+  const reference = { id: f.reference.id, sha256: physical.sha256 };
+  value(
+    await f.store.commitRevision(
+      {
+        branch: "main",
+        base: {
+          expectedBaseRevision: "bound",
+          ifMatch: `"${f.request.revision.content.sha256}"`,
+        },
+        revision: rev,
+        outputs: nextOutputs,
+        referenceBindings: [
+          { reference, artifact: { id: physical.id, sha256: physical.sha256 } },
+        ],
+      },
+      context("second"),
+    ),
+  );
+  expect(value(await f.store.verify(f.reference, context()))).toEqual(
+    f.physical,
+  );
+  expect(value(await f.store.verify(reference, context()))).toEqual(physical);
+  f.store.close();
+  const db = new Database(f.options.databasePath, {
+    nativeBinding: f.options.nativeBinding,
+  });
+  try {
+    db.exec("DELETE FROM artifact_refs WHERE owner_kind='binding'");
+  } finally {
+    db.close();
+  }
+  const reopened = await LocalStore.open(f.options);
+  stores.push(reopened);
+  expect(await reopened.verify(f.reference, context())).toMatchObject({
+    error: { code: "ARTIFACT_INTEGRITY" },
+  });
+  expect(await reopened.backup(context("backup"))).toMatchObject({
+    error: { code: "ARTIFACT_INTEGRITY" },
+  });
+});
+
+test("binding capacity is bounded before publication and older v3 backups invent no mappings", async () => {
+  const f = await boundSeed();
+  const output = required(f.request.outputs[2]);
+  const excessive = Array.from({ length: 129 }, (_, i) => ({
+    reference: { id: `alias-${i}`, sha256: output.artifact.sha256 },
+    artifact: { id: output.artifact.id, sha256: output.artifact.sha256 },
+  }));
+  expect(
+    await f.store.commitRevision(
+      { ...f.request, referenceBindings: excessive },
+      context(),
+    ),
+  ).toMatchObject({ error: { code: "INPUT_LIMIT" } });
+  const plain = await setup();
+  await seed(plain.store);
+  const backup = value(await plain.store.backup(context("backup")));
+  if (backup.metadata.storageVersion !== 4) throw new Error("Expected v4.");
+  const { artifactBindings: _bindings, ...metadata } = backup.metadata;
+  backup.metadata = { ...metadata, storageVersion: 3 };
+  backup.sha256 = hash(plain.options.canonicalBytes(backup.metadata));
+  const destination = await setup();
+  value(
+    await destination.store.restore(
+      decodeBackup(encodeBackup(backup, 26214400), 26214400),
+      context("restore"),
+    ),
+  );
+  const roundtrip = value(await destination.store.backup(context("backup")));
+  if (roundtrip.metadata.storageVersion !== 4) throw new Error("Expected v4.");
+  expect(roundtrip.metadata.artifactBindings).toEqual([]);
+  expect(
+    value(await destination.store.getReceipt("request1", context())),
+  ).not.toBeNull();
+});
+
+test("revoked binding authority after byte validation prevents any authoritative completion", async () => {
+  let revoked = false;
+  const f = await setup({
+    authorizeArtifactBinding: async () => {
+      revoked = true;
+    },
+    authorize: async (_ctx, scope) => {
+      if (
+        revoked &&
+        scope.resourceKind === "artifact" &&
+        scope.operation === "write"
+      )
+        throw Object.assign(new Error("revoked"), { code: "FORBIDDEN" });
+    },
+  });
+  const outputs = await stage(f.store);
+  const rev = revision(
+    "revoked-bind",
+    outputs.map((s) => s.artifact),
+  );
+  const physical = required(outputs[2]).artifact;
+  rev.resources.snapshotId = "logical";
+  expect(
+    await f.store.commitRevision(
+      {
+        branch: "main",
+        base: null,
+        revision: rev,
+        outputs,
+        referenceBindings: [
+          {
+            reference: { id: "logical", sha256: physical.sha256 },
+            artifact: { id: physical.id, sha256: physical.sha256 },
+          },
+        ],
+      },
+      context(),
+    ),
+  ).toMatchObject({ error: { code: "FORBIDDEN" } });
+  revoked = false;
+  expect(
+    value(await f.store.getHead(rev.designId, "main", context())),
+  ).toBeNull();
+  expect(value(await f.store.getReceipt("request1", context()))).toBeNull();
+});
+
 async function stage(
   store: LocalStore,
   texts = fixture.payloads,
@@ -731,7 +1231,7 @@ describe.skipIf(process.platform !== "win32" || process.arch !== "x64")(
         });
         db.exec("DROP INDEX artifact_hash");
         db.exec(
-          "DROP TABLE job_stages; DROP TABLE job_resources; DROP TABLE jobs",
+          "DROP TABLE artifact_bindings; DROP TABLE job_stages; DROP TABLE job_resources; DROP TABLE jobs",
         );
         db.pragma("user_version = 1");
         db.close();
@@ -767,7 +1267,7 @@ describe.skipIf(process.platform !== "win32" || process.arch !== "x64")(
           nativeBinding: options.nativeBinding,
         });
         expect(original.pragma("user_version", { simple: true })).toBe(
-          fail ? 1 : 3,
+          fail ? 1 : 4,
         );
         original.close();
       },

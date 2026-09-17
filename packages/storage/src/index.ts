@@ -21,11 +21,18 @@ import {
 } from "@design-studio/contracts";
 import Database from "better-sqlite3";
 import { backupMetadata } from "./backup-codec.js";
+import {
+  ArtifactBindings,
+  BINDING_LIMITS,
+  bindingKey,
+  bindings,
+} from "./bindings.js";
 import { openDatabase } from "./database.js";
 import type { JobRepository } from "./job-types.js";
 import { type JobCommitHooks, StoredJobs } from "./jobs.js";
 import {
   type BackupMetadata,
+  type LogicalArtifactBinding,
   type ProjectBackup,
   type RecoveryReport,
   type RetentionPin,
@@ -37,6 +44,7 @@ import {
 } from "./types.js";
 
 export { decodeBackup, encodeBackup } from "./backup-codec.js";
+export { BINDING_LIMITS } from "./bindings.js";
 export { JOB_LIMITS as JOB_STORAGE_LIMITS } from "./job-codec.js";
 export * from "./job-types.js";
 export * from "./types.js";
@@ -104,6 +112,7 @@ function approvalRefs(context: ApprovalContext): ArtifactReference[] {
 export class LocalStore implements ArtifactStore {
   readonly jobs: JobRepository;
   private readonly jobStore: StoredJobs;
+  private readonly bindingStore: ArtifactBindings;
   private queue: Promise<unknown> = Promise.resolve();
   private closed = false;
   private active = 0;
@@ -121,6 +130,7 @@ export class LocalStore implements ArtifactStore {
     private readonly db: Database.Database,
     private readonly options: StorageOptions,
   ) {
+    this.bindingStore = new ArtifactBindings(db);
     this.jobStore = new StoredJobs({
       db,
       options,
@@ -133,6 +143,21 @@ export class LocalStore implements ArtifactStore {
       digest: (value) => this.digest(value),
       read: (artifact, context) => this.read(artifact, context),
       artifact: (reference) => this.artifact(reference),
+      authorizeReference: (reference, context) =>
+        this.authorizeReference(reference, context),
+      describeRevision: (reference) => {
+        const revision = this.row("revisions", reference.id, "Revision");
+        if (
+          !revision ||
+          revision.projectId !== options.projectId ||
+          revision.content.sha256 !== reference.sha256
+        )
+          throw new StorageError(
+            "INTEGRITY",
+            "Discovery input revision binding is inconsistent.",
+          );
+        return { ...reference, designId: revision.designId };
+      },
       hasCommittedPublication: (artifact) =>
         this.hasCommittedPublication(artifact),
       refs: (kind, id, references) => this.refs(kind, id, references),
@@ -401,14 +426,100 @@ export class LocalStore implements ArtifactStore {
       .get(id);
     return result ? parseContract(contract, result.data, "json") : undefined;
   }
-  private artifact(reference: ArtifactReference): Artifact {
-    const artifact = this.row("artifacts", reference.id, "Artifact");
+  private artifact(
+    reference: ArtifactReference,
+    verifyBinding = true,
+  ): Artifact {
+    const binding = this.bindingStore.get(reference);
+    if (binding && this.row("artifacts", reference.id, "Artifact"))
+      throw new StorageError(
+        "INTEGRITY",
+        "Logical binding shadows a physical artifact.",
+      );
+    const artifact = this.row(
+      "artifacts",
+      binding?.artifact.id ?? reference.id,
+      "Artifact",
+    );
     if (!artifact || artifact.sha256 !== reference.sha256)
       throw new StorageError(
         "NOT_FOUND",
         "Pinned artifact is unavailable in this project.",
       );
+    if (binding && verifyBinding) this.bindingEvidence(binding, artifact);
     return artifact;
+  }
+  private bindingEvidence(
+    binding: LogicalArtifactBinding & { receiptId: string },
+    artifact: Artifact,
+  ): void {
+    if (
+      binding.artifact.id !== artifact.id ||
+      binding.artifact.sha256 !== artifact.sha256
+    )
+      throw new StorageError(
+        "INTEGRITY",
+        "Binding target differs from physical artifact.",
+      );
+    const receiptRows = this.db
+      .prepare<[string], { scope: string; data: string }>(
+        "SELECT scope,data FROM receipts WHERE json_extract(data,'$.id')=? LIMIT 2",
+      )
+      .all(binding.receiptId);
+    const row = receiptRows[0];
+    if (receiptRows.length !== 1 || !row)
+      throw new StorageError(
+        "INTEGRITY",
+        "Binding lacks its committed receipt.",
+      );
+    const receipt = parseContract("CommitReceipt", row.data, "json");
+    const scope = receipt.idempotency;
+    const expected = this.jobStore.tracked(receipt.jobId)
+      ? this.jobStore.receiptScope(this.jobStore.load(receipt.jobId))
+      : JSON.stringify([
+          this.options.projectId,
+          scope.actorId,
+          "write",
+          scope.key,
+        ]);
+    if (
+      row.scope !== expected ||
+      receipt.projectId !== this.options.projectId ||
+      scope.projectId !== this.options.projectId ||
+      (this.jobStore.tracked(receipt.jobId)
+        ? !this.jobStore.receiptConsistent(
+            this.jobStore.load(receipt.jobId),
+            receipt,
+          )
+        : scope.operation !== "write") ||
+      !receipt.outputs.some((output) => this.equal(output, artifact)) ||
+      !this.db
+        .prepare(
+          "SELECT 1 FROM artifact_refs WHERE owner_kind='binding' AND owner_id=? AND artifact_id=?",
+        )
+        .get(bindingKey(binding.reference), artifact.id) ||
+      !this.db
+        .prepare(
+          "SELECT 1 FROM artifact_refs WHERE owner_kind='job' AND owner_id=? AND artifact_id=?",
+        )
+        .get(receipt.id, artifact.id)
+    )
+      throw new StorageError(
+        "INTEGRITY",
+        "Binding publication/protection graph is inconsistent.",
+      );
+  }
+  private async authorizeReference(
+    reference: ArtifactReference,
+    context: OperationContext,
+    legacyPhysical = false,
+  ): Promise<void> {
+    if (legacyPhysical && this.row("artifacts", reference.id, "Artifact"))
+      return;
+    await this.guard(context, "read", "artifact", reference.id);
+    const binding = this.bindingStore.get(reference);
+    if (binding)
+      await this.guard(context, "read", "artifact", binding.artifact.id);
   }
   private async read(
     artifact: Artifact,
@@ -451,11 +562,12 @@ export class LocalStore implements ArtifactStore {
       "INSERT OR IGNORE INTO artifact_refs VALUES (?,?,?)",
     );
     for (const reference of references) {
-      this.artifact(reference);
-      insert.run(kind, owner, reference.id);
+      const artifact = this.artifact(reference, false);
+      insert.run(kind, owner, artifact.id);
     }
   }
   private putArtifact(artifact: Artifact): void {
+    this.bindingStore.checkPhysical(artifact);
     const prior = this.row("artifacts", artifact.id, "Artifact");
     if (prior && !this.equal(prior, artifact))
       throw new StorageError("CONFLICT", "Artifact identity is immutable.");
@@ -523,12 +635,15 @@ export class LocalStore implements ArtifactStore {
     reference: ArtifactReference,
     context: OperationContext,
   ): Promise<Outcome<Artifact>> {
-    return this.run(context, "read", async (context) => {
-      check("ArtifactReference", reference);
-      const artifact = this.artifact(reference);
-      await this.read(artifact, context);
-      return artifact;
-    });
+    return this.snapshot(reference, context, "read", (reference) =>
+      this.run(context, "read", async (context) => {
+        check("ArtifactReference", reference);
+        await this.authorizeReference(reference, context, true);
+        const artifact = this.artifact(reference);
+        await this.read(artifact, context);
+        return artifact;
+      }),
+    );
   }
 
   commit(
@@ -596,6 +711,37 @@ export class LocalStore implements ArtifactStore {
       await this.guard(context, "write", "job", context.jobId);
       if (hooks) await hooks.prepare(context);
       else this.jobStore.assertLegacyAvailable(context);
+      const suppliedBindings =
+        hooks?.payload.referenceBindings ?? request?.referenceBindings;
+      const bound =
+        suppliedBindings === undefined ? [] : bindings(suppliedBindings);
+      if (bound.length && !this.options.authorizeArtifactBinding)
+        throw new StorageError(
+          "AUTHORIZATION_CHANGED",
+          "Logical bindings require trusted composition.",
+        );
+      this.bindingStore.bounds();
+      this.bindingStore.admit(bound);
+      this.boundRows("receipts");
+      for (const item of bound) {
+        await this.guard(context, "write", "artifact", item.reference.id);
+        await this.guard(context, "read", "artifact", item.artifact.id);
+        await this.guard(context, "write", "artifact", item.artifact.id);
+        this.bindingStore.validate(item);
+        if (
+          !outputs.some(
+            (output) =>
+              output.artifact.id === item.artifact.id &&
+              output.artifact.sha256 === item.artifact.sha256,
+          ) ||
+          outputs.some((output) => output.artifact.id === item.reference.id) ||
+          bound.some((other) => other.reference.id === item.artifact.id)
+        )
+          throw new StorageError(
+            "CONFLICT",
+            "Bindings require exact declared physical outputs without chains/shadowing.",
+          );
+      }
       if (outputs.length > 20000)
         throw new StorageError("LIMIT", "Too many outputs.");
       for (const output of outputs) {
@@ -639,6 +785,7 @@ export class LocalStore implements ArtifactStore {
               },
             }
           : {}),
+        ...(suppliedBindings !== undefined ? { referenceBindings: bound } : {}),
       };
       const digest = this.digest(payload);
       const receiptScope =
@@ -662,6 +809,7 @@ export class LocalStore implements ArtifactStore {
           );
         for (const artifact of prior.outputs)
           await this.read(artifact, context);
+        for (const item of bound) this.artifact(item.reference);
         return prior;
       }
       hooks?.check(context);
@@ -688,15 +836,46 @@ export class LocalStore implements ArtifactStore {
         published.push(artifact);
         if (!reusable) needsPublicationBarrier.push(artifact);
       }
+      for (const item of bound) {
+        const artifact = published.find(
+          (artifact) => artifact.id === item.artifact.id,
+        );
+        if (!artifact)
+          throw new StorageError("INTEGRITY", "Binding output is missing.");
+        const authorize = this.options.authorizeArtifactBinding;
+        if (!authorize)
+          throw new StorageError(
+            "AUTHORIZATION_CHANGED",
+            "Binding authority is unavailable.",
+          );
+        const bytes = await this.read(artifact, context);
+        await authorize(
+          structuredClone(item),
+          {
+            artifact: structuredClone(artifact),
+            bytes: Uint8Array.from(bytes),
+          },
+          context,
+        );
+        this.checkpoint(context);
+      }
       if (request) {
         const evidence = [];
         for (const reference of revisionRefs(request.revision)) {
+          const proposed = bound.find(
+            (item) => bindingKey(item.reference) === bindingKey(reference),
+          );
+          const target = proposed?.artifact ?? reference;
+          if (!published.some((artifact) => artifact.id === reference.id))
+            await this.authorizeReference(reference, context, true);
+          if (proposed)
+            await this.guard(context, "read", "artifact", proposed.artifact.id);
           const artifact =
             published.find(
-              (item) =>
-                item.id === reference.id && item.sha256 === reference.sha256,
+              (item) => item.id === target.id && item.sha256 === target.sha256,
             ) ?? this.artifact(reference);
           evidence.push({
+            reference,
             artifact,
             bytes: await this.read(artifact, context),
           });
@@ -718,6 +897,11 @@ export class LocalStore implements ArtifactStore {
           context,
         );
       if (hooks) await this.guard(context, "write", "job", context.jobId);
+      for (const item of bound) {
+        await this.guard(context, "write", "artifact", item.reference.id);
+        await this.guard(context, "read", "artifact", item.artifact.id);
+        await this.guard(context, "write", "artifact", item.artifact.id);
+      }
       this.checkpoint(context);
       const receipt: CommitReceipt = {
         schemaVersion: "1.0",
@@ -742,6 +926,13 @@ export class LocalStore implements ArtifactStore {
         if (hooks) hooks.check(context);
         else this.jobStore.assertLegacyAvailable(context);
         for (const artifact of published) this.putArtifact(artifact);
+        // Receipt and bindings precede reference resolution, but share the same rollback boundary.
+        this.db
+          .prepare("INSERT INTO receipts VALUES (?,?)")
+          .run(receiptScope, JSON.stringify(receipt));
+        this.refs("job", receipt.id, published);
+        for (const item of bound)
+          this.bindingStore.put({ ...item, receiptId: receipt.id });
         if (hooks) this.options.fault?.("job-after-artifacts");
         if (request) {
           this.checkBase(request);
@@ -756,10 +947,6 @@ export class LocalStore implements ArtifactStore {
             )
             .run(rev.designId, request.branch, rev.id);
         }
-        this.db
-          .prepare("INSERT INTO receipts VALUES (?,?)")
-          .run(receiptScope, JSON.stringify(receipt));
-        this.refs("job", receipt.id, published);
         if (hooks) this.options.fault?.("job-after-receipt");
         this.options.fault?.("before-commit");
         this.checkpoint(context);
@@ -767,6 +954,7 @@ export class LocalStore implements ArtifactStore {
           hooks.check(context);
           hooks.finish(receipt, context);
         }
+        for (const item of bound) this.artifact(item.reference);
         this.checkpoint(context);
       })();
       // Once committed, cancellation or a lost response cannot undo the receipt.
@@ -942,8 +1130,10 @@ export class LocalStore implements ArtifactStore {
               "CONFLICT",
               "Fork base must identify an accepted revision with its exact strong If-Match.",
             );
-          for (const reference of revisionRefs(revision))
+          for (const reference of revisionRefs(revision)) {
+            await this.authorizeReference(reference, context, true);
             await this.read(this.artifact(reference), context);
+          }
           this.checkpoint(context);
           this.db
             .prepare("INSERT INTO heads VALUES (?,?,?)")
@@ -1003,8 +1193,10 @@ export class LocalStore implements ArtifactStore {
         "APPROVAL_INAPPLICABLE",
         "Approval does not bind an accepted revision/resource lock.",
       );
-    for (const reference of approvalRefs(approval))
+    for (const reference of approvalRefs(approval)) {
+      await this.authorizeReference(reference, context, true);
       await this.read(this.artifact(reference), context);
+    }
   }
   private async approvalEvidence(
     event: ReviewEvent,
@@ -1129,8 +1321,10 @@ export class LocalStore implements ArtifactStore {
     return this.run(context, "write", async (context) => {
       this.validatePin(pin);
       await this.options.authorizeRetention("pin", pin, context);
-      for (const reference of pin.artifacts)
+      for (const reference of pin.artifacts) {
+        await this.authorizeReference(reference, context, true);
         await this.read(this.artifact(reference), context);
+      }
       this.checkpoint(context);
       this.db.transaction(() => {
         this.db
@@ -1334,7 +1528,7 @@ export class LocalStore implements ArtifactStore {
         "Too many branch heads for one bounded backup.",
       );
     return {
-      storageVersion: 3,
+      storageVersion: 4,
       projectId: this.options.projectId,
       artifacts: this.allArtifacts(),
       revisions: this.db
@@ -1367,6 +1561,7 @@ export class LocalStore implements ArtifactStore {
           return pin;
         }),
       ...this.jobStore.backup(),
+      artifactBindings: this.bindingStore.all(),
     };
   }
   private boundRows(
@@ -1396,7 +1591,7 @@ export class LocalStore implements ArtifactStore {
       await this.guard(context, operation, "design", id);
     for (const id of new Set(metadata.receipts.map((receipt) => receipt.jobId)))
       await this.guard(context, operation, "job", id);
-    if (metadata.storageVersion === 3) {
+    if (metadata.storageVersion !== 2) {
       for (const record of metadata.jobs) {
         this.jobStore.validateBinding(record);
         await this.guard(context, operation, "job", record.job.id);
@@ -1404,12 +1599,20 @@ export class LocalStore implements ArtifactStore {
           await this.guard(context, "read", "artifact", reference.id);
       }
     }
+    if (metadata.storageVersion === 4)
+      for (const item of metadata.artifactBindings) {
+        await this.guard(context, operation, "artifact", item.reference.id);
+        await this.guard(context, operation, "artifact", item.artifact.id);
+      }
   }
   backup(context: OperationContext): Promise<Outcome<ProjectBackup>> {
     return this.run(context, "read", async (context) => {
       const metadata = this.metadata();
       await this.authorizeMetadata(metadata, "read", context);
       this.validateBackupGraph(metadata);
+      if (metadata.storageVersion === 4)
+        for (const item of metadata.artifactBindings)
+          this.artifact(item.reference);
       const blobs: ProjectBackup["blobs"] = [];
       let total = this.options.canonicalBytes(metadata).length;
       if (total > context.budget.maxOutputBytes)
@@ -1450,7 +1653,8 @@ export class LocalStore implements ArtifactStore {
         this.metadata().pins.length ||
         this.jobStore.backup().jobs.length ||
         this.jobStore.backup().jobResources.length ||
-        this.jobStore.backup().jobStages.length
+        this.jobStore.backup().jobStages.length ||
+        this.bindingStore.all().length
       )
         throw new StorageError(
           "CONFLICT",
@@ -1458,7 +1662,9 @@ export class LocalStore implements ArtifactStore {
         );
       const metadata = backupMetadata(backup.metadata);
       if (
-        (metadata.storageVersion !== 2 && metadata.storageVersion !== 3) ||
+        (metadata.storageVersion !== 2 &&
+          metadata.storageVersion !== 3 &&
+          metadata.storageVersion !== 4) ||
         metadata.projectId !== this.options.projectId
       )
         throw new StorageError(
@@ -1509,6 +1715,39 @@ export class LocalStore implements ArtifactStore {
         );
       this.validateBackupGraph(metadata);
       await this.authorizeMetadata(metadata, "write", context);
+      if (metadata.storageVersion === 4 && metadata.artifactBindings.length) {
+        const authorize = this.options.authorizeArtifactBinding;
+        if (!authorize)
+          throw new StorageError(
+            "AUTHORIZATION_CHANGED",
+            "Restoring bindings requires trusted composition.",
+          );
+        for (const item of metadata.artifactBindings) {
+          const artifact = metadata.artifacts.find(
+            (artifact) => artifact.id === item.artifact.id,
+          );
+          const blob = backup.blobs.find(
+            (blob) => blob.sha256 === item.artifact.sha256,
+          );
+          if (!artifact || !blob)
+            throw new StorageError(
+              "INTEGRITY",
+              "Binding restore bytes missing.",
+            );
+          await authorize(
+            structuredClone({
+              reference: item.reference,
+              artifact: item.artifact,
+            }),
+            {
+              artifact: structuredClone(artifact),
+              bytes: Uint8Array.from(blob.bytes),
+            },
+            context,
+          );
+          this.checkpoint(context);
+        }
+      }
       for (const artifact of metadata.artifacts) {
         const blob = backup.blobs.find(
           (item) => item.sha256 === artifact.sha256,
@@ -1545,6 +1784,9 @@ export class LocalStore implements ArtifactStore {
       this.checkpoint(context);
       this.db.transaction(() => {
         for (const artifact of metadata.artifacts) this.putArtifact(artifact);
+        if (metadata.storageVersion === 4)
+          for (const item of metadata.artifactBindings)
+            this.bindingStore.put(item);
         for (const revision of metadata.revisions) {
           this.db
             .prepare("INSERT INTO revisions VALUES (?,?,?)")
@@ -1573,7 +1815,7 @@ export class LocalStore implements ArtifactStore {
         }
         for (const receipt of metadata.receipts) {
           const record =
-            metadata.storageVersion === 3
+            metadata.storageVersion !== 2
               ? metadata.jobs.find((record) =>
                   this.jobStore.receiptConsistent(record, receipt),
                 )
@@ -1591,7 +1833,7 @@ export class LocalStore implements ArtifactStore {
             .run(scope, JSON.stringify(receipt));
           this.refs("job", receipt.id, receipt.outputs);
         }
-        if (metadata.storageVersion === 3) this.jobStore.restore(metadata);
+        if (metadata.storageVersion !== 2) this.jobStore.restore(metadata);
         for (const pin of metadata.pins) {
           this.db
             .prepare("INSERT INTO pins VALUES (?,?,?)")
@@ -1611,6 +1853,39 @@ export class LocalStore implements ArtifactStore {
     const revisions = new Map(
       metadata.revisions.map((revision) => [revision.id, revision]),
     );
+    const bound =
+      metadata.storageVersion === 4 ? metadata.artifactBindings : [];
+    if (
+      bound.length > BINDING_LIMITS.total ||
+      new Set(bound.map((item) => bindingKey(item.reference))).size !==
+        bound.length
+    )
+      throw new StorageError(
+        "INTEGRITY",
+        "Duplicate/oversized logical bindings.",
+      );
+    const physicalReference = (reference: ArtifactReference) =>
+      bound.find((item) => bindingKey(item.reference) === bindingKey(reference))
+        ?.artifact ?? reference;
+    for (const item of bound) {
+      const artifact = artifacts.get(item.artifact.id);
+      const receipt = metadata.receipts.find(
+        (receipt) => receipt.id === item.receiptId,
+      );
+      if (
+        artifacts.has(item.reference.id) ||
+        bound.some((other) => other.reference.id === item.artifact.id) ||
+        !artifact ||
+        artifact.sha256 !== item.reference.sha256 ||
+        artifact.sha256 !== item.artifact.sha256 ||
+        !receipt ||
+        !receipt.outputs.some((output) => this.equal(output, artifact))
+      )
+        throw new StorageError(
+          "INTEGRITY",
+          "Logical binding graph lacks exact committed physical evidence.",
+        );
+    }
     if (
       artifacts.size !== metadata.artifacts.length ||
       revisions.size !== metadata.revisions.length
@@ -1618,7 +1893,10 @@ export class LocalStore implements ArtifactStore {
       throw new StorageError("INTEGRITY", "Duplicate backup identities.");
     const refs = (references: ArtifactReference[]) => {
       for (const reference of references)
-        if (artifacts.get(reference.id)?.sha256 !== reference.sha256)
+        if (
+          artifacts.get(physicalReference(reference).id)?.sha256 !==
+          reference.sha256
+        )
           throw new StorageError(
             "INTEGRITY",
             "Backup has a dangling artifact reference.",
@@ -1688,7 +1966,7 @@ export class LocalStore implements ArtifactStore {
         receipt.idempotency.projectId !== this.options.projectId ||
         (receipt.idempotency.operation !== "write" &&
           !(
-            metadata.storageVersion === 3 &&
+            metadata.storageVersion !== 2 &&
             metadata.jobs.some((record) =>
               this.jobStore.receiptConsistent(record, receipt),
             )
@@ -1706,7 +1984,7 @@ export class LocalStore implements ArtifactStore {
       this.validatePin(pin);
       refs(pin.artifacts);
     }
-    if (metadata.storageVersion === 3) {
+    if (metadata.storageVersion !== 2) {
       this.jobStore.validateControlGraph(metadata.jobs);
       const jobs = new Map(
         metadata.jobs.map((record) => [record.job.id, record]),

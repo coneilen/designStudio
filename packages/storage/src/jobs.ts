@@ -31,6 +31,9 @@ import type {
   JobCommand,
   JobCommitResult,
   JobCompletion,
+  JobDiscoveryDescriptor,
+  JobDiscoveryPage,
+  JobDiscoveryQuery,
   JobExpected,
   JobPage,
   JobReconciliation,
@@ -90,6 +93,13 @@ export interface JobHost {
   digest(value: unknown): string;
   read(artifact: Artifact, context: OperationContext): Promise<Uint8Array>;
   artifact(reference: ArtifactReference): Artifact;
+  authorizeReference(
+    reference: ArtifactReference,
+    context: OperationContext,
+  ): Promise<void>;
+  describeRevision(
+    reference: ArtifactReference,
+  ): ArtifactReference & { designId: string };
   hasCommittedPublication(artifact: Artifact): boolean;
   refs(kind: string, id: string, references: ArtifactReference[]): void;
   stage(bytes: Uint8Array, context: OperationContext): Promise<StagedArtifact>;
@@ -129,6 +139,9 @@ export class StoredJobs implements JobRepository {
     this.config = config
       ? Object.freeze({
           ...config,
+          ...(config.discovery
+            ? { discovery: Object.freeze({ ...config.discovery }) }
+            : {}),
           limits: Object.freeze({ ...(config.limits ?? DEFAULT_BUDGETS) }),
           maxWorkers: integer(config.maxWorkers ?? 1, 1, 4),
         })
@@ -462,7 +475,7 @@ export class StoredJobs implements JobRepository {
   }
   private async authorizeInput(record: StoredJob, context: OperationContext) {
     for (const ref of this.inputRefs(record))
-      await this.host.guard(context, "read", "artifact", ref.id);
+      await this.host.authorizeReference(ref, context);
     if (record.inputRevision)
       await this.host.guard(
         context,
@@ -689,6 +702,162 @@ export class StoredJobs implements JobRepository {
       await this.authorize(id, context, "read");
       return this.verifyReceipt(this.load(id), context);
     });
+  }
+  discoverOwned(
+    query: JobDiscoveryQuery,
+    context: OperationContext,
+  ): Promise<Outcome<JobDiscoveryPage>> {
+    return this.host.snapshot(query, context, "read", (query) =>
+      this.host.run(context, "read", async (context) => {
+        const policy = this.enabled().discovery;
+        if (!policy)
+          throw new StorageError(
+            "AUTHORIZATION_CHANGED",
+            "Owner discovery requires dedicated trusted policy.",
+          );
+        if (context.clock !== this.enabled().clock)
+          throw new StorageError(
+            "AUTHORIZATION_CHANGED",
+            "Discovery requires the trusted shared clock.",
+          );
+        fields(query, ["limit"], ["jobId", "states", "cursor"]);
+        integer(query.limit, 1, JOB_LIMITS.scan);
+        if (query.jobId !== undefined) jobCheck("StableId", query.jobId);
+        if (query.cursor) {
+          fields(query.cursor, ["createdAt", "id"]);
+          jobCheck("Timestamp", query.cursor.createdAt);
+          jobCheck("StableId", query.cursor.id);
+        }
+        const states =
+          query.states === undefined
+            ? null
+            : bounded(query.states, 9).map((state) =>
+                jobCheck("JobStatus", state),
+              );
+        if (states && !states.length)
+          throw new StorageError(
+            "INVALID_INPUT",
+            "Discovery states cannot be empty.",
+          );
+        const scope = Object.freeze({
+          projectId: this.host.options.projectId,
+          artifactRootId: this.host.options.artifactRootId,
+          permissionScope: this.host.options.permissionScope,
+        });
+        await policy.authorizeOwner(context, scope);
+        this.host.checkpoint(context);
+        this.controlStats();
+        const rows = this.host.db
+          .prepare<unknown[], { id: string }>(`
+        SELECT id FROM jobs WHERE json_extract(data,'$.job.actorId')=?
+          AND (? IS NULL OR id=?) AND (? IS NULL OR state IN (SELECT value FROM json_each(?)))
+          AND (created>? OR (created=? AND id>?)) ORDER BY created,id LIMIT ?
+      `)
+          .all(
+            context.authorization.actorId,
+            query.jobId ?? null,
+            query.jobId ?? null,
+            states ? JSON.stringify(states) : null,
+            states ? JSON.stringify(states) : null,
+            databaseTimestamp(query.cursor?.createdAt) ?? "",
+            databaseTimestamp(query.cursor?.createdAt) ?? "",
+            query.cursor?.id ?? "",
+            query.limit + 1,
+          );
+        const descriptors: JobDiscoveryDescriptor[] = [];
+        const records = rows
+          .slice(0, query.limit)
+          .map((row) => this.load(row.id));
+        for (const record of records) {
+          if (
+            record.job.actorId !== context.authorization.actorId ||
+            record.job.projectId !== context.projectId
+          )
+            throw new StorageError(
+              "INTEGRITY",
+              "Discovery owner binding is inconsistent.",
+            );
+          const physicalInputs = this.inputRefs(record).map((reference) => {
+            const artifact = this.host.artifact(reference);
+            if (
+              !this.host.hasCommittedPublication(artifact) ||
+              !this.host.db
+                .prepare(
+                  "SELECT 1 FROM artifact_refs WHERE owner_kind='job-input' AND owner_id=? AND artifact_id=?",
+                )
+                .get(record.job.id, artifact.id)
+            )
+              throw new StorageError(
+                "INTEGRITY",
+                "Discovery input lacks committed protected evidence.",
+              );
+            return {
+              reference,
+              artifact: { id: artifact.id, sha256: artifact.sha256 },
+            };
+          });
+          const receipt = this.receipt(record);
+          const outputs = (receipt?.outputs ?? []).map((artifact) => {
+            const exact = this.host.artifact(artifact);
+            if (
+              this.host.digest(exact) !== this.host.digest(artifact) ||
+              !this.host.db
+                .prepare(
+                  "SELECT 1 FROM artifact_refs WHERE owner_kind='job' AND owner_id=? AND artifact_id=?",
+                )
+                .get(receipt?.id, artifact.id)
+            )
+              throw new StorageError(
+                "INTEGRITY",
+                "Discovery output binding is inconsistent.",
+              );
+            return { id: artifact.id, sha256: artifact.sha256 };
+          });
+          bounded(outputs, JOB_LIMITS.stages);
+          descriptors.push({
+            jobId: record.job.id,
+            projectId: record.job.projectId,
+            actorId: record.job.actorId,
+            requestId: record.requestId,
+            operation: record.job.operation,
+            status: record.job.status,
+            rowVersion: record.rowVersion,
+            input: record.job.input,
+            resources: record.job.resources,
+            ...(record.inputRevision
+              ? {
+                  inputRevision: this.host.describeRevision(
+                    record.inputRevision,
+                  ),
+                }
+              : {}),
+            handlerId: record.handlerId,
+            handlerVersion: record.handlerVersion,
+            authorityRef: record.authorityRef,
+            physicalInputs,
+            outputs,
+          });
+        }
+        await policy.authorizeOwner(context, scope);
+        this.host.checkpoint(context);
+        if (
+          Buffer.byteLength(JSON.stringify(descriptors), "utf8") >
+          context.budget.maxOutputBytes
+        )
+          throw new StorageError(
+            "LIMIT",
+            "Discovery output exceeds its byte budget.",
+          );
+        const last = records.at(-1);
+        return {
+          descriptors,
+          nextCursor:
+            rows.length > query.limit && last
+              ? { createdAt: last.createdAt, id: last.job.id }
+              : null,
+        };
+      }),
+    );
   }
   scan(query: JobScan, context: OperationContext): Promise<Outcome<JobPage>> {
     return this.host.snapshot(query, context, "read", (query) =>
@@ -1520,7 +1689,12 @@ export class StoredJobs implements JobRepository {
             fields(
               input.completion,
               ["outputs", "outputState", "diagnosticIds"],
-              ["revision", "comparisonVerdict", "sourceStatus"],
+              [
+                "revision",
+                "comparisonVerdict",
+                "sourceStatus",
+                "referenceBindings",
+              ],
             );
             bounded(input.completion.outputs, JOB_LIMITS.stages);
             for (const id of bounded(
@@ -1899,7 +2073,7 @@ export class StoredJobs implements JobRepository {
             .prepare(
               "SELECT 1 FROM artifact_refs WHERE owner_kind='job-input' AND owner_id=? AND artifact_id=?",
             )
-            .get(record.job.id, reference.id)
+            .get(record.job.id, this.host.artifact(reference).id)
         )
           throw new StorageError(
             "INTEGRITY",

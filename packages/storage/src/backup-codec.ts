@@ -4,6 +4,7 @@ import {
   parseContract,
   validateContract,
 } from "@design-studio/contracts";
+import { storedBinding } from "./bindings.js";
 import { storedJob, storedResource, storedStage } from "./job-codec.js";
 import {
   type BackupMetadata,
@@ -170,9 +171,16 @@ export function backupMetadata(value: unknown): BackupMetadata {
     "reviews",
     "receipts",
     "pins",
-    ...(version === 3 ? ["jobs", "jobResources", "jobStages"] : []),
+    ...(version === 3 || version === 4
+      ? ["jobs", "jobResources", "jobStages"]
+      : []),
+    ...(version === 4 ? ["artifactBindings"] : []),
   ]);
-  if (data.storageVersion !== 2 && data.storageVersion !== 3)
+  if (
+    data.storageVersion !== 2 &&
+    data.storageVersion !== 3 &&
+    data.storageVersion !== 4
+  )
     throw new StorageError(
       "SCHEMA_INCOMPATIBLE",
       "Unsupported backup metadata.",
@@ -218,13 +226,19 @@ export function backupMetadata(value: unknown): BackupMetadata {
       };
     }),
   };
-  return data.storageVersion === 2
-    ? legacy
+  if (data.storageVersion === 2) return legacy;
+  const jobs = {
+    ...legacy,
+    storageVersion: 3 as const,
+    jobs: array(data.jobs).map(storedJob),
+    jobResources: array(data.jobResources).map(storedResource),
+    jobStages: array(data.jobStages).map(storedStage),
+  };
+  return data.storageVersion === 3
+    ? jobs
     : {
-        ...legacy,
-        storageVersion: 3,
-        jobs: array(data.jobs).map(storedJob),
-        jobResources: array(data.jobResources).map(storedResource),
-        jobStages: array(data.jobStages).map(storedStage),
+        ...jobs,
+        storageVersion: 4,
+        artifactBindings: array(data.artifactBindings).map(storedBinding),
       };
 }
