@@ -33,6 +33,9 @@ relationship to its accepted design, then return `AcceptedInputs`:
 envelope: the renderer does not assume a revision reference hashes design.json.
 It verifies returned reference equality, parsed design equality, the raw resource
 lock, actual dependency hashes/sizes, F02 resolution and F05 byte/rights checks.
+Request validation and a deeply frozen private snapshot precede the first await,
+including installed compiler inspection. Later caller mutations cannot change
+the admitted mode, revision, design or profile in either renderer entrypoint.
 No host paths enter RenderRequest. The normalized/expanded design is derived
 evidence, never a replacement accepted original revision.
 
@@ -129,6 +132,12 @@ IR semantics.
 - Explicit scroll viewport/content/offsets and bounds/rounded clipping. Intentional
   clipping/scroll is not unexpected overflow. Unexpected text/layout/transformed
   overflow fails strict output; inspection retains blocking diagnostics.
+  Text measurement includes both leftmost and rightmost Range extents relative
+  to the allocated box. Explicit bounds/rounded text clipping retains measured
+  excess without making strict rendering fail: node `overflow` remains true,
+  render-evidence records extents/allocation/clip intent, and diagnostics disclose
+  intentional clipping at informational severity. Unclipped excess remains an
+  error and makes inspection partial.
 
 `BoundsMap.localBounds` is the untransformed box in parent-local coordinates,
 including parent padding in its placement. `measuredBounds` is the unclipped
@@ -191,6 +200,10 @@ On the approved Windows setup, set `F06_BROWSER_GATE=1` and
 `F06_UPDATE_GOLDENS=1` is only for deliberate reviewed regeneration; all geometric,
 resource, pixel and repeat checks still run first. JSON goldens compare canonical
 values; PNG bytes compare exactly.
+Golden metadata retains its historical compiler digest. Regression comparison
+asserts that historical identity and the current installed compiler identity
+separately, then compares the remaining profile, geometry and face expectations
+unchanged. Historical calibration results are not measurements of revised code.
 
 Developer acquisition used locked `playwright install chromium --only-shell`
 with private `.tools/renderer-browser-1.63.0`, after the manifest change and

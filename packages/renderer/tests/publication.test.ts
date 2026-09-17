@@ -70,6 +70,7 @@ async function recorded() {
                       nodes: metadata.nodes,
                       fonts: state.omitFaces ? [] : metadata.fonts,
                       overflow: [],
+                      textExcess: {},
                       profile: request.profile,
                     }),
                   ),

@@ -39,7 +39,7 @@ import type {
   RendererWorkerLease,
 } from "@design-studio/renderer-host";
 import { validateFaces } from "./faces.js";
-import { children } from "./layout.js";
+import { children, type LayoutResult } from "./layout.js";
 import { installedBuildIdentity } from "./profile.js";
 import { type AcceptedInputs, prepareInputs } from "./resources.js";
 import { encodeResourceWire, logicalBytes } from "./wire.js";
@@ -107,6 +107,61 @@ const reference = (artifact: Artifact): ArtifactReference => ({
   id: artifact.id,
   sha256: artifact.sha256,
 });
+function textExcessEvidence(value: unknown): LayoutResult["textExcess"] {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    throw new HostBoundaryError(
+      "ARTIFACT_INTEGRITY",
+      "Missing measured text-excess evidence.",
+    );
+  const result: LayoutResult["textExcess"] = Object.create(null);
+  for (const [id, item] of Object.entries(value)) {
+    if (
+      typeof item !== "object" ||
+      item === null ||
+      !("width" in item) ||
+      typeof item.width !== "number" ||
+      !("height" in item) ||
+      typeof item.height !== "number" ||
+      !("left" in item) ||
+      typeof item.left !== "number" ||
+      !("right" in item) ||
+      typeof item.right !== "number" ||
+      !("allocatedWidth" in item) ||
+      typeof item.allocatedWidth !== "number" ||
+      !("allocatedHeight" in item) ||
+      typeof item.allocatedHeight !== "number" ||
+      !("clipped" in item) ||
+      typeof item.clipped !== "boolean" ||
+      ![
+        item.width,
+        item.height,
+        item.left,
+        item.right,
+        item.allocatedWidth,
+        item.allocatedHeight,
+      ].every(Number.isFinite) ||
+      item.width < 0 ||
+      item.height < 0 ||
+      item.allocatedWidth < 0 ||
+      item.allocatedHeight < 0 ||
+      item.right < item.left
+    )
+      throw new HostBoundaryError(
+        "ARTIFACT_INTEGRITY",
+        "Invalid measured text-excess evidence.",
+      );
+    result[id] = {
+      width: item.width,
+      height: item.height,
+      left: item.left,
+      right: item.right,
+      allocatedWidth: item.allocatedWidth,
+      allocatedHeight: item.allocatedHeight,
+      clipped: item.clipped,
+    };
+  }
+  return result;
+}
 function freezeJson<T>(value: T): T {
   if (typeof value === "object" && value !== null) {
     for (const child of Object.values(value)) freezeJson(child);
@@ -139,11 +194,11 @@ export async function renderStaged(
       options.budgetLimits ?? DEFAULT_BUDGETS,
     );
     context = guard.context;
-    const build = await installedBuildIdentity();
-    guard.check();
     if (!validateContract("RenderRequest", input).success)
       throw new HostBoundaryError("INVALID_INPUT", "Invalid render request.");
     const request = freezeJson(structuredClone(input));
+    const build = await installedBuildIdentity();
+    guard.check();
     if (
       canonicalDigest(request.profile.renderer) !==
       canonicalDigest(build.renderer)
@@ -303,6 +358,9 @@ export async function renderStaged(
         "PROCESS_FAILED",
         "Incomplete or mismatched worker capture.",
       );
+    const textExcess = textExcessEvidence(
+      "textExcess" in raw ? raw.textExcess : undefined,
+    );
     const png = Buffer.from(raw.png, "base64");
     validateFaces(prepared.expanded.root, prepared.fonts, raw.fonts);
     if (png.toString("base64") !== raw.png)
@@ -336,6 +394,22 @@ export async function renderStaged(
       );
     const renderId = `render_${canonicalDigest([request.revision, request.design.resources, request.profile, request.mode])}`;
     const report = structuredClone(prepared.report);
+    for (const [id, excess] of Object.entries(textExcess)) {
+      if (excess.clipped)
+        report.diagnostics.push({
+          schemaVersion: "1.0",
+          operations: ["render"],
+          id: `text_clip_${canonicalDigest(id)}`,
+          code: "INVALID_LAYOUT",
+          severity: "info",
+          message:
+            "Measured text extends beyond its allocation and is intentionally clipped.",
+          nodeIds: [id],
+          evidenceIds: [],
+          recovery:
+            "Retain the declared clip or revise the text allocation if full visibility is required.",
+        });
+    }
     for (const id of raw.overflow)
       report.diagnostics.push({
         schemaVersion: "1.0",
@@ -384,12 +458,31 @@ export async function renderStaged(
         "ARTIFACT_INTEGRITY",
         "Invalid capture bounds map.",
       );
+    const measuredMap = mapValidation.value;
     const ids: string[] = [];
     function collect(node: RenderRequest["design"]["root"]) {
       ids.push(node.id);
+      const excess = textExcess[node.id];
+      if (
+        excess &&
+        (node.type !== "text" ||
+          excess.clipped !==
+            (node.appearance?.clip !== undefined &&
+              node.appearance.clip.kind !== "none") ||
+          !measuredMap.nodes[node.id]?.overflow)
+      )
+        throw new HostBoundaryError(
+          "ARTIFACT_INTEGRITY",
+          "Text excess does not match measured node and clipping intent.",
+        );
       for (const child of children(node)) collect(child);
     }
     collect(prepared.expanded.root);
+    if (Object.keys(textExcess).some((id) => !ids.includes(id)))
+      throw new HostBoundaryError(
+        "ARTIFACT_INTEGRITY",
+        "Unknown measured text-excess node.",
+      );
     const actualIds = Object.keys(mapValidation.value.nodes);
     if (
       canonicalDigest([...ids].sort()) !== canonicalDigest(actualIds.sort()) ||
@@ -483,6 +576,7 @@ export async function renderStaged(
       canonicalBytes({
         ...evidence,
         actualFaces: raw.fonts,
+        textExcess,
         fontInspections: prepared.fonts.map((f) => ({
           id: f.id,
           face: f.face,

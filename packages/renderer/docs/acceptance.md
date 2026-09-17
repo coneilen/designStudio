@@ -122,3 +122,49 @@ SHA256 provenance; no second acquisition or source-build fallback occurred.
 One empty temporary directory from the initial missing-worker RED was identified
 by its creation time and removed non-recursively. Subsequent tests clean their
 owned roots, including paths with spaces and a non-ASCII character.
+
+## Review follow-up: request ownership and text clipping
+
+The follow-up preserves the baseline commit and every golden/calibration artifact.
+Observed request-race RED tests synchronously replaced mode, revision ID and a
+nested profile offset immediately after invoking both `renderStaged` and
+`StaticRenderer.render`. The accepted-input resolver saw those replacements before
+the fix. Validation and the frozen private request snapshot now happen before the
+first await, including installed build inspection; both entrypoint regressions
+retain the original admitted request.
+
+Observed clipping RED tests used a 50x20 text allocation with measured 100x16
+content: bounds/rounded-bounds clipping still populated unexpected overflow.
+The fix distinguishes measured excess from unexpected overflow. Horizontal and
+vertical excess is preserved with allocation and clipping intent; explicit text
+clips permit strict capture while retaining the node overflow flag and
+informational diagnostics. Unclipped excess remains a strict failure and a
+blocking partial inspection. Real staged-output tests check both diagnostic paths.
+
+**Evidence correction:** the reviewer's left-negative/right-at-50 scenario was
+analytic, not an executed strict-render bypass. Our contained Chromium sample,
+normal 400 ABeeZee at 12px/16px line-height with ample vertical allocation,
+already rejected unclipped start/center/end no-wrap text before the change.
+The observed end-aligned measurement was left 0, right 182.703125, height 16,
+so that sample does not prove a reachable left-only bypass. We do not claim one.
+Measurement now explicitly includes both edges; a separately labeled synthetic
+left-only extent test covers that arithmetic. Real Chromium tests retain
+unclipped rejection, unchanged 50x50 allocated geometry and equivalent measured
+excess before/after explicit clipping for all three alignments.
+
+No golden images, golden JSON files or timing reports were regenerated. The
+historical golden compiler digest
+`183d72b2f9914ebc1532e37910d598be41a4459fac2bd8c83d1ff0ea8b727b71`
+is asserted explicitly, and the current profile must independently match the
+trusted installed build identity. All other historical profile, node geometry,
+font evidence and PNG expectations remain unchanged. Previous calibration
+measurements and the user's integration-with-disclosed-miss decision remain
+historical evidence, not a new performance claim for this follow-up.
+
+Follow-up verification on the already-installed Windows runtime/browser:
+package build, strict root typecheck and scoped Biome checks passed; the combined
+renderer unit/real-native suite passed **53 cases**, with only the explicit
+calibration case skipped. A Git comparison against `2e62e3e` confirmed zero
+changes in the complete golden directory and all five performance reports.
+No browser/dependency acquisition, root/schema changes or additional agents
+were involved.

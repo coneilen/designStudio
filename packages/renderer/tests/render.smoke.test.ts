@@ -4,6 +4,7 @@ import { decodeRaster } from "@design-studio/assets";
 import { DEFAULT_BUDGETS } from "@design-studio/contracts";
 import { canonicalBytes, hashBytes } from "@design-studio/design-ir";
 import { expect, it } from "vitest";
+import { installedBuildIdentity } from "../src/profile.js";
 import { prepareInputs } from "../src/resources.js";
 import { fixtureInputs, workerHarness } from "./support.js";
 
@@ -104,12 +105,27 @@ it.skipIf(process.env.F06_RENDER_SMOKE !== "1")(
           expect(
             png.equals(await readFile(path.join(directory, `${name}.png`))),
           ).toBe(true);
+          const historical = JSON.parse(
+            await readFile(path.join(directory, `${name}.json`), "utf8"),
+          );
+          expect(historical.profile.renderer).toEqual({
+            name: "@design-studio/renderer",
+            version: "1.0.0",
+            sha256:
+              "183d72b2f9914ebc1532e37910d598be41a4459fac2bd8c83d1ff0ea8b727b71",
+          });
+          expect(result.profile.renderer).toEqual(
+            (await installedBuildIdentity()).renderer,
+          );
+          // Preserve the historical artifact; only its separately asserted compiler identity differs.
           expect(
-            canonicalBytes(
-              JSON.parse(
-                await readFile(path.join(directory, `${name}.json`), "utf8"),
-              ),
-            ),
+            canonicalBytes({
+              ...historical,
+              profile: {
+                ...historical.profile,
+                renderer: result.profile.renderer,
+              },
+            }),
           ).toEqual(metadata);
         }
       }

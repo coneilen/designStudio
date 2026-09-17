@@ -6,12 +6,29 @@ export interface Size {
   width: number;
   height: number;
 }
+export interface TextMeasurement extends Size {
+  left?: number;
+  right?: number;
+}
+export interface TextExcess {
+  width: number;
+  height: number;
+  left: number;
+  right: number;
+  allocatedWidth: number;
+  allocatedHeight: number;
+  clipped: boolean;
+}
 export interface LayoutResult {
   boxes: Record<string, Rect>;
   parents: Record<string, string>;
   overflow: string[];
+  textExcess: Record<string, TextExcess>;
 }
-export type TextMeasure = (node: TextNode, width?: number) => Promise<Size>;
+export type TextMeasure = (
+  node: TextNode,
+  width?: number,
+) => Promise<TextMeasurement>;
 export function children(node: DesignNode): DesignNode[] {
   return "children" in node ? node.children : [];
 }
@@ -88,6 +105,7 @@ export async function layoutDesign(
   const boxes: LayoutResult["boxes"] = Object.create(null);
   const parents: LayoutResult["parents"] = Object.create(null);
   const overflow = new Set<string>();
+  const textExcess: LayoutResult["textExcess"] = Object.create(null);
   let visits = 0;
   const checkpoint = () => {
     if (++visits > 160_000) error("Layout dependency work limit exceeded.");
@@ -225,14 +243,11 @@ export async function layoutDesign(
       used = available;
     }
     let contentHeight = 0;
+    let measuredText: TextMeasurement | undefined;
     if (n.type === "text") {
       const measured = await measure(n, cw);
+      measuredText = measured;
       contentHeight = measured.height;
-      if (
-        measured.width > cw + 1 / 64 ||
-        (ch !== undefined && measured.height > ch + 1 / 64)
-      )
-        overflow.add(n.id);
     } else if (vertical(n)) contentHeight = used;
     else {
       for (const c of flow) {
@@ -257,8 +272,29 @@ export async function layoutDesign(
       error(`${n.id}: aspect ratio constraint is unsatisfiable.`);
     const contentH = height - p.top - p.bottom;
     if (contentH < 0) error(`${n.id}: padding exceeds allocated height.`);
-    if (n.type === "text" && contentHeight > contentH + 1 / 64)
-      overflow.add(n.id);
+    if (n.type === "text" && measuredText) {
+      const left = measuredText.left ?? 0;
+      const right = measuredText.right ?? measuredText.width;
+      const excess =
+        measuredText.width > cw + 1 / 64 ||
+        left < -1 / 64 ||
+        right > cw + 1 / 64 ||
+        contentHeight > contentH + 1 / 64;
+      if (excess) {
+        const clipped =
+          n.appearance?.clip !== undefined && n.appearance.clip.kind !== "none";
+        textExcess[n.id] = {
+          width: measuredText.width,
+          height: measuredText.height,
+          left,
+          right,
+          allocatedWidth: cw,
+          allocatedHeight: contentH,
+          clipped,
+        };
+        if (!clipped) overflow.add(n.id);
+      }
+    }
     const free = (horizontal(n) ? cw : contentH) - used;
     const distribution = n.layout.distribution ?? "start";
     let cursor =
@@ -335,5 +371,5 @@ export async function layoutDesign(
     return { width, height };
   }
   await arrange(root, viewportWidth, viewportHeight);
-  return { boxes, parents, overflow: [...overflow].sort() };
+  return { boxes, parents, overflow: [...overflow].sort(), textExcess };
 }

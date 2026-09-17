@@ -39,7 +39,13 @@ import {
   mapRect,
   multiply,
 } from "./geometry.js";
-import { children, layoutDesign, scalar } from "./layout.js";
+import {
+  children,
+  type LayoutResult,
+  layoutDesign,
+  scalar,
+  type TextMeasurement,
+} from "./layout.js";
 import { installedBuildIdentity } from "./profile.js";
 import type { PreparedFont, PreparedImage } from "./resources.js";
 import { decodeEnvelope, logicalBytes } from "./wire.js";
@@ -74,6 +80,7 @@ export type CaptureReply =
       nodes: BoundsMap["nodes"];
       fonts: FaceUse[];
       overflow: string[];
+      textExcess: LayoutResult["textExcess"];
       profile: RenderProfile;
       telemetry?: {
         workerMs: number;
@@ -478,10 +485,7 @@ export function createWorker(
           for (const child of children(node)) intrinsicImages(child);
         }
         intrinsicImages(expanded.root);
-        const measurements = new Map<
-          string,
-          { width: number; height: number }
-        >();
+        const measurements = new Map<string, TextMeasurement>();
         const layout = await layoutDesign(
           expanded.root,
           p.viewport.width,
@@ -515,12 +519,18 @@ export function createWorker(
                 range.selectNodeContents(element);
                 const lineRects = [...range.getClientRects()];
                 const right = Math.max(
-                  rect.left,
+                  rect.right,
                   ...lineRects.map((r) => r.right),
                 );
+                const left = Math.min(
+                  rect.left,
+                  ...lineRects.map((r) => r.left),
+                );
                 const value = {
-                  width: Math.max(rect.width, right - rect.left),
+                  width: right - left,
                   height: rect.height,
+                  left: left - rect.left,
+                  right: right - rect.left,
                 };
                 element.remove();
                 sheet.remove();
@@ -733,7 +743,9 @@ export function createWorker(
             transform,
             clipChain: clips,
             paintOrder: order++,
-            overflow: layout.overflow.includes(node.id),
+            overflow:
+              layout.overflow.includes(node.id) ||
+              Object.hasOwn(layout.textExcess, node.id),
             evidence: "renderer-measurement",
           };
         }
@@ -769,6 +781,7 @@ export function createWorker(
           nodes,
           fonts: faceUses,
           overflow: layout.overflow,
+          textExcess: layout.textExcess,
           profile: p,
         };
         if (wire.telemetry) {
