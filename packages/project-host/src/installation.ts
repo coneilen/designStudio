@@ -3,6 +3,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { HostBoundaryError } from "@design-studio/host";
 import {
+  type InstallationTrace,
+  traceInstallation,
+} from "./installation-diagnostics.js";
+import {
   boundedFile,
   decodeInventory,
   digest,
@@ -106,6 +110,7 @@ async function rollbackError(
 async function withLeases<T>(
   leases: readonly Lease[],
   operation: () => Promise<T>,
+  trace?: InstallationTrace,
 ): Promise<T> {
   let value: T;
   try {
@@ -113,7 +118,9 @@ async function withLeases<T>(
   } catch (error) {
     return rollbackError(error, leases);
   }
+  const started = trace?.time() ?? 0;
   release(leases);
+  trace?.phase("release", started, leases.length);
   return value;
 }
 async function metadata(root: string): Promise<Metadata> {
@@ -198,16 +205,22 @@ async function verifyTree(
   files: readonly InventoryFile[],
   sid?: string,
   hashBytes = true,
+  trace?: InstallationTrace,
 ): Promise<Verified> {
   const leases: ReadLease[] = [];
   try {
     // Pin the root before enumerating; retained handles are not a hostile-owner namespace sandbox.
+    let started = trace?.time() ?? 0;
     leases.push(
       sid
         ? native.pinInstallation(root, true, sid)
         : native.pinRead(root, true),
     );
+    trace?.phase("root-pin", started, 1);
+    started = trace?.time() ?? 0;
     const directories = await exactTree(root, files);
+    trace?.phase("enumeration", started, directories.length + files.length);
+    started = trace?.time() ?? 0;
     for (const directory of directories.slice(1)) {
       const relative = path.relative(root, directory);
       const browser =
@@ -219,6 +232,8 @@ async function verifyTree(
           : native.pinRead(directory, true),
       );
     }
+    trace?.phase("directory-pins", started, directories.length - 1);
+    started = trace?.time() ?? 0;
     for (const file of files) {
       const filename = physical(root, file.path);
       const lease = sid
@@ -234,6 +249,7 @@ async function verifyTree(
         refuse("Installation file length differs from the reviewed release.");
       if (hashBytes) checkHash(lease, file);
     }
+    trace?.phase("file-pins", started, files.length);
     return {
       files: files.map((file) => physical(root, file.path)),
       leases,
@@ -552,46 +568,69 @@ export async function verifyInstalledRoot(
     let closing = false;
     const state = { files: held.files, root, live: true, guards: 0 };
     const checkpoint = async (hashBytes: boolean): Promise<void> => {
-      if (closed || closing || native.principal() !== sid)
-        refuse("Installation lease is closed or principal changed.");
-      const checked = await verifyTree(
-        native,
-        root,
-        allFiles(meta),
-        sid,
-        hashBytes,
-      );
-      await withLeases(checked.leases, async () => {
-        if (
-          checked.identities.length !== held.identities.length ||
-          checked.identities.some(
-            (identity, index) =>
-              !held.identities[index] ||
-              !same(identity, held.identities[index]),
-          ) ||
-          !(await boundedFile(receiptPath, 4096)).equals(receiptBytes)
-        )
-          refuse("Installation identity/registration changed.");
-        for (const ancestor of parent.leases) {
-          const check = native.inspect(
-            ancestor.identity.path,
-            ancestor.identity.path !== receiptPath,
-            ancestor.identity.path.startsWith(
-              path.join(native.localAppData(), "DesignStudio"),
+      const trace = traceInstallation(hashBytes);
+      let success = false;
+      try {
+        let started = trace?.time() ?? 0;
+        if (closed || closing || native.principal() !== sid)
+          refuse("Installation lease is closed or principal changed.");
+        const files = allFiles(meta);
+        trace?.phase("prepare", started, files.length);
+        const checked = await verifyTree(
+          native,
+          root,
+          files,
+          sid,
+          hashBytes,
+          trace,
+        );
+        await withLeases(
+          checked.leases,
+          async () => {
+            started = trace?.time() ?? 0;
+            if (
+              checked.identities.length !== held.identities.length ||
+              checked.identities.some(
+                (identity, index) =>
+                  !held.identities[index] ||
+                  !same(identity, held.identities[index]),
+              )
             )
-              ? sid
-              : undefined,
-          );
-          await withLeases([check], async () => {
-            if (!same(check.identity, ancestor.identity))
-              refuse("Installation ancestor changed.");
-          });
-        }
-        if (closed || closing)
-          refuse("Installation lease closed during recheck.");
-        if (native.principal() !== sid)
-          refuse("Native principal changed during installation recheck.");
-      });
+              refuse("Installation identity/registration changed.");
+            trace?.phase("identity", started, checked.identities.length);
+            started = trace?.time() ?? 0;
+            const currentReceipt = await boundedFile(receiptPath, 4096);
+            if (!currentReceipt.equals(receiptBytes))
+              refuse("Installation identity/registration changed.");
+            trace?.phase("registration", started, currentReceipt.length);
+            started = trace?.time() ?? 0;
+            for (const ancestor of parent.leases) {
+              const check = native.inspect(
+                ancestor.identity.path,
+                ancestor.identity.path !== receiptPath,
+                ancestor.identity.path.startsWith(
+                  path.join(native.localAppData(), "DesignStudio"),
+                )
+                  ? sid
+                  : undefined,
+              );
+              await withLeases([check], async () => {
+                if (!same(check.identity, ancestor.identity))
+                  refuse("Installation ancestor changed.");
+              });
+            }
+            if (closed || closing)
+              refuse("Installation lease closed during recheck.");
+            if (native.principal() !== sid)
+              refuse("Native principal changed during installation recheck.");
+            trace?.phase("ancestors", started, parent.leases.length);
+          },
+          trace,
+        );
+        success = true;
+      } finally {
+        trace?.end(success);
+      }
     };
     const lease: FixtureInstallationLease = Object.freeze({
       paths: paths(root),

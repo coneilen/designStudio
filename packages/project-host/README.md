@@ -523,3 +523,57 @@ is claimed from these small fixtures. F08 will measure three serial current
 checks and one nine-concurrent batch, separately from a full rehash sample,
 inside its next otherwise-required owned actual-candidate run. Report individual
 and maximum durations, not a statistical percentile or sub-five-second guarantee.
+
+### Bounded checkpoint phase diagnostic
+
+An internal, test-only collector can record numeric checkpoint phase samples.
+It is not exported from the package entrypoint, requires `VITEST=true` when
+explicitly installed, and is absent/no-op by default. It does not change which
+files are inspected or hashed, ACL/inventory checks, guards, request policy,
+concurrency, deadlines or budgets. Timing occurs at completed pin/phase
+boundaries, not between a failing native call and `GetLastError`. Samples are
+buffered (maximum 2,048), with no per-file paths, SIDs, hashes or request data.
+Pin-level phase counts/times, native handle snapshots, process CPU/RSS, active
+check count and a separately armed 10 ms heartbeat distinguish synchronous work
+from async elapsed time that includes sibling work. Process CPU and event-loop
+metrics are not per-request attribution.
+
+The opt-in owned diagnostic is:
+
+```powershell
+$env:FIXTURE_INSTALL_METADATA_PROBE='1'
+$env:FIXTURE_INSTALL_METADATA_OUTPUT='C:\approved-session-artifacts\new-measurement.json'
+pnpm exec vitest run --project smoke packages\project-host\tests\installation-metadata-probe.smoke.test.ts
+```
+
+It creates one synthetic metadata-scale tree, not a release candidate, and never
+packages/downloads real runtime/browser content. The first approved run matched
+only the observed **5,318 file count**, not the unavailable real directory/depth
+histogram or 445,944,566-byte content. Synthetic shape: 377 directories, 913,689
+bytes, 299 browser-reader files and 157-character installed-root spelling.
+Cases run once: one service check with two retained leases/two guards; two
+concurrent checks on that same service lease; then the same two checks with an
+idle parent holding one lease, outer child two leases/two guards, and client
+child one lease/one guard. Six permanent pinsets span four processes in the last
+case. All diagnostic children close and actually exit before parent pins and
+the exact identity-checked owned test root are released.
+
+Observed case walls: **2,350 ms**, **4,505 ms**, and **4,565 ms** respectively.
+Serial synchronous file-pin work was 1,849 ms, directory pins 73 ms,
+enumeration 204 ms and temporary release 162 ms. Each concurrent file-pin loop
+remained approximately 1.83–1.90 seconds. A sibling's 431-byte registration
+read measured 1,951–2,004 ms elapsed while the other synchronous loop ran;
+that is queue amplification, not proof of slow registration I/O. Maximum
+heartbeat gaps were 1.97–2.00 seconds. Service handles returned from a
+22,993 peak to the 11,602 baseline after concurrent cases.
+
+This demonstrates synchronous event-loop starvation and roughly doubled
+completion time under two same-process checks. Idle read-pin roles alone did
+**not** reproduce the actual F08 56–60 second failure in this single synthetic
+comparison. Real closure shape/content, other active work and OS/storage
+effects remain unmeasured. No percentile, five-second acceptance result or
+production bottleneck attribution follows from these samples. Cooperative
+yielding between complete native operations is a possible separately reviewed
+responsiveness remedy, not implemented here and not a demonstrated cure for
+the actual failure. Further actual-flow phase capture requires coordinator
+approval; this diagnostic must not trigger repeated packaging or weaken checks.
