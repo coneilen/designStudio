@@ -100,6 +100,13 @@ capture, worker crash with a live browser, cancellation/deadline and observed
 worker exit/empty Job. Host cleanup owns its finite post-cancellation allowance.
 Uncertain cleanup is interrupted, not a fabricated clean cancellation.
 
+A reusable worker caches a browser only after version, sandbox, transport and
+CDP checks finish. Rejected launches are closed; failed cleanup remains owned
+and prevents reuse until cleanup succeeds. Context ownership starts immediately
+after creation, before routing or page setup, so early setup failures also close
+their contexts. Cleanup errors preserve the primary failure and remain retryable
+through worker close rather than being treated as successful teardown.
+
 The primary API owns one lease per operation and closes it before staging.
 The caller/job scheduler must bound concurrent operations. Calibration separately
 exercises serial requests in one public owned lease, with fresh page/context per

@@ -24,7 +24,12 @@ import {
 } from "@design-studio/design-ir";
 import { HostBoundaryError } from "@design-studio/host";
 import type { TrustedRendererImplementation } from "@design-studio/renderer-host";
-import { type Browser, chromium, type Page } from "playwright";
+import {
+  type Browser,
+  type BrowserContext,
+  chromium,
+  type Page,
+} from "playwright";
 import {
   compileDocument,
   fontStyles,
@@ -233,10 +238,17 @@ export function createWorker(
     );
   const limits = Object.freeze({ ...budgetLimits });
   let browser: Browser | undefined;
+  let unverifiedBrowser: Browser | undefined;
+  const contexts = new Set<BrowserContext>();
   const verifiedImages = new Map<string, { width: number; height: number }>();
   let phase = "preflight";
   let browserStartupMs = 0;
   async function launch() {
+    if (unverifiedBrowser || contexts.size)
+      throw new HostBoundaryError(
+        "OUTPUT_UNCERTAIN",
+        "Previous browser cleanup must complete before reuse.",
+      );
     if (browser) return browser;
     const startup = performance.now();
     if (process.platform !== "win32" || process.arch !== "x64")
@@ -289,30 +301,47 @@ export function createWorker(
         "Missing pinned shell executable or notices.",
       );
     phase = "browser-launch";
-    browser = await chromium.launch({
+    const launched = await chromium.launch({
       executablePath: path.join(config.root, ...config.executable.split("/")),
       chromiumSandbox: true,
       headless: true,
       timeout: 15_000,
       args: ["--force-color-profile=srgb", "--enable-automation"],
     });
-    const cdp = await browser.newBrowserCDPSession();
-    const command = await cdp.send("Browser.getBrowserCommandLine");
-    if (
-      browser.version() !== "153.0.8010.12" ||
-      command.arguments.some(
-        (a) =>
-          a === "--no-sandbox" ||
-          a === "--disable-setuid-sandbox" ||
-          a.startsWith("--remote-debugging-port"),
-      ) ||
-      !command.arguments.includes("--remote-debugging-pipe")
-    )
-      throw new HostBoundaryError(
-        "TOOL_VERSION_UNSUPPORTED",
-        "Browser sandbox/transport/profile mismatch.",
-      );
-    await cdp.detach();
+    unverifiedBrowser = launched;
+    try {
+      const cdp = await launched.newBrowserCDPSession();
+      const command = await cdp.send("Browser.getBrowserCommandLine");
+      if (
+        launched.version() !== "153.0.8010.12" ||
+        command.arguments.some(
+          (a) =>
+            a === "--no-sandbox" ||
+            a === "--disable-setuid-sandbox" ||
+            a.startsWith("--remote-debugging-port"),
+        ) ||
+        !command.arguments.includes("--remote-debugging-pipe")
+      )
+        throw new HostBoundaryError(
+          "TOOL_VERSION_UNSUPPORTED",
+          "Browser sandbox/transport/profile mismatch.",
+        );
+      await cdp.detach();
+    } catch (error) {
+      try {
+        await launched.close();
+        unverifiedBrowser = undefined;
+      } catch (cleanup) {
+        throw new AggregateError(
+          [error, cleanup],
+          "Browser verification and cleanup failed.",
+          { cause: error },
+        );
+      }
+      throw error;
+    }
+    browser = launched;
+    unverifiedBrowser = undefined;
     browserStartupMs = performance.now() - startup;
     return browser;
   }
@@ -321,6 +350,7 @@ export function createWorker(
       const started = performance.now();
       const wasCold = browser === undefined;
       let page: Page | undefined;
+      let context: BrowserContext | undefined;
       let abort: (() => void) | undefined;
       try {
         phase = "request";
@@ -426,7 +456,7 @@ export function createWorker(
         }
         const activeBrowser = await launch();
         signal.throwIfAborted();
-        const context = await activeBrowser.newContext({
+        context = await activeBrowser.newContext({
           viewport: { width: p.viewport.width, height: p.viewport.height },
           deviceScaleFactor: p.deviceScale,
           locale: p.locale,
@@ -437,6 +467,8 @@ export function createWorker(
           acceptDownloads: false,
           javaScriptEnabled: true,
         });
+        const activeContext = context;
+        contexts.add(context);
         let denied = false;
         await context.route("**/*", async (route) => {
           denied = true;
@@ -455,7 +487,7 @@ export function createWorker(
         });
         const closed: Promise<void>[] = [];
         abort = () => {
-          closed.push(context.close());
+          closed.push(activeContext.close());
         };
         signal.addEventListener("abort", abort, { once: true });
         phase = "font-readiness";
@@ -805,13 +837,26 @@ export function createWorker(
         signal.removeEventListener("abort", abort);
         abort = undefined;
         await context.close();
+        contexts.delete(context);
+        context = undefined;
         await Promise.all(closed);
         page = undefined;
         signal.throwIfAborted();
         return output;
       } catch (error) {
-        if (page) await page.context().close();
         if (abort) signal.removeEventListener("abort", abort);
+        if (context) {
+          try {
+            await context.close();
+            contexts.delete(context);
+          } catch (cleanup) {
+            throw new AggregateError(
+              [error, cleanup],
+              "Render operation and context cleanup failed.",
+              { cause: error },
+            );
+          }
+        }
         const result: CaptureReply = {
           ok: false,
           code: signal.aborted
@@ -828,8 +873,31 @@ export function createWorker(
       }
     },
     async close() {
-      await browser?.close();
-      browser = undefined;
+      const errors: unknown[] = [];
+      for (const context of contexts) {
+        try {
+          await context.close();
+          contexts.delete(context);
+        } catch (error) {
+          errors.push(error);
+        }
+      }
+      try {
+        await unverifiedBrowser?.close();
+        unverifiedBrowser = undefined;
+      } catch (error) {
+        errors.push(error);
+      }
+      try {
+        await browser?.close();
+        browser = undefined;
+      } catch (error) {
+        errors.push(error);
+      }
+      if (errors.length)
+        throw new AggregateError(errors, "Browser cleanup failed.", {
+          cause: errors[0],
+        });
       verifiedImages.clear();
     },
   };
