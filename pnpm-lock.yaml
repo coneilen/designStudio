@@ -93,6 +93,16 @@ importers:
         specifier: 3.2.1
         version: 3.2.1
 
+  packages/project-host:
+    dependencies:
+      '@design-studio/host':
+        specifier: workspace:*
+        version: link:../host
+    optionalDependencies:
+      koffi:
+        specifier: 3.2.1
+        version: 3.2.1
+
   packages/renderer-host:
     dependencies:
       '@design-studio/contracts':
