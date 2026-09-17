@@ -1,0 +1,32 @@
+{
+  "name": "@design-studio/renderer-host",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src/bootstrap.mjs",
+    "README.md"
+  ],
+  "engines": {
+    "node": "24.21.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@design-studio/contracts": "workspace:*",
+    "@design-studio/host": "workspace:*"
+  },
+  "optionalDependencies": {
+    "koffi": "3.2.1",
+    "@koromix/koffi-win32-x64": "3.2.1",
+    "@koromix/koffi-win32-arm64": "3.2.1"
+  }
+}

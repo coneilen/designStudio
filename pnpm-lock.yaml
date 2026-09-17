@@ -93,6 +93,25 @@ importers:
         specifier: 3.2.1
         version: 3.2.1
 
+  packages/renderer-host:
+    dependencies:
+      '@design-studio/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@design-studio/host':
+        specifier: workspace:*
+        version: link:../host
+    optionalDependencies:
+      '@koromix/koffi-win32-arm64':
+        specifier: 3.2.1
+        version: 3.2.1
+      '@koromix/koffi-win32-x64':
+        specifier: 3.2.1
+        version: 3.2.1
+      koffi:
+        specifier: 3.2.1
+        version: 3.2.1
+
   packages/storage:
     dependencies:
       '@design-studio/contracts':
