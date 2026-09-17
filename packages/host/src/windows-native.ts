@@ -1,5 +1,6 @@
 import path from "node:path";
 import { HostBoundaryError } from "./guards.js";
+import { extendedDrivePath, nativeDrivePath } from "./windows-paths.js";
 
 export type NativeHandle = number | bigint;
 export interface NativeFileIdentity {
@@ -150,17 +151,8 @@ async function load(): Promise<WindowsBindings> {
   };
   return {
     open(filename) {
-      if (
-        !path.win32.isAbsolute(filename) ||
-        filename.startsWith("\\\\") ||
-        filename.includes("\0")
-      )
-        throw new HostBoundaryError(
-          "PATH_FORBIDDEN",
-          "Native publication requires a local absolute drive path.",
-        );
       const handle = createFile(
-        filename,
+        extendedDrivePath(filename),
         0xc0010000,
         0,
         null,
@@ -210,7 +202,7 @@ async function load(): Promise<WindowsBindings> {
           "Native file length cannot be represented safely.",
         );
       return {
-        path: full.startsWith("\\\\?\\") ? full.slice(4) : full,
+        path: nativeDrivePath(full),
         filesystem: "NTFS",
         volumeId: info.readUInt32LE(28),
         fileId: info.subarray(44, 52).toString("hex"),
@@ -218,7 +210,7 @@ async function load(): Promise<WindowsBindings> {
       };
     },
     rename(handle, destination) {
-      const name = Buffer.from(destination, "utf16le");
+      const name = Buffer.from(extendedDrivePath(destination), "utf16le");
       if (name.byteLength > 65532)
         throw new HostBoundaryError(
           "PATH_FORBIDDEN",

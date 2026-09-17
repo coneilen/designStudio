@@ -188,6 +188,16 @@ Production opt-in is
 The lazy adapter in `windows-native.ts` / `windows-publication.ts` uses the tested
 request sequence, verifies the source/destination handle path and NTFS volume/
 file identity, and retains all buffers/handles through synchronous native calls.
+Canonical local drive paths are encoded internally with the extended-length
+Windows prefix for both open and rename, following project-host's native path
+convention. This supports owned roots/staging/blob paths beyond legacy MAX_PATH
+without a global long-path setting. Caller-supplied extended/device/UNC namespaces,
+alternate streams, traversal and normalization aliases remain forbidden; the
+prefix is not an authorization bypass. Handle-returned paths must be the exact
+local drive namespace and are decoded back to ordinary paths for receipt identity.
+Native UTF-16 length/component bounds remain enforced. An owned long-path
+regression reproduced `Native open failed (Win32 3)` before the conversion fix
+and now verifies publication, binary read, durability evidence and no-replace.
 No asynchronous FFI callback outlives its buffer; every successful open has
 checked close handling. Cancellation/deadlines are checked before mutation,
 including after preflush. Once rename commits, flush/close complete even if

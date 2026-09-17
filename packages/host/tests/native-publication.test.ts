@@ -1,4 +1,11 @@
-import { mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { Artifact, Outcome } from "@design-studio/contracts";
@@ -113,6 +120,7 @@ nativeTest(
           context,
         ),
       );
+
       const artifact = value(await files.publish(staged, context));
       expect(
         await files.ensurePublicationDurable("output", [artifact], context),
@@ -146,6 +154,69 @@ nativeTest(
       expect(fault.handles).toBe(0);
     } finally {
       await cleanup(files, directory);
+    }
+  },
+);
+
+nativeTest(
+  "publishes and verifies owned long native paths without relaxing namespace or identity checks",
+  async () => {
+    const temporary = await mkdtemp(
+      path.join(tmpdir(), "studio-long-native-owned-"),
+    );
+    const root = path.join(
+      temporary,
+      "catalog-".padEnd(70, "a"),
+      "project-".padEnd(70, "b"),
+      "binding-".padEnd(70, "c"),
+    );
+    await mkdir(root, { recursive: true });
+    expect(root.length).toBeGreaterThan(260);
+    const context = syntheticContext();
+    context.authorization.grants.push({
+      resourceKind: "artifact",
+      resourceId: "long-root",
+      operations: ["read", "write"],
+    });
+    const files = await ProjectFileSystem.create({
+      projectId: context.projectId,
+      authority: (authorization) => authorization === context.authorization,
+      publicationProfile: "windows-ntfs-write-through-v1",
+      roots: [
+        {
+          id: "long-root",
+          path: root,
+          access: "read-write",
+          trustedExclusiveAccess: true,
+        },
+      ],
+    });
+    try {
+      const request = {
+        artifactRootId: "long-root",
+        path: `blobs/${"a".repeat(64)}`,
+      };
+      const bytes = Uint8Array.of(0, 255, 13, 10);
+      const staged = value(await files.stage(request, bytes, context));
+      const artifact = value(await files.publish(staged, context));
+      expect(artifact.path).toBe(request.path);
+      expect(value(await files.read(request, context))).toEqual(bytes);
+      expect(
+        await files.ensurePublicationDurable("long-root", [artifact], context),
+      ).toMatchObject({
+        status: "complete",
+        value: { durable: true, profile: "windows-ntfs-write-through-v1" },
+      });
+      const duplicate = value(
+        await files.stage(request, Uint8Array.of(7), context),
+      );
+      expect(await files.publish(duplicate, context)).toMatchObject({
+        error: { code: "CONFLICT" },
+      });
+      expect(value(await files.read(request, context))).toEqual(bytes);
+      expect(fault.handles).toBe(0);
+    } finally {
+      await cleanup(files, temporary);
     }
   },
 );
