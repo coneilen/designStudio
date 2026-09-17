@@ -93,6 +93,22 @@ importers:
         specifier: 3.2.1
         version: 3.2.1
 
+  packages/jobs:
+    dependencies:
+      '@design-studio/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@design-studio/host':
+        specifier: workspace:*
+        version: link:../host
+      '@design-studio/storage':
+        specifier: workspace:*
+        version: link:../storage
+    devDependencies:
+      '@design-studio/design-ir':
+        specifier: workspace:*
+        version: link:../design-ir
+
   packages/project-host:
     dependencies:
       '@design-studio/host':
