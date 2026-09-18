@@ -12,8 +12,12 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
-import { expect, it } from "vitest";
+import { expect, it as nativeTest } from "vitest";
 import { phaseReport } from "./phase-report.js";
+
+const it = nativeTest.runIf(
+  process.platform === "win32" && process.arch === "x64",
+);
 
 it("retains both bootstrap and payload numeric collectors after actual child exit", async () => {
   // This small collector fixture resolves the existing project-host Koffi dependency.

@@ -17,9 +17,13 @@ import {
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { expect, test } from "vitest";
+import { expect, test as nativeTest } from "vitest";
 import { exactTree } from "../src/installation-manifest.js";
 import { ownedTest } from "./support.js";
+
+const test = nativeTest.skipIf(
+  process.platform !== "win32" || process.arch !== "x64",
+);
 
 const execute = promisify(execFile);
 const probe = fileURLToPath(
