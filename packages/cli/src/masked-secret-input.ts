@@ -71,14 +71,22 @@ function admissible({ input, output }: DedicatedTerminal): boolean {
  * out-of-band user confirmation. No production adapter is admitted yet.
  */
 export function createDedicatedSecretInputOwner(terminal: DedicatedTerminal) {
-  if (!admissible(terminal) || inputs.has(terminal.input))
+  const cleanup = terminal.releaseAfterExit;
+  if (typeof cleanup !== "function")
     throw new ApplicationError("ACTION_REQUIRED");
-  inputs.add(terminal.input);
+  const owned: DedicatedTerminal = Object.freeze({
+    input: terminal.input,
+    output: terminal.output,
+    releaseAfterExit: cleanup.bind(terminal),
+  });
+  if (!admissible(owned) || inputs.has(owned.input))
+    throw new ApplicationError("ACTION_REQUIRED");
+  inputs.add(owned.input);
   const owner: SecretInputOwner = Object.freeze({
     kind: "dedicated-secret-input",
   });
   const registration: Registration = {
-    terminal: Object.freeze({ ...terminal }),
+    terminal: owned,
   };
   owners.set(owner, registration);
   const session = () => {
@@ -290,7 +298,7 @@ export function readMaskedSecretFromTerminal(
           return state();
         if (phase !== "closing" && !primaryCode) fail("CANCELLED");
         release = Promise.resolve()
-          .then(releaseAfterExit)
+          .then(() => releaseAfterExit())
           .then(
             () => {
               checkDeadline();

@@ -47,7 +47,15 @@ parsing still rejects Figma credential commands, token arguments and file/stdin
 alternatives. `createDedicatedSecretInputOwner` registers one opaque owner in a
 private WeakMap and rejects reused/shared/encoded/buffered/non-TTY streams. Its
 return value has owner-only inspection, confirmation and post-exit cleanup
-controls. This establishes **protocol ownership, not native trust or terminal
+controls. Input/output references are explicitly snapshotted; the required cleanup
+callable is captured once and bound to the original adapter instance, including
+prototype methods and private receiver state. Missing/noncallable cleanup is
+rejected before input ownership. Replacing caller fields later cannot replace
+the captured resources or cleanup function. Cleanup is explicitly invoked and
+awaited, never supplied as an optional Promise handler that could silently skip
+an absent method. Native adapters must retain their resource handles privately;
+their original receiver state remains live for cleanup retries.
+This establishes **protocol ownership, not native trust or terminal
 support**. Current tests supply synthetic streams; no caller Boolean, structural
 owner clone, environment variable or TTY check attests a supported profile.
 
