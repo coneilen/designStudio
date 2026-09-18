@@ -10,6 +10,7 @@ import {
   Redactor,
   ScopedCredentialStore,
 } from "../src/security.js";
+import { deferred } from "./deferred.js";
 
 it("separates CLI and browser trust with expiry, CSRF, Host and loopback guards", () => {
   let now = Date.now();
@@ -285,10 +286,105 @@ it("expires credential callback lifetime under the contract fake clock and wipes
     return "safe";
   });
   clock.advance(5);
-  expect(await use).toMatchObject({ error: { code: "DEADLINE_EXCEEDED" } });
+  let settled = false;
+  void use.then(() => {
+    settled = true;
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(settled).toBe(false);
+  expect(store.pendingUses).toBe(1);
+  expect(store.interruptedUses).toBe(1);
   const late = Uint8Array.of(1, 2, 3);
   resolveRead?.(late);
+  expect(await use).toMatchObject({ error: { code: "DEADLINE_EXCEEDED" } });
   await new Promise<void>((resolve) => setImmediate(resolve));
   expect(late).toEqual(Uint8Array.of(0, 0, 0));
   expect(called).toBe(false);
+});
+
+for (const interruption of ["cancel", "deadline", "revocation"] as const)
+  for (const reject of [false, true])
+    it(`retains borrowed secret/redaction until consumer settles after ${interruption}, reject=${reject}`, async () => {
+      const clock = createFakeClock(Date.now());
+      const controller = new AbortController();
+      const context = syntheticContext({
+        clock,
+        signal: controller.signal,
+        budget: { ...syntheticContext().budget, maxDurationMs: 5 },
+      });
+      const reference = {
+        id: "secret_one",
+        providerId: "provider_one",
+        store: "configured-secure-store",
+      } as const;
+      context.authorization.grants.push({
+        resourceKind: "credential",
+        resourceId: reference.id,
+        operations: ["credential-use"],
+      });
+      let authorized = true;
+      const redactor = new Redactor();
+      const secret = Buffer.from("synthetic-owned-late-secret");
+      const consumer = deferred<string>();
+      const entered = deferred<void>();
+      const store = new ScopedCredentialStore({
+        projectId: context.projectId,
+        authority: () => authorized,
+        references: [reference],
+        redactor,
+        backend: {
+          store: reference.store,
+          capability: "native-binding",
+          read: async () => secret,
+        },
+      });
+      const use = store.use(reference, context, async () => {
+        entered.resolve();
+        return consumer.promise;
+      });
+      await entered.promise;
+      let settled = false;
+      void use.then(() => {
+        settled = true;
+      });
+      if (interruption === "cancel") controller.abort();
+      if (interruption === "deadline") clock.advance(5);
+      if (interruption === "revocation") authorized = false;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(settled).toBe(false);
+      expect(store.pendingUses).toBe(1);
+      if (interruption !== "revocation") expect(store.interruptedUses).toBe(1);
+      expect(secret.toString()).toBe("synthetic-owned-late-secret");
+      expect(redactor.containsSecret("synthetic-owned-late-secret")).toBe(true);
+      if (reject) consumer.reject(new Error("synthetic-owned-late-secret"));
+      else consumer.resolve("late safe value");
+      expect(await use).toMatchObject({
+        status: interruption === "cancel" ? "cancelled" : "failed",
+        error: {
+          code:
+            interruption === "cancel"
+              ? "CANCELLED"
+              : interruption === "deadline"
+                ? "DEADLINE_EXCEEDED"
+                : "AUTH_REQUIRED",
+        },
+      });
+      expect(secret.every((byte) => byte === 0)).toBe(true);
+      expect(store.pendingUses).toBe(0);
+      expect(redactor.containsSecret("synthetic-owned-late-secret")).toBe(
+        false,
+      );
+    });
+
+it("releases redaction registrations independently for overlapping owners", () => {
+  const redactor = new Redactor();
+  const bytes = Buffer.from("synthetic-shared-redaction");
+  const first = redactor.addSecret(bytes);
+  const second = redactor.addSecret(bytes);
+  first();
+  first();
+  expect(redactor.containsSecret(bytes.toString())).toBe(true);
+  second();
+  expect(redactor.containsSecret(bytes.toString())).toBe(false);
+  bytes.fill(0);
 });

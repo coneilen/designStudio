@@ -192,25 +192,42 @@ export class LocalSessionAuthenticator {
 }
 
 export class Redactor {
-  private readonly secrets = new Set<string>();
-  addSecret(bytes: Uint8Array): void {
+  private readonly secrets = new Map<string, number>();
+  addSecret(bytes: Uint8Array): () => void {
     const buffer = Buffer.from(bytes);
     const text = buffer.toString("utf8");
-    for (const value of [
-      text,
-      encodeURIComponent(text),
-      buffer.toString("hex"),
-      buffer.toString("base64"),
-      buffer.toString("base64url"),
-    ])
-      if (value) this.secrets.add(value);
+    const values = new Set(
+      [
+        text,
+        encodeURIComponent(text),
+        buffer.toString("hex"),
+        buffer.toString("base64"),
+        buffer.toString("base64url"),
+      ].filter(Boolean),
+    );
+    buffer.fill(0);
+    for (const value of values)
+      this.secrets.set(value, (this.secrets.get(value) ?? 0) + 1);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      for (const value of values) {
+        const count = this.secrets.get(value) ?? 0;
+        if (count <= 1) this.secrets.delete(value);
+        else this.secrets.set(value, count - 1);
+      }
+      values.clear();
+    };
   }
   containsSecret(text: string): boolean {
-    return [...this.secrets].some((secret) => text.includes(secret));
+    return [...this.secrets.keys()].some((secret) => text.includes(secret));
   }
   redact(text: string): string {
     let safe = text;
-    for (const secret of [...this.secrets].sort((a, b) => b.length - a.length))
+    for (const secret of [...this.secrets.keys()].sort(
+      (a, b) => b.length - a.length,
+    ))
       safe = safe.split(secret).join("[REDACTED]");
     safe = safe.replace(/\b(Bearer|Basic)\s+\S+/gi, "$1 [REDACTED]");
     return safe.replace(/https?:\/\/[^\s<>"']+/gi, (raw) => {
@@ -231,7 +248,7 @@ export class Redactor {
 export interface NativeCredentialBackend {
   readonly store: Exclude<CredentialReference["store"], "test-fake">;
   readonly capability: "verified-native" | "native-binding";
-  /** Returns exclusively owned bytes; caller zeroes them after use. No enumeration. */
+  /** Settles only after native work ends, even on abort. Returns owned bytes. No enumeration. */
   read(
     reference: CredentialReference,
     signal: AbortSignal,
@@ -284,6 +301,13 @@ function secretInValue(
 }
 export class ScopedCredentialStore implements CredentialStore {
   private readonly references: readonly CredentialReference[];
+  private readonly active = new Set<AbortSignal>();
+  get pendingUses(): number {
+    return this.active.size;
+  }
+  get interruptedUses(): number {
+    return [...this.active].filter((signal) => signal.aborted).length;
+  }
   constructor(private readonly options: CredentialStoreOptions) {
     this.references = structuredClone(options.references);
   }
@@ -341,45 +365,44 @@ export class ScopedCredentialStore implements CredentialStore {
           true,
         );
       const watch = guard.watch();
+      this.active.add(watch.signal);
       let secret: Uint8Array | undefined;
-      let cancel: (() => void) | undefined;
+      let releaseRedaction: (() => void) | undefined;
+      const checkpoint = () => {
+        if (watch.signal.aborted) throw watch.signal.reason;
+        guard.check();
+      };
       try {
-        const cancelled = new Promise<never>((_resolve, reject) => {
-          cancel = () => reject(watch.signal.reason);
-          watch.signal.addEventListener("abort", cancel, { once: true });
-          if (watch.signal.aborted) cancel();
-        });
-        const work = (async () => {
-          const loaded = await backend.read(reference, watch.signal);
-          if (watch.signal.aborted) {
-            loaded.fill(0);
-            throw watch.signal.reason;
-          }
-          secret = loaded;
-          guard.consume("input", secret.byteLength);
-          this.options.redactor.addSecret(secret);
-          const value = await consumer(secret);
-          if (secretInValue(value, this.options.redactor))
-            throw new HostBoundaryError(
-              "FORBIDDEN",
-              "Credential callback attempted to return secret material.",
-            );
-          guard.consume(
-            "output",
-            value instanceof Uint8Array
-              ? value.byteLength
-              : Buffer.byteLength(JSON.stringify(value) ?? ""),
-          );
-          guard.check();
-          return value;
-        })();
-        return await Promise.race([work, cancelled]);
-      } catch (error) {
-        if (error instanceof HostBoundaryError)
+        secret = await backend.read(reference, watch.signal);
+        checkpoint();
+        guard.consume("input", secret.byteLength);
+        releaseRedaction = this.options.redactor.addSecret(secret);
+        const value = await consumer(secret);
+        checkpoint();
+        if (secretInValue(value, this.options.redactor))
           throw new HostBoundaryError(
-            error.code,
-            `Credential use failed (${error.code}); sensitive details withheld.`,
-            error.unavailable,
+            "FORBIDDEN",
+            "Credential callback attempted to return secret material.",
+          );
+        guard.consume(
+          "output",
+          value instanceof Uint8Array
+            ? value.byteLength
+            : Buffer.byteLength(JSON.stringify(value) ?? ""),
+        );
+        return value;
+      } catch (error) {
+        let failure = error;
+        try {
+          checkpoint();
+        } catch (interruption) {
+          failure = interruption;
+        }
+        if (failure instanceof HostBoundaryError)
+          throw new HostBoundaryError(
+            failure.code,
+            `Credential use failed (${failure.code}); sensitive details withheld.`,
+            failure.unavailable,
           );
         throw new HostBoundaryError(
           "INTERNAL_ERROR",
@@ -387,8 +410,12 @@ export class ScopedCredentialStore implements CredentialStore {
         );
       } finally {
         secret?.fill(0);
-        if (cancel) watch.signal.removeEventListener("abort", cancel);
-        await watch.close();
+        releaseRedaction?.();
+        try {
+          await watch.close();
+        } finally {
+          this.active.delete(watch.signal);
+        }
       }
     });
   }

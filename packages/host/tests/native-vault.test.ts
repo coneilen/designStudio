@@ -3,6 +3,7 @@ import {
   NapiCredentialBackend,
   nativeVaultCapability,
 } from "../src/native-vault.js";
+import { deferred } from "./deferred.js";
 
 it("maps only exact configured references to native byte reads without enumeration or write calls", async () => {
   const reference = {
@@ -86,4 +87,48 @@ it("only loads the real installed native module for capability evidence; never c
     host: process.platform,
     evidence: "module-load-only",
   });
+});
+
+it("does not pass abort wrappers to native reads and owns late bytes until actual settlement", async () => {
+  const reference = {
+    id: "late_ref",
+    providerId: "provider_one",
+    store: "windows-credential-manager",
+  } as const;
+  const entered = deferred<void>();
+  const native = deferred<Uint8Array>();
+  const controller = new AbortController();
+  const backend = new NapiCredentialBackend({
+    platform: "win32",
+    entries: [
+      { reference, service: "synthetic-owned", account: "synthetic-only" },
+    ],
+    load: async () => ({
+      AsyncEntry: class {
+        async getSecret(...args: unknown[]) {
+          expect(args).toEqual([]);
+          entered.resolve();
+          return native.promise;
+        }
+      },
+    }),
+  });
+  const result = backend.read(reference, controller.signal);
+  let settled = false;
+  void result.then(
+    () => {
+      settled = true;
+    },
+    () => {
+      settled = true;
+    },
+  );
+  await entered.promise;
+  controller.abort();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(settled).toBe(false);
+  const bytes = Buffer.from("synthetic-late-native");
+  native.resolve(bytes);
+  await expect(result).rejects.toMatchObject({ code: "CANCELLED" });
+  expect(bytes.every((byte) => byte === 0)).toBe(true);
 });

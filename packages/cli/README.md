@@ -33,6 +33,31 @@ input, 3 comparison policy failure, 4 inconclusive comparison, and 5
 conflict/required action. A queried Job is not necessarily completed work.
 No comparison engine, live provider or browser enrollment is implemented.
 
+## Internal masked-input primitive
+
+`masked-secret.ts` is not exported or connected to a command. It is preparation
+for a separately reviewed installed native credential setup flow, not permission
+to enroll a PAT from a worktree. Existing command parsing still rejects Figma
+credential commands, token arguments and file/stdin alternatives.
+
+The production primitive uses only real stdin/stderr TTY descriptors, never an
+injected stream, argv, environment or token file. The separate internal stream
+engine enables synthetic tests but is not a public package export. It refuses
+redirected, already-buffered, encoded or shared input. A fixed hidden-input prompt
+does not echo characters or token length; input is bounded to 4096 printable
+ASCII bytes. Ctrl+C, Escape, EOF, multiline/control input, overflow and a maximum
+five-minute interaction timeout fail closed. Owned buffers, listeners, timers
+and raw-mode changes are cleaned up; raw-mode restoration failure is explicitly
+`INTERRUPTED`, not successful input. JavaScript/native terminal copies cannot be
+guaranteed erased.
+
+Only the later trusted native coordinator may receive these owned bytes, recheck
+current principal/project/user approval, obtain a new at-most-30-second admin
+work capability without renewing expired proof, then call the fixed-entry
+boundary. No callback or boolean in this primitive establishes installation
+trust. The agent must not invoke, observe or screenshot the real secret prompt;
+the user will run it in their own local terminal after separate approval.
+
 ## Supported invocation model
 
 An ordinary checkout can run `--help --json`, `--version --json`, `doctor --json`

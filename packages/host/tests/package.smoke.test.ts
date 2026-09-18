@@ -16,6 +16,13 @@ it("imports the built public package in a clean Node process without touching an
       if (typeof host[name] !== "function") throw new Error("Missing export: " + name);
     }
     if (host.WINDOWS_PUBLICATION_PROFILE !== "windows-ntfs-write-through-v1") throw new Error("Missing explicit native profile");
+    for (const name of ["CredentialAdministration", "OwnedFigmaCredentialAdapter"]) {
+      if (name in host) throw new Error("Internal credential primitive leaked");
+    }
+    for (const name of ["@design-studio/host/credential-admin", "@design-studio/host/dist/credential-admin.js"]) {
+      try { await import(name); throw new Error("Internal entry became public"); }
+      catch (error) { if (error.code !== "ERR_PACKAGE_PATH_NOT_EXPORTED") throw error; }
+    }
     process.stdout.write("host-public-import-ok");
   `,
     ],

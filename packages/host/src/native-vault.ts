@@ -149,8 +149,9 @@ export class NapiCredentialBackend implements NativeCredentialBackend {
         configured.service,
         configured.account,
       );
-      bytes = await entry.getSecret(signal);
-    } catch (error) {
+      // N-API abort rejection is not proof the native operation has settled.
+      bytes = await entry.getSecret();
+    } catch {
       if (signal.aborted)
         throw new HostBoundaryError(
           "CANCELLED",
@@ -160,7 +161,6 @@ export class NapiCredentialBackend implements NativeCredentialBackend {
         "PROVIDER_UNAVAILABLE",
         "Native vault read failed (locked, inaccessible or native error); sensitive details withheld.",
         true,
-        { cause: error },
       );
     }
     if (signal.aborted) {

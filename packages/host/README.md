@@ -279,9 +279,12 @@ unavailable, never plaintext fallback. `NapiCredentialBackend({entries})` is
 a real, lazy Windows Credential Manager/macOS Keychain read path using pinned
 `@napi-rs/keyring` 2.0.0 and its exact optional platform packages. Each entry
 maps one contract credential reference to configured service/account; the adapter
-uses only `AsyncEntry.getSecret(signal)`, never enumeration, password strings,
+uses only `AsyncEntry.getSecret()`, never enumeration, password strings,
 provisioning, deletion, CLI tools or plaintext fallback. Its capability label
 is `native-binding`, not evidence of a successful live vault lookup.
+Cancellation is checked before/after native work. The native call is deliberately
+not passed an AbortSignal: N-API abort-wrapper rejection does not prove the
+underlying native read has settled. Late returned bytes are zeroed and rejected.
 
 `nativeVaultCapability()` loads the module without constructing an entry.
 The Windows x64 prebuilt module loaded on Node 24.21.0 with install scripts
@@ -296,19 +299,81 @@ prebuilt path.
 Only trusted callback code
 may receive secret bytes; returned plain data is checked for known-secret
 leakage (including nested keys, byte arrays and encodings), finite output bounds,
-and callback failures conceal sensitive details even for typed errors. Borrowed bytes are
-zeroed on success, failure and timeout. JavaScript cannot erase immutable strings,
+and callback failures conceal sensitive details even for typed errors. Original
+read/consumer promises are awaited, not raced away on cancellation or deadline.
+Late success is rejected after live authority revalidation. Borrowed bytes and
+scoped redaction remain owned until the original work settles, then are cleared
+on success or failure. `pendingUses` reports retained ownership; `interruptedUses`
+counts those with a cancelled/deadline watch. An arbitrary native call or trusted
+consumer that never settles can retain ownership indefinitely: an operation
+deadline is not proof of completed cleanup. Callers must not release project or
+installation resources while `use` remains pending.
+JavaScript cannot erase immutable strings,
 native copies or a malicious consumer's copies; this is lifetime hygiene, not
 a cryptographic erasure or arbitrary callback sandbox guarantee.
 
 `Redactor` masks registered UTF-8/encoded credentials, authorization headers and
-URL credentials/query/fragment metadata. Avoid logging untrusted objects or
+URL credentials/query/fragment metadata. `addSecret` returns an idempotent
+release function; overlapping registrations are reference-counted, so one
+operation cannot remove another's redaction. Avoid logging untrusted objects or
 design content in the first place; it is not an all-secrets detector.
 `decideEgress` defaults deny and records provider, data classes and evidence IDs
 separately from configured policy. Every class and exact provider must be
 allowed, with a trusted `model-egress` grant and nonzero external-call budget.
 An allowed decision is not a transmission receipt, token/spend reservation or
 permission for an arbitrary adapter to send content. No transmission occurs here.
+
+### Internal credential-administration primitives (not an enrollment command)
+
+`credential-admin.ts` and `credential-admin-vault.ts` are deliberately **not**
+exported from the public package. No CLI/HTTP route, installed capture profile,
+native project enrollment or real-user authority issuer is wired yet. Constructing
+these primitives or supplying a callback is not production trust evidence.
+The next reviewed composition must provide the verified native current-principal
+and project leases, existing live `Authority`, one boundary instance per owned
+reference, and a durable private `CredentialAdminJournal`; there is no default
+permit, in-memory production journal or plaintext fallback.
+
+The internal issuer admits exactly `setup`, `status`, `update` or `remove`
+following trusted local user confirmation of that action/reference. This is
+separate from the public `Operation`/Job vocabulary, which remains unchanged.
+Capabilities are frozen runtime identities in a private WeakMap, scoped to
+actor/project/provider/reference/action, consumed once, and rechecked across
+awaits. JSON, structural clones, stale authority and cross-principal use fail.
+Prompt interaction must finish before issuing the short-lived work capability;
+do not extend expired authority after a five-minute user interaction.
+
+The byte adapter targets only `figma_rest` / Windows Credential Manager with
+an app-created UUID reference. Its service is `DesignStudio.FigmaPAT.v1.` plus
+the SHA-256 of actor/project/reference; its account is an opaque actor digest.
+No caller service/account/target, credential enumeration, other provider/user
+lookup or password-string API exists. `setSecret`, `getSecret` and
+`deleteCredential` settle without native AbortSignal wrappers.
+The loader injection is an internal deterministic test seam, not a public
+production override.
+
+Setup checks its exact new entry for collision and refuses overwrite; update
+requires an existing owned entry and separately confirmed action, and remove
+requires its exact confirmed target. Status **is vault access**, not a free
+capability probe: the binding lacks metadata-only presence, so it performs one
+authorized read and immediately clears the bytes. Output includes only reference,
+presence and explicitly user-declared expiry/scopes, never a token prefix,
+fingerprint, account profile or verified permission claim.
+
+Before write/delete, await durable nonsecret intent. Ambiguous/failed/late native
+mutation or verification returns `OUTPUT_UNCERTAIN`, retains pending/uncertain
+journal state and never rolls back automatically. Failed journal cleanup is
+explicit. Another mutation requires separately authorized status reconciliation;
+uncertain expiry claims are not promoted by a presence-only read. The original
+promise and owned token bytes remain live until native work settles; `pending`
+does not become false merely because cancellation was requested. Caller-supplied
+owned token bytes are copied within a 4096-byte printable-ASCII bound, cleared on
+admission/rejection, and the private copy is cleared after work quiesces.
+
+This is an OS-current-user boundary, not a sandbox against software running as
+that same user. Tests use synthetic native adapters and journals; no real vault
+entry has been read, created, replaced or deleted for this slice. Live native
+behavior, permissions and crash recovery require separate approved evidence.
 
 ## Evidence and commands
 
