@@ -1,0 +1,179 @@
+{
+  "origin": "synthetic-authored-not-figma",
+  "fixtureId": "settings-screen",
+  "description": "Typed visual components and tokens; no target application or behavior implementation.",
+  "acceptedAt": "2026-09-16T00:00:00Z",
+  "root": {
+    "id": "settings-root",
+    "type": "column",
+    "layout": {
+      "width": "fill",
+      "height": "fill",
+      "spacing": {
+        "token": "spacing.section"
+      },
+      "padding": {
+        "top": 16,
+        "right": {
+          "token": "spacing.page"
+        },
+        "bottom": 16,
+        "left": {
+          "token": "spacing.page"
+        }
+      }
+    },
+    "children": [
+      {
+        "id": "settings-title",
+        "type": "text",
+        "layout": {
+          "width": "fill",
+          "height": "hug"
+        },
+        "content": "Travel settings",
+        "indexing": "utf-16",
+        "typography": {
+          "fontId": "font_abeezee_regular",
+          "fontSize": 24,
+          "fontWeight": 400,
+          "lineHeight": 24,
+          "letterSpacing": 0,
+          "alignment": "start",
+          "color": {
+            "token": "color.ink"
+          },
+          "wrap": "wrap"
+        },
+        "accessibility": {
+          "role": "heading",
+          "label": "Travel settings",
+          "evidence": "declared-intent"
+        }
+      },
+      {
+        "id": "offline-toggle",
+        "type": "component",
+        "layout": {
+          "width": "fill",
+          "height": "hug"
+        },
+        "componentReference": {
+          "id": "settings-toggle-row",
+          "version": "1"
+        },
+        "properties": {
+          "title": {
+            "type": "string",
+            "value": "Keep maps offline"
+          },
+          "checked": {
+            "type": "boolean",
+            "value": true
+          },
+          "disabled": {
+            "type": "boolean",
+            "value": false
+          }
+        },
+        "variant": "on",
+        "slots": {},
+        "accessibility": {
+          "role": "toggle",
+          "label": "Keep maps offline",
+          "state": {
+            "checked": true,
+            "disabled": false
+          },
+          "evidence": "declared-intent"
+        },
+        "behavior": {
+          "status": "declared",
+          "critical": false,
+          "intent": "update-demo-state",
+          "stateField": "offline-toggle",
+          "value": {
+            "type": "boolean",
+            "value": true
+          },
+          "simulatedOnly": true
+        }
+      },
+      {
+        "id": "wifi-toggle",
+        "type": "component",
+        "layout": {
+          "width": "fill",
+          "height": "hug"
+        },
+        "componentReference": {
+          "id": "settings-toggle-row",
+          "version": "1"
+        },
+        "properties": {
+          "title": {
+            "type": "string",
+            "value": "Use Wi-Fi only"
+          },
+          "checked": {
+            "type": "boolean",
+            "value": false
+          },
+          "disabled": {
+            "type": "boolean",
+            "value": false
+          }
+        },
+        "variant": "off",
+        "slots": {},
+        "accessibility": {
+          "role": "toggle",
+          "label": "Use Wi-Fi only",
+          "state": {
+            "checked": false,
+            "disabled": false
+          },
+          "evidence": "declared-intent"
+        },
+        "behavior": {
+          "status": "declared",
+          "critical": false,
+          "intent": "update-demo-state",
+          "stateField": "wifi-toggle",
+          "value": {
+            "type": "boolean",
+            "value": false
+          },
+          "simulatedOnly": true
+        }
+      },
+      {
+        "id": "storage-label",
+        "type": "text",
+        "layout": {
+          "width": "fill",
+          "height": "hug"
+        },
+        "content": "Synthetic storage: 12 MB",
+        "indexing": "utf-16",
+        "typography": {
+          "fontId": "font_abeezee_regular",
+          "fontSize": 16,
+          "fontWeight": 400,
+          "lineHeight": 24,
+          "letterSpacing": 0,
+          "alignment": "start",
+          "color": {
+            "token": "color.ink"
+          },
+          "wrap": "wrap"
+        },
+        "accessibility": {
+          "role": "text",
+          "label": "Synthetic storage: 12 MB",
+          "evidence": "declared-intent"
+        }
+      }
+    ]
+  }
+}

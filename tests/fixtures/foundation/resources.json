@@ -1,0 +1,879 @@
+{
+  "schemaVersion": "1.0",
+  "id": "resources_synthetic",
+  "projectId": "project_synthetic",
+  "components": {
+    "schemaVersion": "1.0",
+    "projectId": "project_synthetic",
+    "revision": "1",
+    "definitions": [
+      {
+        "id": "settings-toggle-row",
+        "version": "1",
+        "properties": [
+          {
+            "name": "title",
+            "type": "string",
+            "required": true
+          },
+          {
+            "name": "checked",
+            "type": "boolean",
+            "required": false,
+            "default": {
+              "type": "boolean",
+              "value": false
+            }
+          },
+          {
+            "name": "disabled",
+            "type": "boolean",
+            "required": false,
+            "default": {
+              "type": "boolean",
+              "value": false
+            }
+          }
+        ],
+        "slots": [
+          {
+            "name": "trailing",
+            "targetNodeId": "trailing",
+            "insertion": "children",
+            "minItems": 0,
+            "maxItems": 1,
+            "allowedNodeTypes": [
+              "shape",
+              "icon",
+              "text"
+            ]
+          }
+        ],
+        "expansion": {
+          "id": "toggle-row",
+          "type": "row",
+          "layout": {
+            "width": "fill",
+            "height": 56,
+            "spacing": 12,
+            "alignment": "center",
+            "padding": {
+              "top": 8,
+              "right": 8,
+              "bottom": 8,
+              "left": 8
+            }
+          },
+          "appearance": {
+            "opacity": 1
+          },
+          "accessibility": {
+            "role": "toggle",
+            "state": {
+              "checked": false,
+              "disabled": false
+            },
+            "evidence": "declared-intent"
+          },
+          "bindings": [
+            {
+              "property": "checked",
+              "target": "accessibility.state.checked"
+            },
+            {
+              "property": "disabled",
+              "target": "accessibility.state.disabled"
+            }
+          ],
+          "children": [
+            {
+              "id": "label",
+              "type": "text",
+              "layout": {
+                "width": "fill",
+                "height": "hug"
+              },
+              "content": "Label",
+              "indexing": "utf-16",
+              "typography": {
+                "fontId": "font_abeezee_regular",
+                "fontSize": 16,
+                "fontWeight": 400,
+                "lineHeight": 24,
+                "letterSpacing": 0,
+                "alignment": "start",
+                "color": {
+                  "token": "color.ink"
+                },
+                "wrap": "wrap"
+              },
+              "accessibility": {
+                "role": "text",
+                "label": "Label",
+                "evidence": "declared-intent"
+              },
+              "bindings": [
+                {
+                  "property": "title",
+                  "target": "content"
+                },
+                {
+                  "property": "title",
+                  "target": "accessibility.label"
+                }
+              ]
+            },
+            {
+              "id": "trailing",
+              "type": "group",
+              "layout": {
+                "width": "hug",
+                "height": "hug"
+              },
+              "children": []
+            },
+            {
+              "id": "track",
+              "type": "stack",
+              "layout": {
+                "width": 36,
+                "height": 20
+              },
+              "appearance": {
+                "fill": {
+                  "token": "color.muted"
+                },
+                "radius": 10
+              },
+              "children": [
+                {
+                  "id": "thumb",
+                  "type": "shape",
+                  "shape": "ellipse",
+                  "layout": {
+                    "width": 16,
+                    "height": 16,
+                    "position": "absolute",
+                    "offset": {
+                      "x": 2,
+                      "y": 2
+                    }
+                  },
+                  "appearance": {
+                    "fill": {
+                      "space": "srgb",
+                      "r": 1,
+                      "g": 1,
+                      "b": 1,
+                      "a": 1
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "variants": [
+          {
+            "id": "off",
+            "when": {
+              "checked": {
+                "type": "boolean",
+                "value": false
+              },
+              "disabled": {
+                "type": "boolean",
+                "value": false
+              }
+            },
+            "expansion": {
+              "id": "toggle-row",
+              "type": "row",
+              "layout": {
+                "width": "fill",
+                "height": 56,
+                "spacing": 12,
+                "alignment": "center",
+                "padding": {
+                  "top": 8,
+                  "right": 8,
+                  "bottom": 8,
+                  "left": 8
+                }
+              },
+              "appearance": {
+                "opacity": 1
+              },
+              "accessibility": {
+                "role": "toggle",
+                "state": {
+                  "checked": false,
+                  "disabled": false
+                },
+                "evidence": "declared-intent"
+              },
+              "bindings": [
+                {
+                  "property": "checked",
+                  "target": "accessibility.state.checked"
+                },
+                {
+                  "property": "disabled",
+                  "target": "accessibility.state.disabled"
+                }
+              ],
+              "children": [
+                {
+                  "id": "label",
+                  "type": "text",
+                  "layout": {
+                    "width": "fill",
+                    "height": "hug"
+                  },
+                  "content": "Label",
+                  "indexing": "utf-16",
+                  "typography": {
+                    "fontId": "font_abeezee_regular",
+                    "fontSize": 16,
+                    "fontWeight": 400,
+                    "lineHeight": 24,
+                    "letterSpacing": 0,
+                    "alignment": "start",
+                    "color": {
+                      "token": "color.ink"
+                    },
+                    "wrap": "wrap"
+                  },
+                  "accessibility": {
+                    "role": "text",
+                    "label": "Label",
+                    "evidence": "declared-intent"
+                  },
+                  "bindings": [
+                    {
+                      "property": "title",
+                      "target": "content"
+                    },
+                    {
+                      "property": "title",
+                      "target": "accessibility.label"
+                    }
+                  ]
+                },
+                {
+                  "id": "trailing",
+                  "type": "group",
+                  "layout": {
+                    "width": "hug",
+                    "height": "hug"
+                  },
+                  "children": []
+                },
+                {
+                  "id": "track",
+                  "type": "stack",
+                  "layout": {
+                    "width": 36,
+                    "height": 20
+                  },
+                  "appearance": {
+                    "fill": {
+                      "token": "color.muted"
+                    },
+                    "radius": 10
+                  },
+                  "children": [
+                    {
+                      "id": "thumb",
+                      "type": "shape",
+                      "shape": "ellipse",
+                      "layout": {
+                        "width": 16,
+                        "height": 16,
+                        "position": "absolute",
+                        "offset": {
+                          "x": 2,
+                          "y": 2
+                        }
+                      },
+                      "appearance": {
+                        "fill": {
+                          "space": "srgb",
+                          "r": 1,
+                          "g": 1,
+                          "b": 1,
+                          "a": 1
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "id": "on",
+            "when": {
+              "checked": {
+                "type": "boolean",
+                "value": true
+              },
+              "disabled": {
+                "type": "boolean",
+                "value": false
+              }
+            },
+            "expansion": {
+              "id": "toggle-row",
+              "type": "row",
+              "layout": {
+                "width": "fill",
+                "height": 56,
+                "spacing": 12,
+                "alignment": "center",
+                "padding": {
+                  "top": 8,
+                  "right": 8,
+                  "bottom": 8,
+                  "left": 8
+                }
+              },
+              "appearance": {
+                "opacity": 1
+              },
+              "accessibility": {
+                "role": "toggle",
+                "state": {
+                  "checked": true,
+                  "disabled": false
+                },
+                "evidence": "declared-intent"
+              },
+              "bindings": [
+                {
+                  "property": "checked",
+                  "target": "accessibility.state.checked"
+                },
+                {
+                  "property": "disabled",
+                  "target": "accessibility.state.disabled"
+                }
+              ],
+              "children": [
+                {
+                  "id": "label",
+                  "type": "text",
+                  "layout": {
+                    "width": "fill",
+                    "height": "hug"
+                  },
+                  "content": "Label",
+                  "indexing": "utf-16",
+                  "typography": {
+                    "fontId": "font_abeezee_regular",
+                    "fontSize": 16,
+                    "fontWeight": 400,
+                    "lineHeight": 24,
+                    "letterSpacing": 0,
+                    "alignment": "start",
+                    "color": {
+                      "token": "color.ink"
+                    },
+                    "wrap": "wrap"
+                  },
+                  "accessibility": {
+                    "role": "text",
+                    "label": "Label",
+                    "evidence": "declared-intent"
+                  },
+                  "bindings": [
+                    {
+                      "property": "title",
+                      "target": "content"
+                    },
+                    {
+                      "property": "title",
+                      "target": "accessibility.label"
+                    }
+                  ]
+                },
+                {
+                  "id": "trailing",
+                  "type": "group",
+                  "layout": {
+                    "width": "hug",
+                    "height": "hug"
+                  },
+                  "children": []
+                },
+                {
+                  "id": "track",
+                  "type": "stack",
+                  "layout": {
+                    "width": 36,
+                    "height": 20
+                  },
+                  "appearance": {
+                    "fill": {
+                      "token": "color.accent"
+                    },
+                    "radius": 10
+                  },
+                  "children": [
+                    {
+                      "id": "thumb",
+                      "type": "shape",
+                      "shape": "ellipse",
+                      "layout": {
+                        "width": 16,
+                        "height": 16,
+                        "position": "absolute",
+                        "offset": {
+                          "x": 18,
+                          "y": 2
+                        }
+                      },
+                      "appearance": {
+                        "fill": {
+                          "space": "srgb",
+                          "r": 1,
+                          "g": 1,
+                          "b": 1,
+                          "a": 1
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "id": "disabled-on",
+            "when": {
+              "checked": {
+                "type": "boolean",
+                "value": true
+              },
+              "disabled": {
+                "type": "boolean",
+                "value": true
+              }
+            },
+            "expansion": {
+              "id": "toggle-row",
+              "type": "row",
+              "layout": {
+                "width": "fill",
+                "height": 56,
+                "spacing": 12,
+                "alignment": "center",
+                "padding": {
+                  "top": 8,
+                  "right": 8,
+                  "bottom": 8,
+                  "left": 8
+                }
+              },
+              "appearance": {
+                "opacity": 0.5
+              },
+              "accessibility": {
+                "role": "toggle",
+                "state": {
+                  "checked": true,
+                  "disabled": true
+                },
+                "evidence": "declared-intent"
+              },
+              "bindings": [
+                {
+                  "property": "checked",
+                  "target": "accessibility.state.checked"
+                },
+                {
+                  "property": "disabled",
+                  "target": "accessibility.state.disabled"
+                }
+              ],
+              "children": [
+                {
+                  "id": "label",
+                  "type": "text",
+                  "layout": {
+                    "width": "fill",
+                    "height": "hug"
+                  },
+                  "content": "Label",
+                  "indexing": "utf-16",
+                  "typography": {
+                    "fontId": "font_abeezee_regular",
+                    "fontSize": 16,
+                    "fontWeight": 400,
+                    "lineHeight": 24,
+                    "letterSpacing": 0,
+                    "alignment": "start",
+                    "color": {
+                      "token": "color.ink"
+                    },
+                    "wrap": "wrap"
+                  },
+                  "accessibility": {
+                    "role": "text",
+                    "label": "Label",
+                    "evidence": "declared-intent"
+                  },
+                  "bindings": [
+                    {
+                      "property": "title",
+                      "target": "content"
+                    },
+                    {
+                      "property": "title",
+                      "target": "accessibility.label"
+                    }
+                  ]
+                },
+                {
+                  "id": "trailing",
+                  "type": "group",
+                  "layout": {
+                    "width": "hug",
+                    "height": "hug"
+                  },
+                  "children": []
+                },
+                {
+                  "id": "track",
+                  "type": "stack",
+                  "layout": {
+                    "width": 36,
+                    "height": 20
+                  },
+                  "appearance": {
+                    "fill": {
+                      "token": "color.accent"
+                    },
+                    "radius": 10
+                  },
+                  "children": [
+                    {
+                      "id": "thumb",
+                      "type": "shape",
+                      "shape": "ellipse",
+                      "layout": {
+                        "width": 16,
+                        "height": 16,
+                        "position": "absolute",
+                        "offset": {
+                          "x": 18,
+                          "y": 2
+                        }
+                      },
+                      "appearance": {
+                        "fill": {
+                          "space": "srgb",
+                          "r": 1,
+                          "g": 1,
+                          "b": 1,
+                          "a": 1
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ],
+        "dependencies": {
+          "components": [],
+          "tokens": [
+            "color.ink",
+            "color.accent",
+            "color.muted"
+          ],
+          "assets": [],
+          "fonts": [
+            "font_abeezee_regular"
+          ]
+        },
+        "evidenceIds": [
+          "evidence_resources"
+        ]
+      }
+    ],
+    "mappings": [
+      {
+        "id": "mapping_toggle_android",
+        "component": {
+          "id": "settings-toggle-row",
+          "version": "1"
+        },
+        "target": "android",
+        "state": "unresolved",
+        "reason": "Synthetic visual definition has no inspected target repository or approved code mapping.",
+        "adapters": [],
+        "supportedVariants": [],
+        "usageExamples": [],
+        "evidenceIds": [
+          "evidence_resources"
+        ]
+      }
+    ]
+  },
+  "tokens": {
+    "schemaVersion": "1.0",
+    "projectId": "project_synthetic",
+    "revision": "1",
+    "collections": [
+      {
+        "id": "core",
+        "modes": [
+          "light"
+        ]
+      }
+    ],
+    "selectedModes": {
+      "core": "light"
+    },
+    "definitions": [
+      {
+        "id": "spacing.page",
+        "type": "dimension",
+        "collection": "core",
+        "values": {
+          "light": {
+            "type": "dimension",
+            "value": 16,
+            "unit": "design-unit"
+          }
+        },
+        "evidenceIds": [
+          "evidence_resources"
+        ]
+      },
+      {
+        "id": "spacing.section",
+        "type": "dimension",
+        "collection": "core",
+        "values": {
+          "light": {
+            "type": "alias",
+            "token": "spacing.page"
+          }
+        },
+        "evidenceIds": [
+          "evidence_resources"
+        ]
+      },
+      {
+        "id": "color.ink",
+        "type": "color",
+        "collection": "core",
+        "values": {
+          "light": {
+            "type": "color",
+            "value": {
+              "space": "srgb",
+              "r": 0.08,
+              "g": 0.1,
+              "b": 0.13,
+              "a": 1
+            }
+          }
+        },
+        "evidenceIds": [
+          "evidence_resources"
+        ]
+      },
+      {
+        "id": "color.accent",
+        "type": "color",
+        "collection": "core",
+        "values": {
+          "light": {
+            "type": "color",
+            "value": {
+              "space": "srgb",
+              "r": 0.1,
+              "g": 0.38,
+              "b": 0.7,
+              "a": 1
+            }
+          }
+        },
+        "evidenceIds": [
+          "evidence_resources"
+        ]
+      },
+      {
+        "id": "color.muted",
+        "type": "color",
+        "collection": "core",
+        "values": {
+          "light": {
+            "type": "color",
+            "value": {
+              "space": "srgb",
+              "r": 0.55,
+              "g": 0.58,
+              "b": 0.62,
+              "a": 1
+            }
+          }
+        },
+        "evidenceIds": [
+          "evidence_resources"
+        ]
+      }
+    ],
+    "resolved": [
+      {
+        "tokenId": "spacing.page",
+        "mode": "light",
+        "status": "resolved",
+        "value": {
+          "type": "dimension",
+          "value": 16,
+          "unit": "design-unit"
+        },
+        "aliasChain": []
+      },
+      {
+        "tokenId": "spacing.section",
+        "mode": "light",
+        "status": "resolved",
+        "value": {
+          "type": "dimension",
+          "value": 16,
+          "unit": "design-unit"
+        },
+        "aliasChain": [
+          "spacing.page"
+        ]
+      },
+      {
+        "tokenId": "color.ink",
+        "mode": "light",
+        "status": "resolved",
+        "value": {
+          "type": "color",
+          "value": {
+            "space": "srgb",
+            "r": 0.08,
+            "g": 0.1,
+            "b": 0.13,
+            "a": 1
+          }
+        },
+        "aliasChain": []
+      },
+      {
+        "tokenId": "color.accent",
+        "mode": "light",
+        "status": "resolved",
+        "value": {
+          "type": "color",
+          "value": {
+            "space": "srgb",
+            "r": 0.1,
+            "g": 0.38,
+            "b": 0.7,
+            "a": 1
+          }
+        },
+        "aliasChain": []
+      },
+      {
+        "tokenId": "color.muted",
+        "mode": "light",
+        "status": "resolved",
+        "value": {
+          "type": "color",
+          "value": {
+            "space": "srgb",
+            "r": 0.55,
+            "g": 0.58,
+            "b": 0.62,
+            "a": 1
+          }
+        },
+        "aliasChain": []
+      }
+    ],
+    "adapters": []
+  },
+  "assets": [
+    {
+      "id": "asset_stripes",
+      "artifact": {
+        "id": "asset_stripes",
+        "path": "assets/stripes.png",
+        "mediaType": "image/png",
+        "byteLength": 504,
+        "sha256": "0074ca9803f951ff777598b3a162c19cbea0a7b829e86f0d53340ad87643281d"
+      },
+      "width": 200,
+      "height": 100,
+      "colorSpace": "srgb",
+      "alpha": "opaque",
+      "license": {
+        "id": "MIT",
+        "source": "authored-synthetic",
+        "redistribution": "permitted",
+        "embedding": "permitted",
+        "notice": {
+          "id": "license_synthetic",
+          "path": "LICENSE.txt",
+          "mediaType": "text/plain",
+          "byteLength": 1330,
+          "sha256": "0d93b98a7219472df0761b797fa3a488520a77ee5e4abcaf6d5747dee102dfb4"
+        }
+      },
+      "source": {
+        "id": "resource_authorship",
+        "sha256": "0c95793ba451636bffccae35f17b51ccca0ec6a80eb6f414fd3a10864e405214"
+      },
+      "usageNodeIds": [
+        "crop-image",
+        "rotated-image"
+      ],
+      "verification": "declared"
+    }
+  ],
+  "fonts": [
+    {
+      "kind": "bundled",
+      "id": "font_abeezee_regular",
+      "family": "ABeeZee",
+      "postScriptName": "ABeeZee-Regular",
+      "style": "normal",
+      "weight": 400,
+      "version": "Version 1.003; ttfautohint (v1.8.3)",
+      "artifact": {
+        "id": "font_abeezee_regular",
+        "path": "assets/ABeeZee-Regular.ttf",
+        "mediaType": "font/ttf",
+        "byteLength": 46016,
+        "sha256": "2901c8df256648cc2bb2e3afb381cb8d28e65ed3dbe11de20695ae4d5ffdeda9"
+      },
+      "license": {
+        "id": "OFL-1.1",
+        "source": "https://raw.githubusercontent.com/google/fonts/fffdadf0f0c9cc1ec8b407063424a8bfbee05611/ofl/abeezee/OFL.txt",
+        "redistribution": "permitted",
+        "embedding": "permitted",
+        "notice": {
+          "id": "license_ofl",
+          "path": "assets/OFL.txt",
+          "mediaType": "text/plain",
+          "byteLength": 4516,
+          "sha256": "f0376d04eb58fb19e9f1690a99a1eb37380ad0246f7d503f2abd8e8a74ed12be"
+        }
+      },
+      "availability": "declared",
+      "source": "https://raw.githubusercontent.com/google/fonts/fffdadf0f0c9cc1ec8b407063424a8bfbee05611/ofl/abeezee/ABeeZee-Regular.ttf",
+      "glyphCoverage": "unverified"
+    }
+  ]
+}

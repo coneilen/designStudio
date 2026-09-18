@@ -1,0 +1,1060 @@
+{
+  "schemaVersion": "1.0",
+  "id": "provenance_settings-screen",
+  "projectId": "project_synthetic",
+  "designId": "design_settings-screen",
+  "nodes": {
+    "settings-root": {
+      "/id": {
+        "id": "provenance_settings-screen_0",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/type": {
+        "id": "provenance_settings-screen_1",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/layout/width": {
+        "id": "provenance_settings-screen_2",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/layout/height": {
+        "id": "provenance_settings-screen_3",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/layout/spacing/token": {
+        "id": "provenance_settings-screen_4",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/layout/padding/top": {
+        "id": "provenance_settings-screen_5",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/layout/padding/right/token": {
+        "id": "provenance_settings-screen_6",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/layout/padding/bottom": {
+        "id": "provenance_settings-screen_7",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/layout/padding/left/token": {
+        "id": "provenance_settings-screen_8",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      }
+    },
+    "settings-title": {
+      "/id": {
+        "id": "provenance_settings-screen_9",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/type": {
+        "id": "provenance_settings-screen_10",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/layout/width": {
+        "id": "provenance_settings-screen_11",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/layout/height": {
+        "id": "provenance_settings-screen_12",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/content": {
+        "id": "provenance_settings-screen_13",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/indexing": {
+        "id": "provenance_settings-screen_14",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/typography/fontId": {
+        "id": "provenance_settings-screen_15",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/typography/fontSize": {
+        "id": "provenance_settings-screen_16",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/typography/fontWeight": {
+        "id": "provenance_settings-screen_17",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/typography/lineHeight": {
+        "id": "provenance_settings-screen_18",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/typography/letterSpacing": {
+        "id": "provenance_settings-screen_19",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/typography/alignment": {
+        "id": "provenance_settings-screen_20",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/typography/color/token": {
+        "id": "provenance_settings-screen_21",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/typography/wrap": {
+        "id": "provenance_settings-screen_22",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/accessibility/role": {
+        "id": "provenance_settings-screen_23",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/accessibility/label": {
+        "id": "provenance_settings-screen_24",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/accessibility/evidence": {
+        "id": "provenance_settings-screen_25",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      }
+    },
+    "offline-toggle": {
+      "/id": {
+        "id": "provenance_settings-screen_26",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/type": {
+        "id": "provenance_settings-screen_27",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/layout/width": {
+        "id": "provenance_settings-screen_28",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/layout/height": {
+        "id": "provenance_settings-screen_29",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/componentReference/id": {
+        "id": "provenance_settings-screen_30",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/componentReference/version": {
+        "id": "provenance_settings-screen_31",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/properties/title/type": {
+        "id": "provenance_settings-screen_32",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/properties/title/value": {
+        "id": "provenance_settings-screen_33",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/properties/checked/type": {
+        "id": "provenance_settings-screen_34",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/properties/checked/value": {
+        "id": "provenance_settings-screen_35",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/properties/disabled/type": {
+        "id": "provenance_settings-screen_36",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/properties/disabled/value": {
+        "id": "provenance_settings-screen_37",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/variant": {
+        "id": "provenance_settings-screen_38",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/accessibility/role": {
+        "id": "provenance_settings-screen_39",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/accessibility/label": {
+        "id": "provenance_settings-screen_40",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/accessibility/state/checked": {
+        "id": "provenance_settings-screen_41",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/accessibility/state/disabled": {
+        "id": "provenance_settings-screen_42",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/accessibility/evidence": {
+        "id": "provenance_settings-screen_43",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/behavior/status": {
+        "id": "provenance_settings-screen_44",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/behavior/critical": {
+        "id": "provenance_settings-screen_45",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/behavior/intent": {
+        "id": "provenance_settings-screen_46",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/behavior/stateField": {
+        "id": "provenance_settings-screen_47",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/behavior/value/type": {
+        "id": "provenance_settings-screen_48",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/behavior/value/value": {
+        "id": "provenance_settings-screen_49",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/behavior/simulatedOnly": {
+        "id": "provenance_settings-screen_50",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      }
+    },
+    "wifi-toggle": {
+      "/id": {
+        "id": "provenance_settings-screen_51",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/type": {
+        "id": "provenance_settings-screen_52",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/layout/width": {
+        "id": "provenance_settings-screen_53",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/layout/height": {
+        "id": "provenance_settings-screen_54",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/componentReference/id": {
+        "id": "provenance_settings-screen_55",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/componentReference/version": {
+        "id": "provenance_settings-screen_56",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/properties/title/type": {
+        "id": "provenance_settings-screen_57",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/properties/title/value": {
+        "id": "provenance_settings-screen_58",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/properties/checked/type": {
+        "id": "provenance_settings-screen_59",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/properties/checked/value": {
+        "id": "provenance_settings-screen_60",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/properties/disabled/type": {
+        "id": "provenance_settings-screen_61",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/properties/disabled/value": {
+        "id": "provenance_settings-screen_62",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/variant": {
+        "id": "provenance_settings-screen_63",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/accessibility/role": {
+        "id": "provenance_settings-screen_64",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/accessibility/label": {
+        "id": "provenance_settings-screen_65",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/accessibility/state/checked": {
+        "id": "provenance_settings-screen_66",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/accessibility/state/disabled": {
+        "id": "provenance_settings-screen_67",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/accessibility/evidence": {
+        "id": "provenance_settings-screen_68",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/behavior/status": {
+        "id": "provenance_settings-screen_69",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/behavior/critical": {
+        "id": "provenance_settings-screen_70",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/behavior/intent": {
+        "id": "provenance_settings-screen_71",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/behavior/stateField": {
+        "id": "provenance_settings-screen_72",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/behavior/value/type": {
+        "id": "provenance_settings-screen_73",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/behavior/value/value": {
+        "id": "provenance_settings-screen_74",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/behavior/simulatedOnly": {
+        "id": "provenance_settings-screen_75",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      }
+    },
+    "storage-label": {
+      "/id": {
+        "id": "provenance_settings-screen_76",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/type": {
+        "id": "provenance_settings-screen_77",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/layout/width": {
+        "id": "provenance_settings-screen_78",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/layout/height": {
+        "id": "provenance_settings-screen_79",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/content": {
+        "id": "provenance_settings-screen_80",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/indexing": {
+        "id": "provenance_settings-screen_81",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/typography/fontId": {
+        "id": "provenance_settings-screen_82",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/typography/fontSize": {
+        "id": "provenance_settings-screen_83",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/typography/fontWeight": {
+        "id": "provenance_settings-screen_84",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/typography/lineHeight": {
+        "id": "provenance_settings-screen_85",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/typography/letterSpacing": {
+        "id": "provenance_settings-screen_86",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/typography/alignment": {
+        "id": "provenance_settings-screen_87",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/typography/color/token": {
+        "id": "provenance_settings-screen_88",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/typography/wrap": {
+        "id": "provenance_settings-screen_89",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/accessibility/role": {
+        "id": "provenance_settings-screen_90",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/accessibility/label": {
+        "id": "provenance_settings-screen_91",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      },
+      "/accessibility/evidence": {
+        "id": "provenance_settings-screen_92",
+        "type": "user-input",
+        "authority": "manual",
+        "evidenceIds": [
+          "evidence_settings-screen"
+        ],
+        "acceptedAt": "2026-09-16T00:00:00Z",
+        "supersedes": [],
+        "actorId": "actor_synthetic_author"
+      }
+    }
+  },
+  "evidence": [
+    {
+      "id": "evidence_settings-screen",
+      "artifact": {
+        "id": "source_settings-screen",
+        "sha256": "917c498c00a39befcc1012557cfc92114a4ea83a43107386f0eb538f38ea3d87"
+      },
+      "kind": "synthetic-authored"
+    },
+    {
+      "id": "evidence_resources",
+      "artifact": {
+        "id": "resource_authorship",
+        "sha256": "0c95793ba451636bffccae35f17b51ccca0ec6a80eb6f414fd3a10864e405214"
+      },
+      "kind": "synthetic-authored"
+    }
+  ],
+  "history": []
+}

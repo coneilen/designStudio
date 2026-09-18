@@ -1,0 +1,41 @@
+{
+  "origin": "synthetic-authored-not-figma",
+  "fixtureId": "unsupported-feature",
+  "description": "Preserved authored source, no image crop fallback or invented editable children.",
+  "acceptedAt": "2026-09-16T00:00:00Z",
+  "root": {
+    "id": "unsupported-root",
+    "type": "column",
+    "layout": {
+      "width": "fill",
+      "height": "fill",
+      "spacing": 12
+    },
+    "children": [
+      {
+        "id": "unsupported-mask",
+        "type": "unsupported",
+        "layout": {
+          "width": 120,
+          "height": 80
+        },
+        "feature": "complex-mask-and-backdrop-blur",
+        "reason": "Outside the initial exact static profile.",
+        "evidenceStatus": "raw-preserved",
+        "metadata": {
+          "rawSource": {
+            "id": "source_unsupported",
+            "sha256": "4486c69719ac419db30afa27826f1cb0774ada1ac86e22f215cbfc4867167dd6"
+          },
+          "sourceAbsoluteBounds": {
+            "x": 16,
+            "y": 16,
+            "width": 120,
+            "height": 80,
+            "unit": "design-unit"
+          }
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "name": "@design-studio/contracts",
+  "version": "1.1.0",
+  "private": true,
+  "description": "Versioned deterministic Design Studio contracts, authoring boundary, and explicit test utilities.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "import": "./dist/testing.js"
+    },
+    "./schemas/*": "./schemas/*"
+  },
+  "files": [
+    "dist",
+    "schemas",
+    "README.md"
+  ],
+  "engines": {
+    "node": "24.21.0"
+  },
+  "scripts": {
+    "generate": "node scripts/generate.mjs",
+    "check:generated": "node scripts/generate.mjs --check",
+    "build": "node scripts/generate.mjs --check && tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "ajv": "8.17.1",
+    "yaml": "2.8.1"
+  },
+  "devDependencies": {
+    "json-schema-to-typescript": "15.0.4"
+  }
+}

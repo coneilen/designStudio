@@ -1,0 +1,131 @@
+{
+  "schemaVersion": "1.0",
+  "projectId": "project_synthetic",
+  "designId": "design_mixed-styled-text",
+  "screen": {
+    "id": "screen_mixed-styled-text",
+    "name": "mixed-styled-text",
+    "viewport": {
+      "width": 393,
+      "height": 852,
+      "unit": "design-unit"
+    },
+    "capture": {
+      "bounds": {
+        "x": 0,
+        "y": 0,
+        "width": 393,
+        "height": 852,
+        "unit": "design-unit"
+      },
+      "scrollOffset": {
+        "x": 0,
+        "y": 0
+      },
+      "insets": {
+        "top": 0,
+        "right": 0,
+        "bottom": 0,
+        "left": 0
+      },
+      "systemBars": "excluded"
+    }
+  },
+  "resources": {
+    "snapshotId": "resources_synthetic",
+    "sha256": "0bb106f87cc8293727acee68c32d4a5bd83d44690ab1020b6301bdbaf6c502d9",
+    "componentRegistryRevision": "1",
+    "tokenRegistryRevision": "1",
+    "selectedModes": {
+      "core": "light"
+    }
+  },
+  "root": {
+    "id": "styled-root",
+    "type": "column",
+    "layout": {
+      "width": "fill",
+      "height": "fill",
+      "spacing": 12
+    },
+    "children": [
+      {
+        "id": "mixed-text",
+        "type": "text",
+        "layout": {
+          "width": "fill",
+          "height": "hug"
+        },
+        "content": "Read clear text.",
+        "indexing": "utf-16",
+        "typography": {
+          "fontId": "font_abeezee_regular",
+          "fontSize": 16,
+          "fontWeight": 400,
+          "lineHeight": 24,
+          "letterSpacing": 0,
+          "alignment": "start",
+          "color": {
+            "token": "color.ink"
+          },
+          "wrap": "wrap"
+        },
+        "accessibility": {
+          "role": "text",
+          "label": "Read clear text.",
+          "evidence": "declared-intent"
+        },
+        "styledRanges": [
+          {
+            "start": 0,
+            "end": 5,
+            "typography": {
+              "fontId": "font_abeezee_regular",
+              "fontSize": 16,
+              "fontWeight": 400,
+              "lineHeight": 24,
+              "letterSpacing": 0,
+              "alignment": "start",
+              "color": {
+                "token": "color.ink"
+              },
+              "wrap": "wrap"
+            }
+          },
+          {
+            "start": 5,
+            "end": 10,
+            "typography": {
+              "fontId": "font_abeezee_regular",
+              "fontSize": 20,
+              "fontWeight": 400,
+              "lineHeight": 24,
+              "letterSpacing": 0,
+              "alignment": "start",
+              "color": {
+                "token": "color.accent"
+              },
+              "wrap": "wrap"
+            }
+          },
+          {
+            "start": 10,
+            "end": 16,
+            "typography": {
+              "fontId": "font_abeezee_regular",
+              "fontSize": 16,
+              "fontWeight": 400,
+              "lineHeight": 24,
+              "letterSpacing": 0,
+              "alignment": "start",
+              "color": {
+                "token": "color.ink"
+              },
+              "wrap": "wrap"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

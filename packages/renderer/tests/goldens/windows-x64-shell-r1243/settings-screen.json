@@ -1,0 +1,412 @@
+{
+  "fonts": [
+    {
+      "custom": true,
+      "family": "ABeeZee",
+      "fontId": "font_abeezee_regular",
+      "fontSha256": "2901c8df256648cc2bb2e3afb381cb8d28e65ed3dbe11de20695ae4d5ffdeda9",
+      "glyphs": 15,
+      "nodeId": "settings-title"
+    },
+    {
+      "custom": true,
+      "family": "ABeeZee",
+      "fontId": "font_abeezee_regular",
+      "fontSha256": "2901c8df256648cc2bb2e3afb381cb8d28e65ed3dbe11de20695ae4d5ffdeda9",
+      "glyphs": 17,
+      "nodeId": "instance_46dc787521fe0f694cf2637e3033778071836357827e1b6e744b3a9e739d69d9"
+    },
+    {
+      "custom": true,
+      "family": "ABeeZee",
+      "fontId": "font_abeezee_regular",
+      "fontSha256": "2901c8df256648cc2bb2e3afb381cb8d28e65ed3dbe11de20695ae4d5ffdeda9",
+      "glyphs": 14,
+      "nodeId": "instance_f96972f6437285afe6f928c3b7dc0ad4b7d412fdb4dfb59d8c82091dc190f237"
+    },
+    {
+      "custom": true,
+      "family": "ABeeZee",
+      "fontId": "font_abeezee_regular",
+      "fontSha256": "2901c8df256648cc2bb2e3afb381cb8d28e65ed3dbe11de20695ae4d5ffdeda9",
+      "glyphs": 24,
+      "nodeId": "storage-label"
+    }
+  ],
+  "nodes": {
+    "instance_3565633a046377e4e19f6112b48145edf8c0727651484559a411bf6d803a83b4": {
+      "clipChain": [],
+      "evidence": "renderer-measurement",
+      "localBounds": {
+        "height": 0,
+        "unit": "design-unit",
+        "width": 0,
+        "x": 305,
+        "y": 20
+      },
+      "measuredBounds": {
+        "height": 0,
+        "unit": "design-unit",
+        "width": 0,
+        "x": 321,
+        "y": 132
+      },
+      "overflow": false,
+      "paintOrder": 9,
+      "transform": {
+        "matrix": [1, 0, 0, 1, 0, 0],
+        "origin": { "x": 0, "y": 0 }
+      }
+    },
+    "instance_46dc787521fe0f694cf2637e3033778071836357827e1b6e744b3a9e739d69d9": {
+      "clipChain": [],
+      "evidence": "renderer-measurement",
+      "localBounds": {
+        "height": 24,
+        "unit": "design-unit",
+        "width": 285,
+        "x": 8,
+        "y": 8
+      },
+      "measuredBounds": {
+        "height": 24,
+        "unit": "design-unit",
+        "width": 285,
+        "x": 24,
+        "y": 64
+      },
+      "overflow": false,
+      "paintOrder": 3,
+      "transform": {
+        "matrix": [1, 0, 0, 1, 0, 0],
+        "origin": { "x": 0, "y": 0 }
+      }
+    },
+    "instance_5d218123c834d1c103631e3bdf48949214145f62a672161beca778663dc1a7f2": {
+      "clipChain": [],
+      "evidence": "renderer-measurement",
+      "localBounds": {
+        "height": 0,
+        "unit": "design-unit",
+        "width": 0,
+        "x": 305,
+        "y": 20
+      },
+      "measuredBounds": {
+        "height": 0,
+        "unit": "design-unit",
+        "width": 0,
+        "x": 321,
+        "y": 76
+      },
+      "overflow": false,
+      "paintOrder": 4,
+      "transform": {
+        "matrix": [1, 0, 0, 1, 0, 0],
+        "origin": { "x": 0, "y": 0 }
+      }
+    },
+    "instance_82fc777023479cef7bc3b3f426749eb4305ddaba4d38c9437e0bf3a488e1f8a2": {
+      "clipChain": [],
+      "evidence": "renderer-measurement",
+      "localBounds": {
+        "height": 16,
+        "unit": "design-unit",
+        "width": 16,
+        "x": 2,
+        "y": 2
+      },
+      "measuredBounds": {
+        "height": 16,
+        "unit": "design-unit",
+        "width": 16,
+        "x": 335,
+        "y": 124
+      },
+      "overflow": false,
+      "paintOrder": 11,
+      "transform": {
+        "matrix": [1, 0, 0, 1, 0, 0],
+        "origin": { "x": 0, "y": 0 }
+      }
+    },
+    "instance_c0d382bf696144755179762dff4ed4a3333923fbb38334c0459aa844e1ff08f7": {
+      "clipChain": [],
+      "evidence": "renderer-measurement",
+      "localBounds": {
+        "height": 20,
+        "unit": "design-unit",
+        "width": 36,
+        "x": 317,
+        "y": 10
+      },
+      "measuredBounds": {
+        "height": 20,
+        "unit": "design-unit",
+        "width": 36,
+        "x": 333,
+        "y": 122
+      },
+      "overflow": false,
+      "paintOrder": 10,
+      "transform": {
+        "matrix": [1, 0, 0, 1, 0, 0],
+        "origin": { "x": 0, "y": 0 }
+      }
+    },
+    "instance_da3a497e3dd704951c63341bed35c5d9bc1c37d36c4b4f0b708ca3a2fcd78777": {
+      "clipChain": [],
+      "evidence": "renderer-measurement",
+      "localBounds": {
+        "height": 20,
+        "unit": "design-unit",
+        "width": 36,
+        "x": 317,
+        "y": 10
+      },
+      "measuredBounds": {
+        "height": 20,
+        "unit": "design-unit",
+        "width": 36,
+        "x": 333,
+        "y": 66
+      },
+      "overflow": false,
+      "paintOrder": 5,
+      "transform": {
+        "matrix": [1, 0, 0, 1, 0, 0],
+        "origin": { "x": 0, "y": 0 }
+      }
+    },
+    "instance_dffbe6fe113c929218b9249bbf15018c4eda872286762c83f6288797cbbf7aa2": {
+      "clipChain": [],
+      "evidence": "renderer-measurement",
+      "localBounds": {
+        "height": 16,
+        "unit": "design-unit",
+        "width": 16,
+        "x": 18,
+        "y": 2
+      },
+      "measuredBounds": {
+        "height": 16,
+        "unit": "design-unit",
+        "width": 16,
+        "x": 351,
+        "y": 68
+      },
+      "overflow": false,
+      "paintOrder": 6,
+      "transform": {
+        "matrix": [1, 0, 0, 1, 0, 0],
+        "origin": { "x": 0, "y": 0 }
+      }
+    },
+    "instance_f96972f6437285afe6f928c3b7dc0ad4b7d412fdb4dfb59d8c82091dc190f237": {
+      "clipChain": [],
+      "evidence": "renderer-measurement",
+      "localBounds": {
+        "height": 24,
+        "unit": "design-unit",
+        "width": 285,
+        "x": 8,
+        "y": 8
+      },
+      "measuredBounds": {
+        "height": 24,
+        "unit": "design-unit",
+        "width": 285,
+        "x": 24,
+        "y": 120
+      },
+      "overflow": false,
+      "paintOrder": 8,
+      "transform": {
+        "matrix": [1, 0, 0, 1, 0, 0],
+        "origin": { "x": 0, "y": 0 }
+      }
+    },
+    "offline-toggle": {
+      "clipChain": [],
+      "evidence": "renderer-measurement",
+      "localBounds": {
+        "height": 40,
+        "unit": "design-unit",
+        "width": 361,
+        "x": 16,
+        "y": 56
+      },
+      "measuredBounds": {
+        "height": 40,
+        "unit": "design-unit",
+        "width": 361,
+        "x": 16,
+        "y": 56
+      },
+      "overflow": false,
+      "paintOrder": 2,
+      "transform": {
+        "matrix": [1, 0, 0, 1, 0, 0],
+        "origin": { "x": 0, "y": 0 }
+      }
+    },
+    "settings-root": {
+      "clipChain": [],
+      "evidence": "renderer-measurement",
+      "localBounds": {
+        "height": 852,
+        "unit": "design-unit",
+        "width": 393,
+        "x": 0,
+        "y": 0
+      },
+      "measuredBounds": {
+        "height": 852,
+        "unit": "design-unit",
+        "width": 393,
+        "x": 0,
+        "y": 0
+      },
+      "overflow": false,
+      "paintOrder": 0,
+      "transform": {
+        "matrix": [1, 0, 0, 1, 0, 0],
+        "origin": { "x": 0, "y": 0 }
+      }
+    },
+    "settings-title": {
+      "clipChain": [],
+      "evidence": "renderer-measurement",
+      "localBounds": {
+        "height": 24,
+        "unit": "design-unit",
+        "width": 361,
+        "x": 16,
+        "y": 16
+      },
+      "measuredBounds": {
+        "height": 24,
+        "unit": "design-unit",
+        "width": 361,
+        "x": 16,
+        "y": 16
+      },
+      "overflow": false,
+      "paintOrder": 1,
+      "transform": {
+        "matrix": [1, 0, 0, 1, 0, 0],
+        "origin": { "x": 0, "y": 0 }
+      }
+    },
+    "storage-label": {
+      "clipChain": [],
+      "evidence": "renderer-measurement",
+      "localBounds": {
+        "height": 24,
+        "unit": "design-unit",
+        "width": 361,
+        "x": 16,
+        "y": 168
+      },
+      "measuredBounds": {
+        "height": 24,
+        "unit": "design-unit",
+        "width": 361,
+        "x": 16,
+        "y": 168
+      },
+      "overflow": false,
+      "paintOrder": 12,
+      "transform": {
+        "matrix": [1, 0, 0, 1, 0, 0],
+        "origin": { "x": 0, "y": 0 }
+      }
+    },
+    "wifi-toggle": {
+      "clipChain": [],
+      "evidence": "renderer-measurement",
+      "localBounds": {
+        "height": 40,
+        "unit": "design-unit",
+        "width": 361,
+        "x": 16,
+        "y": 112
+      },
+      "measuredBounds": {
+        "height": 40,
+        "unit": "design-unit",
+        "width": 361,
+        "x": 16,
+        "y": 112
+      },
+      "overflow": false,
+      "paintOrder": 7,
+      "transform": {
+        "matrix": [1, 0, 0, 1, 0, 0],
+        "origin": { "x": 0, "y": 0 }
+      }
+    }
+  },
+  "overflow": [],
+  "pngSha256": "5ce759211b40f99715d7fcd529ca0bb5870e65b5ac39a1deb53af1b31121a733",
+  "profile": {
+    "assetHashes": [
+      {
+        "id": "asset_stripes",
+        "sha256": "0074ca9803f951ff777598b3a162c19cbea0a7b829e86f0d53340ad87643281d"
+      }
+    ],
+    "browser": {
+      "name": "chromium-headless-shell",
+      "sha256": "addfa79abb060e1e514e155ed745d4bf96140bca402735958bb4e223aea0b98c",
+      "version": "153.0.8010.12"
+    },
+    "capture": {
+      "bounds": {
+        "height": 852,
+        "unit": "design-unit",
+        "width": 393,
+        "x": 0,
+        "y": 0
+      },
+      "insets": { "bottom": 0, "left": 0, "right": 0, "top": 0 },
+      "scrollOffset": { "x": 0, "y": 0 },
+      "systemBars": "excluded"
+    },
+    "colorSpace": "srgb",
+    "deviceScale": 1,
+    "fontFallback": "forbidden",
+    "fontHashes": [
+      {
+        "id": "font_abeezee_regular",
+        "sha256": "2901c8df256648cc2bb2e3afb381cb8d28e65ed3dbe11de20695ae4d5ffdeda9"
+      }
+    ],
+    "frozenTime": "2026-09-16T00:00:00Z",
+    "host": {
+      "architecture": "x64",
+      "evidence": "observed",
+      "os": "windows",
+      "version": "10.0.26200"
+    },
+    "id": "windows_static_v1",
+    "locale": "en-US",
+    "motion": "disabled",
+    "network": "deny",
+    "renderer": {
+      "name": "@design-studio/renderer",
+      "sha256": "183d72b2f9914ebc1532e37910d598be41a4459fac2bd8c83d1ff0ea8b727b71",
+      "version": "1.0.0"
+    },
+    "schemaVersion": "1.0",
+    "state": {},
+    "theme": "light",
+    "viewport": {
+      "height": 852,
+      "unit": "design-unit",
+      "width": 393,
+      "x": 0,
+      "y": 0
+    }
+  }
+}

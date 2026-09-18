@@ -1,0 +1,61 @@
+{
+  "measurements": [
+    {
+      "Id": 28720,
+      "WorkingSet64": 92692480,
+      "PeakWorkingSet64": 162402304,
+      "CPU": 7.6875
+    },
+    {
+      "Id": 41712,
+      "WorkingSet64": 48373760,
+      "PeakWorkingSet64": 55902208,
+      "CPU": 0.546875
+    },
+    {
+      "Id": 43032,
+      "WorkingSet64": 34357248,
+      "PeakWorkingSet64": 34373632,
+      "CPU": 0.21875
+    },
+    {
+      "Id": 45468,
+      "WorkingSet64": 322183168,
+      "PeakWorkingSet64": 453337088,
+      "CPU": 13.1875
+    },
+    {
+      "Id": 55204,
+      "WorkingSet64": 298582016,
+      "PeakWorkingSet64": 489336832,
+      "CPU": 17.140625
+    }
+  ],
+  "ownership": {
+    "service": 55204,
+    "worker": 45468,
+    "browser": [
+      {
+        "cpuTime": 7.590126,
+        "id": 28720,
+        "type": "browser"
+      },
+      {
+        "cpuTime": 0.578113,
+        "id": 44660,
+        "type": "renderer"
+      },
+      {
+        "cpuTime": 0.511201,
+        "id": 41712,
+        "type": "GPU"
+      },
+      {
+        "cpuTime": 0.142248,
+        "id": 43032,
+        "type": "network.mojom.NetworkService"
+      }
+    ]
+  },
+  "observedAt": "2026-09-17T02:56:01.0061326Z"
+}

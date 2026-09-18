@@ -1,0 +1,56 @@
+# Toolchains, dependencies, builds, and test output.
+.tools/
+node_modules/
+.pnpm-store/
+dist/
+build/
+coverage/
+.vitest/
+.cache/
+.vite/
+.turbo/
+*.tsbuildinfo
+*.log
+*.tgz
+.tmp/
+tmp/
+temp/
+*.tmp
+
+# Generated or potentially confidential product artifacts.
+.design/
+.design-system/
+screenshots/
+handoffs/
+artifacts/
+test-results/
+playwright-report/
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+
+# Deliberately reviewed, synthetic/sanitized fixtures may be committed here.
+!tests/fixtures/screenshots/
+!tests/fixtures/screenshots/**
+!tests/fixtures/handoffs/
+!tests/fixtures/handoffs/**
+
+# Secrets are never fixtures.
+.env
+.env.*
+!.env.example
+secrets/
+credentials/
+*.pem
+*.key
+*.p12
+*.pfx
+
+# OS/editor scratch files.
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+*~

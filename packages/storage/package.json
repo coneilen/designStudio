@@ -1,0 +1,31 @@
+{
+  "name": "@design-studio/storage",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Transactional local SQLite revision, review and artifact storage.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": "24.21.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepare:native": "node scripts/prepare-native.mjs"
+  },
+  "dependencies": {
+    "@design-studio/contracts": "workspace:*",
+    "better-sqlite3": "12.8.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "9.6.0"
+  }
+}

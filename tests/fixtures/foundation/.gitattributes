@@ -1,0 +1,7 @@
+*.json text eol=lf
+*.mjs text eol=lf
+*.md text eol=lf
+assets/OFL.txt -text -whitespace
+assets/ABeeZee-Regular.ttf -text
+assets/stripes.png -text
+LICENSE.txt -text -whitespace

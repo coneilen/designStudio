@@ -1,0 +1,35 @@
+{
+  "name": "design-studio",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.26.0",
+  "engines": {
+    "node": "24.21.0",
+    "pnpm": "11.26.0"
+  },
+  "scripts": {
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "pnpm -r --sort build",
+    "contracts:generate": "pnpm --filter @design-studio/contracts generate",
+    "contracts:check": "pnpm --filter @design-studio/contracts check:generated",
+    "fixtures:check": "node tests/fixtures/foundation/generate.mjs --check",
+    "test": "vitest run --project unit",
+    "test:unit": "vitest run --project unit",
+    "test:smoke": "vitest run --project smoke"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.12",
+    "@design-studio/contracts": "workspace:*",
+    "@design-studio/design-ir": "workspace:*",
+    "@design-studio/host": "workspace:*",
+    "@design-studio/storage": "workspace:*",
+    "@design-studio/workspace-smoke": "workspace:*",
+    "@types/node": "24.13.4",
+    "typescript": "7.0.2",
+    "vite": "8.2.2",
+    "vitest": "4.1.11"
+  }
+}

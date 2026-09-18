@@ -1,0 +1,78 @@
+{
+  "schemaVersion": "1.0",
+  "projectId": "project_synthetic",
+  "designId": "design_unsupported-feature",
+  "screen": {
+    "id": "screen_unsupported-feature",
+    "name": "unsupported-feature",
+    "viewport": {
+      "width": 393,
+      "height": 852,
+      "unit": "design-unit"
+    },
+    "capture": {
+      "bounds": {
+        "x": 0,
+        "y": 0,
+        "width": 393,
+        "height": 852,
+        "unit": "design-unit"
+      },
+      "scrollOffset": {
+        "x": 0,
+        "y": 0
+      },
+      "insets": {
+        "top": 0,
+        "right": 0,
+        "bottom": 0,
+        "left": 0
+      },
+      "systemBars": "excluded"
+    }
+  },
+  "resources": {
+    "snapshotId": "resources_synthetic",
+    "sha256": "0bb106f87cc8293727acee68c32d4a5bd83d44690ab1020b6301bdbaf6c502d9",
+    "componentRegistryRevision": "1",
+    "tokenRegistryRevision": "1",
+    "selectedModes": {
+      "core": "light"
+    }
+  },
+  "root": {
+    "id": "unsupported-root",
+    "type": "column",
+    "layout": {
+      "width": "fill",
+      "height": "fill",
+      "spacing": 12
+    },
+    "children": [
+      {
+        "id": "unsupported-mask",
+        "type": "unsupported",
+        "layout": {
+          "width": 120,
+          "height": 80
+        },
+        "feature": "complex-mask-and-backdrop-blur",
+        "reason": "Outside the initial exact static profile.",
+        "evidenceStatus": "raw-preserved",
+        "metadata": {
+          "rawSource": {
+            "id": "source_unsupported",
+            "sha256": "4486c69719ac419db30afa27826f1cb0774ada1ac86e22f215cbfc4867167dd6"
+          },
+          "sourceAbsoluteBounds": {
+            "x": 16,
+            "y": 16,
+            "width": 120,
+            "height": 80,
+            "unit": "design-unit"
+          }
+        }
+      }
+    ]
+  }
+}

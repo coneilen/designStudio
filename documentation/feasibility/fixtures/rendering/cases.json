@@ -1,0 +1,39 @@
+{
+  "kind": "p02-synthetic-browser-capability-input",
+  "notDesignIR": true,
+  "source": "ai-generated",
+  "sourceExactEvidence": false,
+  "viewport": { "width": 393, "height": 852, "deviceScaleFactor": 1 },
+  "componentDefinition": {
+    "id": "probe-settings-toggle",
+    "version": "1",
+    "properties": { "checked": "boolean", "disabled": "boolean" },
+    "slots": { "label": "text" },
+    "expansion": ["row", "label", "track", "thumb"],
+    "codeMapping": "unresolved"
+  },
+  "instances": [
+    { "id": "wifi", "checked": true, "disabled": false, "label": "Wi-Fi only" },
+    { "id": "offline", "checked": false, "disabled": true, "label": "Offline downloads" }
+  ],
+  "text": {
+    "content": "Save \ud83d\udcbe now e\u0301 - Download over Wi-Fi only",
+    "indexing": "zero-based UTF-16 code units; half-open [start,end)",
+    "ranges": [
+      { "start": 0, "end": 5, "style": "regular" },
+      { "start": 5, "end": 7, "style": "emoji-fallback" },
+      { "start": 7, "end": 11, "style": "bold" },
+      { "start": 11, "end": 41, "style": "regular" }
+    ],
+    "invalidSurrogateBoundaries": [6],
+    "graphemeSplitBoundariesRequiringExplicitPolicy": [13]
+  },
+  "unsupported": {
+    "id": "unsupported",
+    "properties": ["mask", "backdropBlur"],
+    "support": "unsupported",
+    "reason": "Outside candidate M1 subset; no source-image evidence available",
+    "affectedOperations": ["faithful-preview", "strict-editable-export"],
+    "suggestedRecovery": "Acquire authorized source evidence; narrow scope or review a permitted decorative fallback"
+  }
+}

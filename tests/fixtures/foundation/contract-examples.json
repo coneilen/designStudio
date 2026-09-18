@@ -1,0 +1,2093 @@
+{
+  "schemaVersion": "1.0",
+  "artifacts": [
+    {
+      "contract": "SourceSnapshot",
+      "value": {
+        "schemaVersion": "1.0",
+        "id": "source_plugin_example",
+        "projectId": "project_synthetic",
+        "identity": {
+          "transport": "figma-plugin",
+          "sessionId": "session_example",
+          "captureId": "capture_example",
+          "contentDigest": "0c95793ba451636bffccae35f17b51ccca0ec6a80eb6f414fd3a10864e405214",
+          "binding": {
+            "status": "asserted",
+            "assertedUrl": "https://www.figma.com/design/synthetic/Synthetic?node-id=1-2",
+            "actorId": "actor_synthetic"
+          },
+          "delivery": "snapshot-file"
+        },
+        "capturedAt": "2026-09-16T00:00:00Z",
+        "captureEndedAt": "2026-09-16T00:00:00Z",
+        "consistency": {
+          "guarantee": "change-checked-session",
+          "beforeDigest": "0c95793ba451636bffccae35f17b51ccca0ec6a80eb6f414fd3a10864e405214",
+          "afterDigest": "0c95793ba451636bffccae35f17b51ccca0ec6a80eb6f414fd3a10864e405214",
+          "limitations": [
+            "Synthetic contract example, not a Figma capture; no REST version or verified file binding.",
+            "Pre/post equality is not an atomic freeze. Historical image-fill retrieval may be unavailable."
+          ]
+        },
+        "completeness": "partial",
+        "requests": [
+          {
+            "id": "request_example",
+            "operation": "plugin-export",
+            "nodeIds": [
+              "1:2"
+            ],
+            "versionSupport": "not-applicable",
+            "outcome": "partial"
+          }
+        ],
+        "artifacts": [
+          {
+            "id": "resource_authorship",
+            "path": "resource-authorship.json",
+            "mediaType": "application/json",
+            "byteLength": 851,
+            "sha256": "0c95793ba451636bffccae35f17b51ccca0ec6a80eb6f414fd3a10864e405214"
+          }
+        ],
+        "missing": [
+          "independent source reference"
+        ],
+        "diagnosticIds": [
+          "diagnostic_source_partial"
+        ]
+      }
+    },
+    {
+      "contract": "Revision",
+      "value": {
+        "schemaVersion": "1.0",
+        "id": "revision_synthetic",
+        "projectId": "project_synthetic",
+        "designId": "design_settings-screen",
+        "parents": [],
+        "content": {
+          "id": "revision_synthetic",
+          "sha256": "8f6ef59bde42a0a062a3f31a1dc7f414a1fe32a78aa32adf5979b288de6c5813"
+        },
+        "resources": {
+          "snapshotId": "resources_synthetic",
+          "sha256": "0bb106f87cc8293727acee68c32d4a5bd83d44690ab1020b6301bdbaf6c502d9",
+          "componentRegistryRevision": "1",
+          "tokenRegistryRevision": "1",
+          "selectedModes": {
+            "core": "light"
+          }
+        },
+        "createdAt": "2026-09-16T00:00:00Z",
+        "actorId": "actor_synthetic",
+        "changeSource": "manual",
+        "provenance": {
+          "id": "provenance_settings-screen",
+          "sha256": "38311c4eb89557f0bda3d76b35653a615a33da5718bf682c8a42aded04503b35"
+        }
+      }
+    },
+    {
+      "contract": "SemanticPatch",
+      "value": {
+        "schemaVersion": "1.0",
+        "id": "patch_synthetic",
+        "projectId": "project_synthetic",
+        "designId": "design_settings-screen",
+        "base": {
+          "expectedBaseRevision": "revision_synthetic",
+          "ifMatch": "\"8f6ef59bde42a0a062a3f31a1dc7f414a1fe32a78aa32adf5979b288de6c5813\""
+        },
+        "operations": [
+          {
+            "op": "set-property",
+            "nodeId": "storage-label",
+            "pointer": "/content",
+            "value": "Synthetic storage: 14 MB"
+          }
+        ],
+        "actorId": "actor_synthetic"
+      }
+    },
+    {
+      "contract": "SemanticDiff",
+      "value": {
+        "schemaVersion": "1.0",
+        "projectId": "project_synthetic",
+        "designId": "design_settings-screen",
+        "before": {
+          "id": "revision_synthetic",
+          "sha256": "8f6ef59bde42a0a062a3f31a1dc7f414a1fe32a78aa32adf5979b288de6c5813"
+        },
+        "after": {
+          "id": "revision_next",
+          "sha256": "c213f3cbb72ae29beb6da359b180ddb0efc7e91cd9c2f51a71653df5728e64d1"
+        },
+        "changes": [
+          {
+            "op": "set-property",
+            "nodeId": "storage-label",
+            "pointer": "/content",
+            "value": "Synthetic storage: 14 MB"
+          }
+        ],
+        "conflicts": []
+      }
+    },
+    {
+      "contract": "ReviewEvent",
+      "value": {
+        "schemaVersion": "1.0",
+        "id": "review_synthetic",
+        "sequence": 1,
+        "previousEvent": null,
+        "context": {
+          "projectId": "project_synthetic",
+          "designId": "design_settings-screen",
+          "revision": {
+            "id": "revision_synthetic",
+            "sha256": "8f6ef59bde42a0a062a3f31a1dc7f414a1fe32a78aa32adf5979b288de6c5813"
+          },
+          "resources": {
+            "snapshotId": "resources_synthetic",
+            "sha256": "0bb106f87cc8293727acee68c32d4a5bd83d44690ab1020b6301bdbaf6c502d9",
+            "componentRegistryRevision": "1",
+            "tokenRegistryRevision": "1",
+            "selectedModes": {
+              "core": "light"
+            }
+          },
+          "target": "android",
+          "repository": {
+            "id": "repository_synthetic",
+            "revision": {
+              "kind": "commit",
+              "commit": "1111111111111111111111111111111111111111"
+            }
+          },
+          "scenario": {
+            "id": "scenario_synthetic",
+            "sha256": "1a63edb54783b89daac1e4c0c11da4fdcb9652d5114d6b9d4412c1eb5df887cb"
+          },
+          "reference": {
+            "id": "asset_stripes",
+            "sha256": "0074ca9803f951ff777598b3a162c19cbea0a7b829e86f0d53340ad87643281d"
+          },
+          "renderProfile": {
+            "id": "profile_synthetic",
+            "sha256": "9c068d9dc82e4098beb6a5e84ddea10723f47d1e200b6be555fef4485a6d3a91"
+          },
+          "validationPolicy": {
+            "id": "mobile-static-v1",
+            "sha256": "ced06cc8b91d209e8749a0da9ef415379dd693e1f94afc04d3415d876c2ce444"
+          }
+        },
+        "actor": {
+          "id": "actor_synthetic",
+          "trust": "local-actor"
+        },
+        "createdAt": "2026-09-16T00:00:00Z",
+        "kind": "draft",
+        "waivers": [],
+        "comment": "Shape example only; no approval or device/renderer authorization."
+      }
+    },
+    {
+      "contract": "CaptureScenario",
+      "value": {
+        "schemaVersion": "1.0",
+        "id": "scenario_synthetic",
+        "projectId": "project_synthetic",
+        "platform": "android",
+        "applicationId": "org.example.synthetic",
+        "repositoryId": "repository_synthetic",
+        "fixture": {
+          "id": "resource_authorship",
+          "sha256": "0c95793ba451636bffccae35f17b51ccca0ec6a80eb6f414fd3a10864e405214"
+        },
+        "deviceProfileId": "device_profile_synthetic",
+        "expectedScreenId": "screen_settings-screen",
+        "requiredControls": [
+          {
+            "nodeId": "offline-toggle",
+            "label": "Keep maps offline",
+            "state": {
+              "checked": true,
+              "disabled": false
+            },
+            "critical": true
+          }
+        ],
+        "locale": "en-US",
+        "theme": "light",
+        "fontScale": 1,
+        "orientation": "portrait",
+        "fonts": [
+          {
+            "id": "font_abeezee_regular",
+            "sha256": "2901c8df256648cc2bb2e3afb381cb8d28e65ed3dbe11de20695ae4d5ffdeda9"
+          }
+        ],
+        "navigate": {
+          "kind": "test-route",
+          "routeId": "route_synthetic"
+        },
+        "wait": {
+          "method": "app-signal",
+          "signal": "signal_synthetic",
+          "stableFrames": 3,
+          "intervalMs": 250,
+          "timeoutMs": 15000,
+          "maxAttempts": 60
+        },
+        "capture": {
+          "bounds": {
+            "x": 0,
+            "y": 0,
+            "width": 393,
+            "height": 852,
+            "unit": "design-unit"
+          },
+          "scrollOffset": {
+            "x": 0,
+            "y": 0
+          },
+          "insets": {
+            "top": 0,
+            "right": 0,
+            "bottom": 0,
+            "left": 0
+          },
+          "systemBars": "excluded"
+        }
+      }
+    },
+    {
+      "contract": "RenderProfile",
+      "value": {
+        "schemaVersion": "1.0",
+        "id": "profile_synthetic",
+        "renderer": {
+          "name": "unimplemented-contract-example",
+          "version": "1"
+        },
+        "browser": {
+          "name": "not-executed",
+          "version": "1"
+        },
+        "host": {
+          "os": "synthetic",
+          "version": "1",
+          "architecture": "synthetic",
+          "evidence": "test-fake"
+        },
+        "viewport": {
+          "x": 0,
+          "y": 0,
+          "width": 393,
+          "height": 852,
+          "unit": "design-unit"
+        },
+        "deviceScale": 1,
+        "locale": "en-US",
+        "theme": "light",
+        "colorSpace": "srgb",
+        "fontHashes": [
+          {
+            "id": "font_abeezee_regular",
+            "sha256": "2901c8df256648cc2bb2e3afb381cb8d28e65ed3dbe11de20695ae4d5ffdeda9"
+          }
+        ],
+        "assetHashes": [
+          {
+            "id": "asset_stripes",
+            "sha256": "0074ca9803f951ff777598b3a162c19cbea0a7b829e86f0d53340ad87643281d"
+          }
+        ],
+        "frozenTime": "2026-09-16T00:00:00Z",
+        "state": {},
+        "capture": {
+          "bounds": {
+            "x": 0,
+            "y": 0,
+            "width": 393,
+            "height": 852,
+            "unit": "design-unit"
+          },
+          "scrollOffset": {
+            "x": 0,
+            "y": 0
+          },
+          "insets": {
+            "top": 0,
+            "right": 0,
+            "bottom": 0,
+            "left": 0
+          },
+          "systemBars": "excluded"
+        },
+        "motion": "disabled",
+        "network": "deny",
+        "fontFallback": "forbidden"
+      }
+    },
+    {
+      "contract": "BoundsMap",
+      "value": {
+        "schemaVersion": "1.0",
+        "projectId": "project_synthetic",
+        "renderId": "render_unexecuted_example",
+        "revision": {
+          "id": "revision_synthetic",
+          "sha256": "8f6ef59bde42a0a062a3f31a1dc7f414a1fe32a78aa32adf5979b288de6c5813"
+        },
+        "preview": {
+          "id": "asset_stripes",
+          "sha256": "0074ca9803f951ff777598b3a162c19cbea0a7b829e86f0d53340ad87643281d"
+        },
+        "profile": {
+          "id": "profile_synthetic",
+          "sha256": "9c068d9dc82e4098beb6a5e84ddea10723f47d1e200b6be555fef4485a6d3a91"
+        },
+        "nodes": {}
+      }
+    },
+    {
+      "contract": "ValidationPolicy",
+      "value": {
+        "schemaVersion": "1.0",
+        "id": "mobile-static-v1",
+        "pixel": {
+          "predicate": "max-absolute-srgb-channel-delta",
+          "operator": ">",
+          "threshold": 0.06274509803921569
+        },
+        "globalChangedFraction": {
+          "operator": ">",
+          "threshold": 0.01
+        },
+        "criticalChangedFraction": {
+          "operator": ">",
+          "threshold": 0.005
+        },
+        "exactGeometry": {
+          "operator": ">",
+          "threshold": 2,
+          "unit": "design-unit",
+          "evidence": "actual-view-hierarchy"
+        },
+        "ssim": "diagnostic-only",
+        "calibration": "unverified",
+        "background": {
+          "space": "srgb",
+          "r": 1,
+          "g": 1,
+          "b": 1,
+          "a": 1
+        },
+        "maxMaskedAreaFraction": 0,
+        "requiredLabelsAndStates": "exact-match-when-measured",
+        "regionDenominator": "region-unmasked-pixels",
+        "missingEvidence": "inconclusive"
+      }
+    },
+    {
+      "contract": "ValidationReport",
+      "value": {
+        "schemaVersion": "1.0",
+        "id": "validation_synthetic",
+        "projectId": "project_synthetic",
+        "bundleId": "001a8538a7f4b578d3bdeb43d0dc6a9e623c2df08cb27c59edf15edb1b9226ce",
+        "policyId": "mobile-static-v1",
+        "comparison": "approved-reference-to-app",
+        "status": "inconclusive",
+        "scope": "visual-only",
+        "reference": {
+          "id": "reference_missing",
+          "sha256": "655b3d030776d04b4455e7603f2587fea296893a0fa64531c3a33ccd816712ae"
+        },
+        "actual": {
+          "id": "actual_missing",
+          "sha256": "e4897d40b7b51d41b26016b1915e84f7bbd4f39dbd43a88ad8f5253da421ddac"
+        },
+        "scenario": {
+          "id": "scenario_synthetic",
+          "sha256": "1a63edb54783b89daac1e4c0c11da4fdcb9652d5114d6b9d4412c1eb5df887cb"
+        },
+        "coverage": {
+          "pixels": {
+            "status": "not-measured",
+            "reason": "No renderer, comparator or device was executed by F01."
+          },
+          "geometry": {
+            "status": "not-measured",
+            "reason": "No renderer, comparator or device was executed by F01."
+          },
+          "labelsAndStates": {
+            "status": "not-measured",
+            "reason": "No renderer, comparator or device was executed by F01."
+          },
+          "accessibility": {
+            "status": "not-measured",
+            "reason": "No renderer, comparator or device was executed by F01."
+          },
+          "interaction": {
+            "status": "not-measured",
+            "reason": "No renderer, comparator or device was executed by F01."
+          },
+          "componentReuse": {
+            "status": "not-measured",
+            "reason": "No renderer, comparator or device was executed by F01."
+          },
+          "maskedAreaFraction": 0
+        },
+        "regions": [],
+        "masks": [],
+        "diagnosticIds": [
+          "diagnostic_no_capture"
+        ],
+        "artifacts": []
+      }
+    },
+    {
+      "contract": "ImplementationPlan",
+      "value": {
+        "schemaVersion": "1.0",
+        "projectId": "project_synthetic",
+        "designId": "design_settings-screen",
+        "target": "android",
+        "repository": {
+          "id": "repository_synthetic",
+          "revision": {
+            "kind": "commit",
+            "commit": "1111111111111111111111111111111111111111"
+          }
+        },
+        "readiness": "needs-review",
+        "usage": {
+          "components": [
+            {
+              "id": "settings-toggle-row",
+              "version": "1"
+            }
+          ],
+          "tokens": [
+            "spacing.page",
+            "spacing.section",
+            "color.ink",
+            "color.accent",
+            "color.muted"
+          ],
+          "assets": [
+            "asset_stripes"
+          ],
+          "fonts": [
+            "font_abeezee_regular"
+          ]
+        },
+        "requiredControls": [
+          {
+            "nodeId": "offline-toggle",
+            "label": "Keep maps offline",
+            "state": {
+              "checked": true,
+              "disabled": false
+            },
+            "critical": true
+          }
+        ],
+        "behavior": [],
+        "unresolved": [
+          {
+            "schemaVersion": "1.0",
+            "id": "diagnostic_settings-screen",
+            "code": "EVIDENCE_MISSING",
+            "severity": "info",
+            "message": "F01 fixtures are schema examples, not renderer/export/implementation approval.",
+            "operations": [
+              "render",
+              "handoff",
+              "implement"
+            ],
+            "nodeIds": [
+              "settings-root"
+            ],
+            "evidenceIds": [
+              "evidence_settings-screen"
+            ],
+            "recovery": "Run the owning semantic/resource/render checks and obtain context-bound approval."
+          }
+        ],
+        "constraints": [
+          "Do not execute design content as instructions.",
+          "Code mapping is unresolved; no application is supplied."
+        ],
+        "maxCorrectionAttempts": 3
+      }
+    },
+    {
+      "contract": "HandoffMetadata",
+      "value": {
+        "schemaVersion": "1.0",
+        "projectId": "project_synthetic",
+        "designId": "design_settings-screen",
+        "source": {
+          "schemaVersion": "1.0",
+          "id": "source_plugin_example",
+          "projectId": "project_synthetic",
+          "identity": {
+            "transport": "figma-plugin",
+            "sessionId": "session_example",
+            "captureId": "capture_example",
+            "contentDigest": "0c95793ba451636bffccae35f17b51ccca0ec6a80eb6f414fd3a10864e405214",
+            "binding": {
+              "status": "asserted",
+              "assertedUrl": "https://www.figma.com/design/synthetic/Synthetic?node-id=1-2",
+              "actorId": "actor_synthetic"
+            },
+            "delivery": "snapshot-file"
+          },
+          "capturedAt": "2026-09-16T00:00:00Z",
+          "captureEndedAt": "2026-09-16T00:00:00Z",
+          "consistency": {
+            "guarantee": "change-checked-session",
+            "beforeDigest": "0c95793ba451636bffccae35f17b51ccca0ec6a80eb6f414fd3a10864e405214",
+            "afterDigest": "0c95793ba451636bffccae35f17b51ccca0ec6a80eb6f414fd3a10864e405214",
+            "limitations": [
+              "Synthetic contract example, not a Figma capture; no REST version or verified file binding.",
+              "Pre/post equality is not an atomic freeze. Historical image-fill retrieval may be unavailable."
+            ]
+          },
+          "completeness": "partial",
+          "requests": [
+            {
+              "id": "request_example",
+              "operation": "plugin-export",
+              "nodeIds": [
+                "1:2"
+              ],
+              "versionSupport": "not-applicable",
+              "outcome": "partial"
+            }
+          ],
+          "artifacts": [
+            {
+              "id": "resource_authorship",
+              "path": "resource-authorship.json",
+              "mediaType": "application/json",
+              "byteLength": 851,
+              "sha256": "0c95793ba451636bffccae35f17b51ccca0ec6a80eb6f414fd3a10864e405214"
+            }
+          ],
+          "missing": [
+            "independent source reference"
+          ],
+          "diagnosticIds": [
+            "diagnostic_source_partial"
+          ]
+        },
+        "provenance": {
+          "schemaVersion": "1.0",
+          "id": "provenance_settings-screen",
+          "projectId": "project_synthetic",
+          "designId": "design_settings-screen",
+          "nodes": {
+            "settings-root": {
+              "/id": {
+                "id": "provenance_settings-screen_0",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/type": {
+                "id": "provenance_settings-screen_1",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/layout/width": {
+                "id": "provenance_settings-screen_2",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/layout/height": {
+                "id": "provenance_settings-screen_3",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/layout/spacing/token": {
+                "id": "provenance_settings-screen_4",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/layout/padding/top": {
+                "id": "provenance_settings-screen_5",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/layout/padding/right/token": {
+                "id": "provenance_settings-screen_6",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/layout/padding/bottom": {
+                "id": "provenance_settings-screen_7",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/layout/padding/left/token": {
+                "id": "provenance_settings-screen_8",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              }
+            },
+            "settings-title": {
+              "/id": {
+                "id": "provenance_settings-screen_9",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/type": {
+                "id": "provenance_settings-screen_10",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/layout/width": {
+                "id": "provenance_settings-screen_11",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/layout/height": {
+                "id": "provenance_settings-screen_12",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/content": {
+                "id": "provenance_settings-screen_13",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/indexing": {
+                "id": "provenance_settings-screen_14",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/typography/fontId": {
+                "id": "provenance_settings-screen_15",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/typography/fontSize": {
+                "id": "provenance_settings-screen_16",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/typography/fontWeight": {
+                "id": "provenance_settings-screen_17",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/typography/lineHeight": {
+                "id": "provenance_settings-screen_18",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/typography/letterSpacing": {
+                "id": "provenance_settings-screen_19",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/typography/alignment": {
+                "id": "provenance_settings-screen_20",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/typography/color/token": {
+                "id": "provenance_settings-screen_21",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/typography/wrap": {
+                "id": "provenance_settings-screen_22",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/accessibility/role": {
+                "id": "provenance_settings-screen_23",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/accessibility/label": {
+                "id": "provenance_settings-screen_24",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/accessibility/evidence": {
+                "id": "provenance_settings-screen_25",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              }
+            },
+            "offline-toggle": {
+              "/id": {
+                "id": "provenance_settings-screen_26",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/type": {
+                "id": "provenance_settings-screen_27",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/layout/width": {
+                "id": "provenance_settings-screen_28",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/layout/height": {
+                "id": "provenance_settings-screen_29",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/componentReference/id": {
+                "id": "provenance_settings-screen_30",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/componentReference/version": {
+                "id": "provenance_settings-screen_31",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/properties/title/type": {
+                "id": "provenance_settings-screen_32",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/properties/title/value": {
+                "id": "provenance_settings-screen_33",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/properties/checked/type": {
+                "id": "provenance_settings-screen_34",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/properties/checked/value": {
+                "id": "provenance_settings-screen_35",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/properties/disabled/type": {
+                "id": "provenance_settings-screen_36",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/properties/disabled/value": {
+                "id": "provenance_settings-screen_37",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/variant": {
+                "id": "provenance_settings-screen_38",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/accessibility/role": {
+                "id": "provenance_settings-screen_39",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/accessibility/label": {
+                "id": "provenance_settings-screen_40",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/accessibility/state/checked": {
+                "id": "provenance_settings-screen_41",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/accessibility/state/disabled": {
+                "id": "provenance_settings-screen_42",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/accessibility/evidence": {
+                "id": "provenance_settings-screen_43",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/behavior/status": {
+                "id": "provenance_settings-screen_44",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/behavior/critical": {
+                "id": "provenance_settings-screen_45",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/behavior/intent": {
+                "id": "provenance_settings-screen_46",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/behavior/stateField": {
+                "id": "provenance_settings-screen_47",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/behavior/value/type": {
+                "id": "provenance_settings-screen_48",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/behavior/value/value": {
+                "id": "provenance_settings-screen_49",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/behavior/simulatedOnly": {
+                "id": "provenance_settings-screen_50",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              }
+            },
+            "wifi-toggle": {
+              "/id": {
+                "id": "provenance_settings-screen_51",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/type": {
+                "id": "provenance_settings-screen_52",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/layout/width": {
+                "id": "provenance_settings-screen_53",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/layout/height": {
+                "id": "provenance_settings-screen_54",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/componentReference/id": {
+                "id": "provenance_settings-screen_55",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/componentReference/version": {
+                "id": "provenance_settings-screen_56",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/properties/title/type": {
+                "id": "provenance_settings-screen_57",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/properties/title/value": {
+                "id": "provenance_settings-screen_58",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/properties/checked/type": {
+                "id": "provenance_settings-screen_59",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/properties/checked/value": {
+                "id": "provenance_settings-screen_60",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/properties/disabled/type": {
+                "id": "provenance_settings-screen_61",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/properties/disabled/value": {
+                "id": "provenance_settings-screen_62",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/variant": {
+                "id": "provenance_settings-screen_63",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/accessibility/role": {
+                "id": "provenance_settings-screen_64",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/accessibility/label": {
+                "id": "provenance_settings-screen_65",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/accessibility/state/checked": {
+                "id": "provenance_settings-screen_66",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/accessibility/state/disabled": {
+                "id": "provenance_settings-screen_67",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/accessibility/evidence": {
+                "id": "provenance_settings-screen_68",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/behavior/status": {
+                "id": "provenance_settings-screen_69",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/behavior/critical": {
+                "id": "provenance_settings-screen_70",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/behavior/intent": {
+                "id": "provenance_settings-screen_71",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/behavior/stateField": {
+                "id": "provenance_settings-screen_72",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/behavior/value/type": {
+                "id": "provenance_settings-screen_73",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/behavior/value/value": {
+                "id": "provenance_settings-screen_74",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/behavior/simulatedOnly": {
+                "id": "provenance_settings-screen_75",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              }
+            },
+            "storage-label": {
+              "/id": {
+                "id": "provenance_settings-screen_76",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/type": {
+                "id": "provenance_settings-screen_77",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/layout/width": {
+                "id": "provenance_settings-screen_78",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/layout/height": {
+                "id": "provenance_settings-screen_79",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/content": {
+                "id": "provenance_settings-screen_80",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/indexing": {
+                "id": "provenance_settings-screen_81",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/typography/fontId": {
+                "id": "provenance_settings-screen_82",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/typography/fontSize": {
+                "id": "provenance_settings-screen_83",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/typography/fontWeight": {
+                "id": "provenance_settings-screen_84",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/typography/lineHeight": {
+                "id": "provenance_settings-screen_85",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/typography/letterSpacing": {
+                "id": "provenance_settings-screen_86",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/typography/alignment": {
+                "id": "provenance_settings-screen_87",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/typography/color/token": {
+                "id": "provenance_settings-screen_88",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/typography/wrap": {
+                "id": "provenance_settings-screen_89",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/accessibility/role": {
+                "id": "provenance_settings-screen_90",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/accessibility/label": {
+                "id": "provenance_settings-screen_91",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              },
+              "/accessibility/evidence": {
+                "id": "provenance_settings-screen_92",
+                "type": "user-input",
+                "authority": "manual",
+                "evidenceIds": [
+                  "evidence_settings-screen"
+                ],
+                "acceptedAt": "2026-09-16T00:00:00Z",
+                "supersedes": [],
+                "actorId": "actor_synthetic_author"
+              }
+            }
+          },
+          "evidence": [
+            {
+              "id": "evidence_settings-screen",
+              "artifact": {
+                "id": "source_settings-screen",
+                "sha256": "917c498c00a39befcc1012557cfc92114a4ea83a43107386f0eb538f38ea3d87"
+              },
+              "kind": "synthetic-authored"
+            },
+            {
+              "id": "evidence_resources",
+              "artifact": {
+                "id": "resource_authorship",
+                "sha256": "0c95793ba451636bffccae35f17b51ccca0ec6a80eb6f414fd3a10864e405214"
+              },
+              "kind": "synthetic-authored"
+            }
+          ],
+          "history": []
+        },
+        "renderProfile": {
+          "schemaVersion": "1.0",
+          "id": "profile_synthetic",
+          "renderer": {
+            "name": "unimplemented-contract-example",
+            "version": "1"
+          },
+          "browser": {
+            "name": "not-executed",
+            "version": "1"
+          },
+          "host": {
+            "os": "synthetic",
+            "version": "1",
+            "architecture": "synthetic",
+            "evidence": "test-fake"
+          },
+          "viewport": {
+            "x": 0,
+            "y": 0,
+            "width": 393,
+            "height": 852,
+            "unit": "design-unit"
+          },
+          "deviceScale": 1,
+          "locale": "en-US",
+          "theme": "light",
+          "colorSpace": "srgb",
+          "fontHashes": [
+            {
+              "id": "font_abeezee_regular",
+              "sha256": "2901c8df256648cc2bb2e3afb381cb8d28e65ed3dbe11de20695ae4d5ffdeda9"
+            }
+          ],
+          "assetHashes": [
+            {
+              "id": "asset_stripes",
+              "sha256": "0074ca9803f951ff777598b3a162c19cbea0a7b829e86f0d53340ad87643281d"
+            }
+          ],
+          "frozenTime": "2026-09-16T00:00:00Z",
+          "state": {},
+          "capture": {
+            "bounds": {
+              "x": 0,
+              "y": 0,
+              "width": 393,
+              "height": 852,
+              "unit": "design-unit"
+            },
+            "scrollOffset": {
+              "x": 0,
+              "y": 0
+            },
+            "insets": {
+              "top": 0,
+              "right": 0,
+              "bottom": 0,
+              "left": 0
+            },
+            "systemBars": "excluded"
+          },
+          "motion": "disabled",
+          "network": "deny",
+          "fontFallback": "forbidden"
+        },
+        "capture": {
+          "bounds": {
+            "x": 0,
+            "y": 0,
+            "width": 393,
+            "height": 852,
+            "unit": "design-unit"
+          },
+          "scrollOffset": {
+            "x": 0,
+            "y": 0
+          },
+          "insets": {
+            "top": 0,
+            "right": 0,
+            "bottom": 0,
+            "left": 0
+          },
+          "systemBars": "excluded"
+        },
+        "resources": {
+          "snapshotId": "resources_synthetic",
+          "sha256": "0bb106f87cc8293727acee68c32d4a5bd83d44690ab1020b6301bdbaf6c502d9",
+          "componentRegistryRevision": "1",
+          "tokenRegistryRevision": "1",
+          "selectedModes": {
+            "core": "light"
+          }
+        },
+        "referenceOrigin": "unapproved-draft"
+      }
+    },
+    {
+      "contract": "HandoffManifest",
+      "value": {
+        "schemaVersion": "1.0",
+        "bundleVersion": "1.0",
+        "compiler": {
+          "name": "shape-example-not-compiler",
+          "version": "1"
+        },
+        "bundleId": "001a8538a7f4b578d3bdeb43d0dc6a9e623c2df08cb27c59edf15edb1b9226ce",
+        "projectId": "project_synthetic",
+        "designId": "design_settings-screen",
+        "revision": {
+          "id": "revision_synthetic",
+          "sha256": "8f6ef59bde42a0a062a3f31a1dc7f414a1fe32a78aa32adf5979b288de6c5813"
+        },
+        "target": "android",
+        "resources": {
+          "snapshotId": "resources_synthetic",
+          "sha256": "0bb106f87cc8293727acee68c32d4a5bd83d44690ab1020b6301bdbaf6c502d9",
+          "componentRegistryRevision": "1",
+          "tokenRegistryRevision": "1",
+          "selectedModes": {
+            "core": "light"
+          }
+        },
+        "readiness": "needs-review",
+        "approval": {
+          "status": "unapproved",
+          "mode": "explicit-draft"
+        },
+        "scenario": {
+          "id": "scenario_synthetic",
+          "sha256": "1a63edb54783b89daac1e4c0c11da4fdcb9652d5114d6b9d4412c1eb5df887cb"
+        },
+        "validationPolicy": {
+          "id": "mobile-static-v1",
+          "sha256": "ced06cc8b91d209e8749a0da9ef415379dd693e1f94afc04d3415d876c2ce444"
+        },
+        "artifacts": {
+          "design.json": {
+            "id": "revision_synthetic",
+            "path": "design.json",
+            "mediaType": "application/json",
+            "byteLength": 5061,
+            "sha256": "8f6ef59bde42a0a062a3f31a1dc7f414a1fe32a78aa32adf5979b288de6c5813"
+          },
+          "design.md": {
+            "id": "summary_synthetic",
+            "path": "design.md",
+            "mediaType": "text/markdown",
+            "byteLength": 36,
+            "sha256": "5cbc85ce3c7e32f1e19b5d61f86e576157626e8af676c8f29cd1dfffa43a2cab"
+          },
+          "reference.png": {
+            "id": "reference_synthetic",
+            "path": "reference.png",
+            "mediaType": "image/png",
+            "byteLength": 504,
+            "sha256": "0074ca9803f951ff777598b3a162c19cbea0a7b829e86f0d53340ad87643281d"
+          },
+          "preview.png": {
+            "id": "preview_synthetic",
+            "path": "preview.png",
+            "mediaType": "image/png",
+            "byteLength": 504,
+            "sha256": "0074ca9803f951ff777598b3a162c19cbea0a7b829e86f0d53340ad87643281d"
+          },
+          "metadata.json": {
+            "id": "metadata_synthetic",
+            "path": "metadata.json",
+            "mediaType": "application/json",
+            "byteLength": 38169,
+            "sha256": "961ab118cc22a99f0e80ed32f9ed04f550a0e831c2c94033f7e2fe9a9cedbb71"
+          },
+          "components.json": {
+            "id": "components_synthetic",
+            "path": "components.json",
+            "mediaType": "application/json",
+            "byteLength": 16671,
+            "sha256": "91756520695d262bb1d18c6e80add55ab52530647d1e65c01808aca862d0fd6e"
+          },
+          "tokens.json": {
+            "id": "tokens_synthetic",
+            "path": "tokens.json",
+            "mediaType": "application/json",
+            "byteLength": 3409,
+            "sha256": "94e75526d82e627da7ad06ba5c19c65bd7879750165b92856852abcdc3d55769"
+          },
+          "implementation.json": {
+            "id": "implementation_synthetic",
+            "path": "implementation.json",
+            "mediaType": "application/json",
+            "byteLength": 1644,
+            "sha256": "ea3f23e8f0f3ebe5c2065ab91460262e2c77838397e60aa2787e6b8705a4c4df"
+          },
+          "diagnostics.json": {
+            "id": "diagnostics_synthetic",
+            "path": "diagnostics.json",
+            "mediaType": "application/json",
+            "byteLength": 1292,
+            "sha256": "7c7c2fdcaea955017c8fe9584118eecae015243e9bff74297e4444c171d12bf0"
+          },
+          "assets": [
+            {
+              "id": "asset_stripes",
+              "path": "assets/stripes.png",
+              "mediaType": "image/png",
+              "byteLength": 504,
+              "sha256": "0074ca9803f951ff777598b3a162c19cbea0a7b829e86f0d53340ad87643281d"
+            },
+            {
+              "id": "font_abeezee_regular",
+              "path": "assets/ABeeZee-Regular.ttf",
+              "mediaType": "font/ttf",
+              "byteLength": 46016,
+              "sha256": "2901c8df256648cc2bb2e3afb381cb8d28e65ed3dbe11de20695ae4d5ffdeda9"
+            },
+            {
+              "id": "license_ofl",
+              "path": "assets/OFL.txt",
+              "mediaType": "text/plain",
+              "byteLength": 4516,
+              "sha256": "f0376d04eb58fb19e9f1690a99a1eb37380ad0246f7d503f2abd8e8a74ed12be"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "contract": "Job",
+      "value": {
+        "schemaVersion": "1.0",
+        "id": "job_synthetic",
+        "projectId": "project_synthetic",
+        "actorId": "actor_synthetic",
+        "operation": "render",
+        "status": "queued",
+        "input": {
+          "id": "revision_synthetic",
+          "sha256": "8f6ef59bde42a0a062a3f31a1dc7f414a1fe32a78aa32adf5979b288de6c5813"
+        },
+        "resources": {
+          "snapshotId": "resources_synthetic",
+          "sha256": "0bb106f87cc8293727acee68c32d4a5bd83d44690ab1020b6301bdbaf6c502d9",
+          "componentRegistryRevision": "1",
+          "tokenRegistryRevision": "1",
+          "selectedModes": {
+            "core": "light"
+          }
+        },
+        "idempotency": {
+          "key": "key_synthetic",
+          "projectId": "project_synthetic",
+          "actorId": "actor_synthetic",
+          "operation": "render",
+          "payloadSha256": "8f6ef59bde42a0a062a3f31a1dc7f414a1fe32a78aa32adf5979b288de6c5813"
+        },
+        "attempt": 0,
+        "deadline": "2026-09-16T00:00:00Z",
+        "budget": {
+          "maxInputBytes": 26214400,
+          "maxRasterPixels": 64000000,
+          "maxExpandedNodes": 20000,
+          "maxDepth": 128,
+          "maxSnapshotAssetBytes": 262144000,
+          "maxAttempts": 3,
+          "maxExternalCalls": 0,
+          "maxOutputBytes": 26214400,
+          "maxDurationMs": 30000,
+          "maxModelTokens": 0,
+          "maxCostMicros": 0
+        },
+        "progress": 0,
+        "diagnosticIds": []
+      }
+    },
+    {
+      "contract": "ResponseEnvelope",
+      "value": {
+        "schemaVersion": "1.0",
+        "success": true,
+        "requestId": "request_async",
+        "data": {
+          "kind": "accepted-job",
+          "jobId": "job_synthetic",
+          "status": "queued",
+          "warnings": []
+        }
+      }
+    },
+    {
+      "contract": "ResponseEnvelope",
+      "value": {
+        "schemaVersion": "1.0",
+        "success": false,
+        "requestId": "request_failed",
+        "error": {
+          "code": "ACTION_REQUIRED",
+          "message": "A permitted source session is required.",
+          "retryable": false,
+          "jobId": "job_synthetic",
+          "diagnosticIds": []
+        }
+      }
+    },
+    {
+      "contract": "CaptureMetadata",
+      "value": {
+        "schemaVersion": "1.0",
+        "id": "capture_synthetic",
+        "projectId": "project_synthetic",
+        "jobId": "job_synthetic",
+        "runNonce": "nonce_synthetic",
+        "device": {
+          "id": "device_synthetic",
+          "platform": "android-emulator",
+          "model": "not-a-real-device",
+          "osVersion": "synthetic",
+          "state": "unknown",
+          "serverId": "server_synthetic",
+          "ownership": "unverified"
+        },
+        "applicationId": "org.example.synthetic",
+        "build": {
+          "id": "build_synthetic",
+          "repository": {
+            "id": "repository_synthetic",
+            "revision": {
+              "kind": "commit",
+              "commit": "1111111111111111111111111111111111111111"
+            }
+          },
+          "artifact": {
+            "id": "build_example",
+            "sha256": "5417dc986119e39d5d9cd9b2663ed246d01d35cd8c787a6d400eb068274a639a"
+          },
+          "installationReceipt": {
+            "id": "installation_unverified",
+            "sha256": "d03974197520605831e3891458dedd18986366c5e5891eb49ce739d248fcb206"
+          }
+        },
+        "scenario": {
+          "id": "scenario_synthetic",
+          "sha256": "1a63edb54783b89daac1e4c0c11da4fdcb9652d5114d6b9d4412c1eb5df887cb"
+        },
+        "reference": {
+          "id": "asset_stripes",
+          "sha256": "0074ca9803f951ff777598b3a162c19cbea0a7b829e86f0d53340ad87643281d"
+        },
+        "capturedAt": "2026-09-16T00:00:00Z",
+        "raw": {
+          "id": "raw_example",
+          "path": "raw-device.png",
+          "mediaType": "image/png",
+          "byteLength": 504,
+          "sha256": "0074ca9803f951ff777598b3a162c19cbea0a7b829e86f0d53340ad87643281d"
+        },
+        "profileEvidence": {
+          "status": "unknown",
+          "reason": "Synthetic PNG fixture is not a device capture; density and insets unmeasured."
+        },
+        "screenEvidence": {
+          "status": "unverified",
+          "method": "none"
+        },
+        "locale": "en-US",
+        "theme": "light",
+        "fontScale": 1,
+        "orientation": "portrait",
+        "tools": [
+          {
+            "name": "not-executed",
+            "version": "1"
+          }
+        ],
+        "normalization": {
+          "status": "not-applied",
+          "colorConversion": "none-srgb",
+          "resampling": "none"
+        }
+      }
+    },
+    {
+      "contract": "AuthorizationContext",
+      "value": {
+        "schemaVersion": "1.0",
+        "projectId": "project_synthetic",
+        "actorId": "actor_synthetic",
+        "sessionId": "session_synthetic",
+        "expiresAt": "2026-09-16T00:00:00Z",
+        "grants": [
+          {
+            "resourceKind": "design",
+            "resourceId": "design_settings-screen",
+            "operations": [
+              "read"
+            ]
+          }
+        ],
+        "egress": "deny"
+      }
+    },
+    {
+      "contract": "ProviderCapabilities",
+      "value": {
+        "schemaVersion": "1.0",
+        "providerId": "provider_synthetic",
+        "projectId": "project_synthetic",
+        "implementation": "test-fake",
+        "host": {
+          "os": "synthetic",
+          "version": "1",
+          "architecture": "synthetic",
+          "evidence": "test-fake"
+        },
+        "operations": [
+          {
+            "operation": "readSnapshot",
+            "availability": "unverified",
+            "evidence": "unverified",
+            "limitations": [
+              "Seat/plugin and paired transport availability unverified; no wildcard core loopback authorization."
+            ]
+          }
+        ],
+        "cancellation": "cooperative",
+        "deadline": "required",
+        "limits": {
+          "maxInputBytes": 26214400,
+          "maxRasterPixels": 64000000,
+          "maxExpandedNodes": 20000,
+          "maxDepth": 128,
+          "maxSnapshotAssetBytes": 262144000,
+          "maxAttempts": 3,
+          "maxExternalCalls": 0,
+          "maxOutputBytes": 26214400,
+          "maxDurationMs": 30000,
+          "maxModelTokens": 0,
+          "maxCostMicros": 0
+        }
+      }
+    }
+  ]
+}

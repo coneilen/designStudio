@@ -1,0 +1,402 @@
+{
+  "profile": "f06-windows-500-node-10MiB-v1",
+  "expandedNodes": 500,
+  "immutableImageFontBytes": 10485760,
+  "renderProfile": {
+    "schemaVersion": "1.0",
+    "id": "windows_static_v1",
+    "renderer": {
+      "name": "@design-studio/renderer",
+      "version": "1.0.0",
+      "sha256": "d65c8cc5316300c3ce2813607289a713f309ffc5bab9aed719b76af7baf2eb9d"
+    },
+    "browser": {
+      "name": "chromium-headless-shell",
+      "version": "153.0.8010.12",
+      "sha256": "addfa79abb060e1e514e155ed745d4bf96140bca402735958bb4e223aea0b98c"
+    },
+    "host": {
+      "os": "windows",
+      "version": "10.0.26200",
+      "architecture": "x64",
+      "evidence": "observed"
+    },
+    "viewport": {
+      "x": 0,
+      "y": 0,
+      "width": 393,
+      "height": 852,
+      "unit": "design-unit"
+    },
+    "deviceScale": 1,
+    "locale": "en-US",
+    "theme": "light",
+    "colorSpace": "srgb",
+    "fontHashes": [
+      {
+        "id": "font_abeezee_regular",
+        "sha256": "2901c8df256648cc2bb2e3afb381cb8d28e65ed3dbe11de20695ae4d5ffdeda9"
+      }
+    ],
+    "assetHashes": [
+      {
+        "id": "performance_image",
+        "sha256": "e384aaa8ff99724887d0e934b6691d1b9f7ec0c43a39e034a6cbe0a641fc2539"
+      },
+      {
+        "id": "performance_strip",
+        "sha256": "96fe3d457971b831289a50f504dbd58a8e76242c1e36de0725ef60a876a3137b"
+      }
+    ],
+    "frozenTime": "2026-09-16T00:00:00Z",
+    "state": {},
+    "capture": {
+      "bounds": {
+        "x": 0,
+        "y": 0,
+        "width": 393,
+        "height": 852,
+        "unit": "design-unit"
+      },
+      "scrollOffset": {
+        "x": 0,
+        "y": 0
+      },
+      "insets": {
+        "top": 0,
+        "right": 0,
+        "bottom": 0,
+        "left": 0
+      },
+      "systemBars": "excluded"
+    },
+    "motion": "disabled",
+    "network": "deny",
+    "fontFallback": "forbidden"
+  },
+  "profileExcludes": "License notices, source/provenance/DesignIR JSON and IPC framing; no unused image bytes or padding chunks.",
+  "boundary": "Accepted in-memory inputs through F02 resolution, F05 byte/font/image verification, wire encoding, browser readiness/layout/face proof, PNG/map, return and PNG/hash verification. Publication/staging excluded.",
+  "cache": "Three unmeasured warmups; same owned browser, fresh context/page each render. Parent F05 verifies/decodes resources every run. Worker rehashes bytes every request and reuses at most256 validation records keyed by exact bytes/media/dimensions/profile/budgets/F05 version. Text metrics cache is page-local under full typography/text/ranges/width, with immutable page profile/faces; every rendered run still gets actual-face proof.",
+  "host": {
+    "os": "10.0.26200",
+    "architecture": "x64",
+    "cpu": "Intel(R) Core(TM) i9-10900K CPU @ 3.70GHz",
+    "logicalCpus": 20,
+    "memoryBytes": 68479582208,
+    "node": "v24.21.0",
+    "conditions": "Shared development Windows host; no parallel benchmark in this session, external load not controlled."
+  },
+  "workerStartupMs": 1263.7941,
+  "browserStartupMs": 989.1237999999998,
+  "warmups": [
+    {
+      "totalMs": 3240.2488000000003,
+      "prepareMs": 772.8459000000003,
+      "exchangeMs": 2429.6232,
+      "verifyMs": 37.80400000000009,
+      "wireBytes": 10764128,
+      "pngSha256": "ca5f493705b05c9c87c2575610c363c0d95a55f34c41ae805e7dfc86f17faf44",
+      "structuredSha256": "cda5ff0ad78ddb4fff9281b6f88856c06bf9133dc2c01eecd02d0f40e6399f9b",
+      "browserStartupMs": 989.1237999999998,
+      "workerMs": 2368.8594000000003,
+      "workerRss": 297635840,
+      "serviceRss": 265707520
+    },
+    {
+      "totalMs": 1978.5978999999998,
+      "prepareMs": 691.9714000000004,
+      "exchangeMs": 1254.9908000000005,
+      "verifyMs": 31.63879999999881,
+      "wireBytes": 10764128,
+      "pngSha256": "ca5f493705b05c9c87c2575610c363c0d95a55f34c41ae805e7dfc86f17faf44",
+      "structuredSha256": "cda5ff0ad78ddb4fff9281b6f88856c06bf9133dc2c01eecd02d0f40e6399f9b",
+      "browserStartupMs": 0,
+      "workerMs": 1204.9688999999998,
+      "workerRss": 283271168,
+      "serviceRss": 309141504
+    },
+    {
+      "totalMs": 2378.3739000000005,
+      "prepareMs": 809.9206000000013,
+      "exchangeMs": 1534.3671999999988,
+      "verifyMs": 34.08899999999994,
+      "wireBytes": 10764128,
+      "pngSha256": "ca5f493705b05c9c87c2575610c363c0d95a55f34c41ae805e7dfc86f17faf44",
+      "structuredSha256": "cda5ff0ad78ddb4fff9281b6f88856c06bf9133dc2c01eecd02d0f40e6399f9b",
+      "browserStartupMs": 0,
+      "workerMs": 1459.7493999999997,
+      "workerRss": 283758592,
+      "serviceRss": 309993472
+    }
+  ],
+  "samples": [
+    {
+      "totalMs": 2005.121799999999,
+      "prepareMs": 643.9477999999999,
+      "exchangeMs": 1326.6201,
+      "verifyMs": 34.556800000000294,
+      "wireBytes": 10764128,
+      "pngSha256": "ca5f493705b05c9c87c2575610c363c0d95a55f34c41ae805e7dfc86f17faf44",
+      "structuredSha256": "cda5ff0ad78ddb4fff9281b6f88856c06bf9133dc2c01eecd02d0f40e6399f9b",
+      "browserStartupMs": 0,
+      "workerMs": 1256.7867999999999,
+      "workerRss": 319447040,
+      "serviceRss": 309956608
+    },
+    {
+      "totalMs": 1940.6746000000003,
+      "prepareMs": 694.0465999999997,
+      "exchangeMs": 1221.6596000000009,
+      "verifyMs": 24.971199999999953,
+      "wireBytes": 10764128,
+      "pngSha256": "ca5f493705b05c9c87c2575610c363c0d95a55f34c41ae805e7dfc86f17faf44",
+      "structuredSha256": "cda5ff0ad78ddb4fff9281b6f88856c06bf9133dc2c01eecd02d0f40e6399f9b",
+      "browserStartupMs": 0,
+      "workerMs": 1174.2073999999993,
+      "workerRss": 334942208,
+      "serviceRss": 360624128
+    },
+    {
+      "totalMs": 1815.8530999999984,
+      "prepareMs": 609.9416000000001,
+      "exchangeMs": 1183.2088999999978,
+      "verifyMs": 22.70470000000205,
+      "wireBytes": 10764128,
+      "pngSha256": "ca5f493705b05c9c87c2575610c363c0d95a55f34c41ae805e7dfc86f17faf44",
+      "structuredSha256": "cda5ff0ad78ddb4fff9281b6f88856c06bf9133dc2c01eecd02d0f40e6399f9b",
+      "browserStartupMs": 0,
+      "workerMs": 1138.4169000000002,
+      "workerRss": 334299136,
+      "serviceRss": 362430464
+    },
+    {
+      "totalMs": 1827.6062999999995,
+      "prepareMs": 618.7446999999993,
+      "exchangeMs": 1182.9933999999994,
+      "verifyMs": 25.87159999999858,
+      "wireBytes": 10764128,
+      "pngSha256": "ca5f493705b05c9c87c2575610c363c0d95a55f34c41ae805e7dfc86f17faf44",
+      "structuredSha256": "cda5ff0ad78ddb4fff9281b6f88856c06bf9133dc2c01eecd02d0f40e6399f9b",
+      "browserStartupMs": 0,
+      "workerMs": 1131.1003999999994,
+      "workerRss": 292818944,
+      "serviceRss": 362803200
+    },
+    {
+      "totalMs": 1874.5649999999987,
+      "prepareMs": 629.8085999999967,
+      "exchangeMs": 1219.9014000000025,
+      "verifyMs": 24.857700000000477,
+      "wireBytes": 10764128,
+      "pngSha256": "ca5f493705b05c9c87c2575610c363c0d95a55f34c41ae805e7dfc86f17faf44",
+      "structuredSha256": "cda5ff0ad78ddb4fff9281b6f88856c06bf9133dc2c01eecd02d0f40e6399f9b",
+      "browserStartupMs": 0,
+      "workerMs": 1163.9674999999988,
+      "workerRss": 337223680,
+      "serviceRss": 362688512
+    },
+    {
+      "totalMs": 1810.5895999999993,
+      "prepareMs": 611.5289000000012,
+      "exchangeMs": 1171.6154999999999,
+      "verifyMs": 27.450199999999313,
+      "wireBytes": 10764128,
+      "pngSha256": "ca5f493705b05c9c87c2575610c363c0d95a55f34c41ae805e7dfc86f17faf44",
+      "structuredSha256": "cda5ff0ad78ddb4fff9281b6f88856c06bf9133dc2c01eecd02d0f40e6399f9b",
+      "browserStartupMs": 0,
+      "workerMs": 1125.6232000000018,
+      "workerRss": 323284992,
+      "serviceRss": 363159552
+    },
+    {
+      "totalMs": 1846.4009000000005,
+      "prepareMs": 594.4860000000008,
+      "exchangeMs": 1227.5282000000007,
+      "verifyMs": 24.388100000000122,
+      "wireBytes": 10764128,
+      "pngSha256": "ca5f493705b05c9c87c2575610c363c0d95a55f34c41ae805e7dfc86f17faf44",
+      "structuredSha256": "cda5ff0ad78ddb4fff9281b6f88856c06bf9133dc2c01eecd02d0f40e6399f9b",
+      "browserStartupMs": 0,
+      "workerMs": 1174.0613000000012,
+      "workerRss": 338604032,
+      "serviceRss": 362995712
+    },
+    {
+      "totalMs": 1854.2908000000025,
+      "prepareMs": 608.5885000000017,
+      "exchangeMs": 1220.6527999999998,
+      "verifyMs": 25.050999999999476,
+      "wireBytes": 10764128,
+      "pngSha256": "ca5f493705b05c9c87c2575610c363c0d95a55f34c41ae805e7dfc86f17faf44",
+      "structuredSha256": "cda5ff0ad78ddb4fff9281b6f88856c06bf9133dc2c01eecd02d0f40e6399f9b",
+      "browserStartupMs": 0,
+      "workerMs": 1165.2142000000022,
+      "workerRss": 335577088,
+      "serviceRss": 363081728
+    },
+    {
+      "totalMs": 1841.4023000000016,
+      "prepareMs": 639.8205000000016,
+      "exchangeMs": 1176.9583999999995,
+      "verifyMs": 24.62489999999889,
+      "wireBytes": 10764128,
+      "pngSha256": "ca5f493705b05c9c87c2575610c363c0d95a55f34c41ae805e7dfc86f17faf44",
+      "structuredSha256": "cda5ff0ad78ddb4fff9281b6f88856c06bf9133dc2c01eecd02d0f40e6399f9b",
+      "browserStartupMs": 0,
+      "workerMs": 1125.170399999999,
+      "workerRss": 336437248,
+      "serviceRss": 363155456
+    },
+    {
+      "totalMs": 1912.214,
+      "prepareMs": 636.6779999999999,
+      "exchangeMs": 1247.0733,
+      "verifyMs": 28.463700000000244,
+      "wireBytes": 10764128,
+      "pngSha256": "ca5f493705b05c9c87c2575610c363c0d95a55f34c41ae805e7dfc86f17faf44",
+      "structuredSha256": "cda5ff0ad78ddb4fff9281b6f88856c06bf9133dc2c01eecd02d0f40e6399f9b",
+      "browserStartupMs": 0,
+      "workerMs": 1183.0505999999987,
+      "workerRss": 339316736,
+      "serviceRss": 311037952
+    },
+    {
+      "totalMs": 1749.768500000002,
+      "prepareMs": 557.4676,
+      "exchangeMs": 1170.6221000000005,
+      "verifyMs": 21.679700000000594,
+      "wireBytes": 10764128,
+      "pngSha256": "ca5f493705b05c9c87c2575610c363c0d95a55f34c41ae805e7dfc86f17faf44",
+      "structuredSha256": "cda5ff0ad78ddb4fff9281b6f88856c06bf9133dc2c01eecd02d0f40e6399f9b",
+      "browserStartupMs": 0,
+      "workerMs": 1124.3115999999973,
+      "workerRss": 340131840,
+      "serviceRss": 311054336
+    },
+    {
+      "totalMs": 1766.8282999999974,
+      "prepareMs": 550.3515999999981,
+      "exchangeMs": 1193.191899999998,
+      "verifyMs": 23.286100000004808,
+      "wireBytes": 10764128,
+      "pngSha256": "ca5f493705b05c9c87c2575610c363c0d95a55f34c41ae805e7dfc86f17faf44",
+      "structuredSha256": "cda5ff0ad78ddb4fff9281b6f88856c06bf9133dc2c01eecd02d0f40e6399f9b",
+      "browserStartupMs": 0,
+      "workerMs": 1144.0835000000006,
+      "workerRss": 338427904,
+      "serviceRss": 311070720
+    },
+    {
+      "totalMs": 1775.170100000003,
+      "prepareMs": 557.4184000000023,
+      "exchangeMs": 1190.357100000001,
+      "verifyMs": 27.396300000000338,
+      "wireBytes": 10764128,
+      "pngSha256": "ca5f493705b05c9c87c2575610c363c0d95a55f34c41ae805e7dfc86f17faf44",
+      "structuredSha256": "cda5ff0ad78ddb4fff9281b6f88856c06bf9133dc2c01eecd02d0f40e6399f9b",
+      "browserStartupMs": 0,
+      "workerMs": 1141.5436999999984,
+      "workerRss": 339320832,
+      "serviceRss": 310956032
+    },
+    {
+      "totalMs": 1964.3702000000048,
+      "prepareMs": 646.3081999999995,
+      "exchangeMs": 1292.9161999999997,
+      "verifyMs": 25.146899999999732,
+      "wireBytes": 10764128,
+      "pngSha256": "ca5f493705b05c9c87c2575610c363c0d95a55f34c41ae805e7dfc86f17faf44",
+      "structuredSha256": "cda5ff0ad78ddb4fff9281b6f88856c06bf9133dc2c01eecd02d0f40e6399f9b",
+      "browserStartupMs": 0,
+      "workerMs": 1234.8741999999984,
+      "workerRss": 335966208,
+      "serviceRss": 311058432
+    },
+    {
+      "totalMs": 2078.6482000000033,
+      "prepareMs": 659.267200000002,
+      "exchangeMs": 1386.4426999999996,
+      "verifyMs": 32.939900000004855,
+      "wireBytes": 10764128,
+      "pngSha256": "ca5f493705b05c9c87c2575610c363c0d95a55f34c41ae805e7dfc86f17faf44",
+      "structuredSha256": "cda5ff0ad78ddb4fff9281b6f88856c06bf9133dc2c01eecd02d0f40e6399f9b",
+      "browserStartupMs": 0,
+      "workerMs": 1315.267399999997,
+      "workerRss": 336482304,
+      "serviceRss": 311021568
+    },
+    {
+      "totalMs": 2190.973100000003,
+      "prepareMs": 675.4778000000006,
+      "exchangeMs": 1486.7358999999997,
+      "verifyMs": 28.760300000001735,
+      "wireBytes": 10764128,
+      "pngSha256": "ca5f493705b05c9c87c2575610c363c0d95a55f34c41ae805e7dfc86f17faf44",
+      "structuredSha256": "cda5ff0ad78ddb4fff9281b6f88856c06bf9133dc2c01eecd02d0f40e6399f9b",
+      "browserStartupMs": 0,
+      "workerMs": 1420.2661000000007,
+      "workerRss": 349315072,
+      "serviceRss": 311214080
+    },
+    {
+      "totalMs": 2044.5722000000023,
+      "prepareMs": 660.9542000000001,
+      "exchangeMs": 1357.2418000000034,
+      "verifyMs": 26.3778999999995,
+      "wireBytes": 10764128,
+      "pngSha256": "ca5f493705b05c9c87c2575610c363c0d95a55f34c41ae805e7dfc86f17faf44",
+      "structuredSha256": "cda5ff0ad78ddb4fff9281b6f88856c06bf9133dc2c01eecd02d0f40e6399f9b",
+      "browserStartupMs": 0,
+      "workerMs": 1292.295100000003,
+      "workerRss": 350388224,
+      "serviceRss": 310988800
+    },
+    {
+      "totalMs": 1959.6463000000003,
+      "prepareMs": 693.6911000000036,
+      "exchangeMs": 1239.139900000002,
+      "verifyMs": 26.816800000000512,
+      "wireBytes": 10764128,
+      "pngSha256": "ca5f493705b05c9c87c2575610c363c0d95a55f34c41ae805e7dfc86f17faf44",
+      "structuredSha256": "cda5ff0ad78ddb4fff9281b6f88856c06bf9133dc2c01eecd02d0f40e6399f9b",
+      "browserStartupMs": 0,
+      "workerMs": 1190.1716000000015,
+      "workerRss": 309989376,
+      "serviceRss": 363397120
+    },
+    {
+      "totalMs": 1917.5020999999979,
+      "prepareMs": 602.7108000000007,
+      "exchangeMs": 1289.917300000001,
+      "verifyMs": 24.876799999998184,
+      "wireBytes": 10764128,
+      "pngSha256": "ca5f493705b05c9c87c2575610c363c0d95a55f34c41ae805e7dfc86f17faf44",
+      "structuredSha256": "cda5ff0ad78ddb4fff9281b6f88856c06bf9133dc2c01eecd02d0f40e6399f9b",
+      "browserStartupMs": 0,
+      "workerMs": 1235.8272999999972,
+      "workerRss": 351477760,
+      "serviceRss": 311201792
+    },
+    {
+      "totalMs": 1878.6315999999933,
+      "prepareMs": 645.8138999999937,
+      "exchangeMs": 1207.8066000000035,
+      "verifyMs": 25.012399999999616,
+      "wireBytes": 10764128,
+      "pngSha256": "ca5f493705b05c9c87c2575610c363c0d95a55f34c41ae805e7dfc86f17faf44",
+      "structuredSha256": "cda5ff0ad78ddb4fff9281b6f88856c06bf9133dc2c01eecd02d0f40e6399f9b",
+      "browserStartupMs": 0,
+      "workerMs": 1162.2049000000043,
+      "workerRss": 351023104,
+      "serviceRss": 311029760
+    }
+  ],
+  "medianMs": 1876.598299999996,
+  "p95Ms": 2078.6482000000033,
+  "maxMs": 2190.973100000003,
+  "targetMs": 2000,
+  "targetStatus": "missed-on-this-host",
+  "macos": "not-executed",
+  "cachedHandoff": "not-implemented-by-F06",
+  "upperMedianOriginallyReportedMs": 1878.6315999999933
+}

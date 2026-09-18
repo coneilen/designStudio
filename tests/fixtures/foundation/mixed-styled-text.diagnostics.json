@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "1.0",
+  "projectId": "project_synthetic",
+  "designId": "design_mixed-styled-text",
+  "readiness": "needs-review",
+  "assessments": [
+    {
+      "stage": "schema-valid",
+      "status": "pass",
+      "diagnosticIds": []
+    },
+    {
+      "stage": "dependency-resolved",
+      "status": "not-evaluated",
+      "diagnosticIds": []
+    },
+    {
+      "stage": "renderable",
+      "status": "not-evaluated",
+      "diagnosticIds": []
+    },
+    {
+      "stage": "exportable",
+      "status": "not-evaluated",
+      "diagnosticIds": []
+    },
+    {
+      "stage": "implementation-ready",
+      "status": "not-evaluated",
+      "diagnosticIds": []
+    }
+  ],
+  "diagnostics": [
+    {
+      "schemaVersion": "1.0",
+      "id": "diagnostic_mixed-styled-text",
+      "code": "EVIDENCE_MISSING",
+      "severity": "info",
+      "message": "F01 fixtures are schema examples, not renderer/export/implementation approval.",
+      "operations": [
+        "render",
+        "handoff",
+        "implement"
+      ],
+      "nodeIds": [
+        "styled-root"
+      ],
+      "evidenceIds": [
+        "evidence_mixed-styled-text"
+      ],
+      "recovery": "Run the owning semantic/resource/render checks and obtain context-bound approval."
+    }
+  ],
+  "losses": [],
+  "waiverEventIds": []
+}

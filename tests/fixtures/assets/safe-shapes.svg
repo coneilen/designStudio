@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="16">
+  <title>Original synthetic shapes</title>
+  <g fill="#123456">
+    <rect x="0" y="0" width="16" height="16"/>
+    <circle cx="24" cy="8" r="6" fill="#abcdef"/>
+  </g>
+</svg>
