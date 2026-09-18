@@ -40,6 +40,9 @@ unexplained; neither reliable installed completion nor a latency fix is establis
 See the [retained evidence](packages/application/README.md#retained-installed-diagnostics).
 No production installation was performed. The exact final bootstrap
 and payload inventories require separate user approval before installation.
+The user-approved packaging design now selects only the pinned Node executable
+and its original LICENSE, omitting unused npm/Corepack/setup tooling; this is
+not approval of a release or evidence that the latency issue is fixed.
 The historical renderer calibration does not certify timing of later corrected
 code, the installed workflow, or other hosts.
 

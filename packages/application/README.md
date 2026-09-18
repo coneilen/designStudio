@@ -267,3 +267,11 @@ and the original 56-60-second checkpoint cause remains unknown. No third run,
 deadline increase, cache/coalescing/yield change or release candidate is implied.
 Repeated reliable actual completion and exact user bootstrap/payload approval
 remain separate gates.
+
+The user subsequently approved the fixed minimal Node **packaging design**:
+unchanged pinned `node.exe` plus original `LICENSE`, with all application,
+browser and native dependencies retained. The packager implements that selection,
+not a reduction in per-shipped-file verification. The two retained runs above
+predate this profile; they are not minimal-profile performance evidence. Another
+actual installed diagnostic requires review before execution, and no exact
+release or live installation is approved.

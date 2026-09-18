@@ -1,5 +1,6 @@
 import {
   link,
+  lstat,
   mkdir,
   readFile,
   rename,
@@ -407,6 +408,32 @@ windows(
       expect(
         await readFile(path.join(release.root, "payload", "extra.js"), "utf8"),
       ).toBe("extra");
+    });
+  },
+);
+
+windows.each(["npm.cmd", "node_modules/npm/bin/npm-cli.js"])(
+  "reinjected runtime tooling %s is rejected by native source verification before namespace creation",
+  async (name) => {
+    await ownedInstallation(async (root) => {
+      const release = await candidate(root);
+      const extra = path.join(
+        release.root,
+        "bootstrap",
+        "runtime",
+        ...name.split("/"),
+      );
+      await mkdir(path.dirname(extra), { recursive: true });
+      await writeFile(extra, "unapproved synthetic runtime tooling");
+      await expect(
+        installCandidate(release.root, release.manifest, release.bootstrap),
+      ).rejects.toThrow(/extra/);
+      expect(await readFile(extra, "utf8")).toBe(
+        "unapproved synthetic runtime tooling",
+      );
+      await expect(
+        lstat(path.join(root, "DesignStudio")),
+      ).rejects.toMatchObject({ code: "ENOENT" });
     });
   },
 );
