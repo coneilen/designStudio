@@ -1,7 +1,16 @@
+export { openCaptureCredentials } from "./capture-credentials.js";
 export {
+  type CaptureProject,
+  CaptureStartupCleanupRequired,
+  openCaptureProject,
+} from "./capture-project.js";
+export {
+  type CaptureInstallationLease,
   type FixtureInstallationLease,
   type FixtureInstallationPaths,
+  registerCaptureInstallationGuards,
   registerFixtureInstallationGuards,
+  verifyCaptureInstallation,
   verifyFixtureInstallation,
 } from "./installation.js";
 export {

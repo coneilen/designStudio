@@ -3,6 +3,15 @@ import { open } from "node:fs/promises";
 import path from "node:path";
 import { HostBoundaryError } from "@design-studio/host";
 import {
+  CAPTURE_POLICY_SHA256,
+  CAPTURE_PROFILE,
+  capturePolicyBytes,
+} from "./capture-profile.js";
+import {
+  assertCaptureInstallation,
+  type CaptureInstallationLease,
+} from "./installation.js";
+import {
   type Identity,
   type Lease,
   loadNative,
@@ -56,6 +65,7 @@ interface Registration {
   scope: FixtureScope;
   child: string;
   identities: Identity[];
+  kind?: typeof CAPTURE_PROFILE;
 }
 const hash = (value: string | Uint8Array) =>
   createHash("sha256").update(value).digest("hex");
@@ -174,6 +184,27 @@ export class WindowsFixtureProjects {
     return Registry.openInternal(trusted, native, native.localAppData());
   }
 }
+/** Internal capture composition; fixture configuration cannot mint this admission. */
+export async function openCaptureRegistry(
+  installation: CaptureInstallationLease,
+  scope: FixtureScope,
+): Promise<FixtureProjectRegistry> {
+  assertCaptureInstallation(installation);
+  const native = await loadNative();
+  const options = policy({
+    applicationId: "design-studio",
+    catalogIdentity: CAPTURE_POLICY_SHA256,
+    catalogBytes: capturePolicyBytes(),
+    trustedImmutableInstallation: true,
+    fixtures: [scope],
+  });
+  return Registry.openInternal(
+    options,
+    native,
+    native.localAppData(),
+    CAPTURE_PROFILE,
+  );
+}
 
 class Registry implements FixtureProjectRegistry {
   #closed = false;
@@ -187,6 +218,7 @@ class Registry implements FixtureProjectRegistry {
     private readonly sid: string,
     private readonly base: string,
     private readonly ancestors: Lease[],
+    private readonly kind?: typeof CAPTURE_PROFILE,
   ) {
     // The symbol brand is compile-time opaque; runtime provenance is the private instance.
     this.#principal = Object.freeze({
@@ -198,6 +230,7 @@ class Registry implements FixtureProjectRegistry {
     options: FixtureProjectOptions,
     native: Native,
     folder: string,
+    kind?: typeof CAPTURE_PROFILE,
   ): Promise<FixtureProjectRegistry> {
     const sid = native.principal();
     const leases: Lease[] = [];
@@ -212,7 +245,7 @@ class Registry implements FixtureProjectRegistry {
       const longestDatabase = path.win32.join(
         folder,
         "DesignStudio",
-        "fixtures",
+        kind ? "capture-projects" : "fixtures",
         catalogDirectory,
         "x".repeat(43),
         "x".repeat(36),
@@ -231,7 +264,11 @@ class Registry implements FixtureProjectRegistry {
         current = path.win32.join(current, part);
         leases.push(native.inspect(current, true));
       }
-      for (const part of ["DesignStudio", "fixtures", catalogDirectory]) {
+      for (const part of [
+        "DesignStudio",
+        kind ? "capture-projects" : "fixtures",
+        catalogDirectory,
+      ]) {
         current = path.win32.join(current, part);
         try {
           native.createDirectory(current, sid);
@@ -244,7 +281,14 @@ class Registry implements FixtureProjectRegistry {
         }
         leases.push(native.inspect(current, true, sid));
       }
-      const registry = new Registry(options, native, sid, current, leases);
+      const registry = new Registry(
+        options,
+        native,
+        sid,
+        current,
+        leases,
+        kind,
+      );
       return Object.freeze({
         currentPrincipal: () => registry.currentPrincipal(),
         createFixtureProject: (scope: FixtureScope) =>
@@ -392,6 +436,7 @@ class Registry implements FixtureProjectRegistry {
           identities: [...this.ancestors, ...leases].map(
             (lease) => lease.identity,
           ),
+          ...(this.kind ? { kind: this.kind } : {}),
         };
         this.native.createFile(
           path.win32.join(reservation, `${randomUUID()}.pending`),
@@ -446,6 +491,7 @@ class Registry implements FixtureProjectRegistry {
       }
       if (
         record?.version !== 1 ||
+        record.kind !== this.kind ||
         record.catalog !== this.options.catalogIdentity ||
         record.sid !== this.sid ||
         !record.scope ||
@@ -491,6 +537,7 @@ class Registry implements FixtureProjectRegistry {
         scope,
         child: record.child,
         identities: expected.map((lease) => lease.identity),
+        ...(this.kind ? { kind: this.kind } : {}),
       };
       if (!bytes.equals(Buffer.from(JSON.stringify(canonical))))
         refuse("Fixture registration is not the exact canonical host record.");

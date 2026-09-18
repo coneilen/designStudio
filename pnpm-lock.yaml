@@ -159,6 +159,9 @@ importers:
 
   packages/project-host:
     dependencies:
+      '@design-studio/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@design-studio/host':
         specifier: workspace:*
         version: link:../host

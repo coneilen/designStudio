@@ -13,6 +13,11 @@ import {
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  CAPTURE_POLICY_SHA256,
+  CAPTURE_PROFILE,
+  capturePolicyBytes,
+} from "../dist/capture-profile.js";
+import {
   boundedFile,
   digest,
   encodeInventory,
@@ -419,9 +424,16 @@ export async function packageCandidate({
   browserRoot,
   sqliteBinding,
   output,
+  profile = "fixture",
 }) {
   copiedFiles = 0;
   copiedBytes = 0;
+  if (!["fixture", CAPTURE_PROFILE].includes(profile))
+    throw new Error("Unknown closed release profile.");
+  const capture = profile === CAPTURE_PROFILE;
+  const packages = capture
+    ? ["contracts", "host", "project-host", "application", "cli"]
+    : requiredPackages;
   if (
     process.version !== "v24.21.0" ||
     process.platform !== "win32" ||
@@ -430,37 +442,49 @@ export async function packageCandidate({
     throw new Error(
       "Candidate tooling requires pinned Windows x64 Node 24.21.0.",
     );
-  for (const item of [workspace, nodeRoot, browserRoot, sqliteBinding, output])
+  for (const item of capture
+    ? [workspace, nodeRoot, output]
+    : [workspace, nodeRoot, browserRoot, sqliteBinding, output])
     if (!path.isAbsolute(item))
       throw new Error(
         "Explicit local absolute candidate inputs/output required.",
       );
   workspace = await realpath(workspace);
   // Refuse before output allocation until the actual F08 integrated build exists.
-  for (const name of requiredPackages) {
+  for (const name of packages) {
     await lstat(
       path.join(
         workspace,
         "packages",
         name,
         "dist",
-        name === "cli" ? "main.js" : "index.js",
+        name === "cli" ? (capture ? "capture-main.js" : "main.js") : "index.js",
       ),
     );
   }
   await lstat(
-    path.join(workspace, "packages", "application", "dist", "render-worker.js"),
+    capture
+      ? path.join(workspace, "packages", "host", "dist", "pat-dialog-helper.js")
+      : path.join(
+          workspace,
+          "packages",
+          "application",
+          "dist",
+          "render-worker.js",
+        ),
   );
-  const browserInventory = await readBrowserInventory(
-    path.join(
-      workspace,
-      "packages",
-      "renderer",
-      "docs",
-      "browser-windows-x64.json",
-    ),
-  );
-  if ((await hashFile(sqliteBinding)).sha256 !== sqliteHash)
+  const browserInventory = capture
+    ? undefined
+    : await readBrowserInventory(
+        path.join(
+          workspace,
+          "packages",
+          "renderer",
+          "docs",
+          "browser-windows-x64.json",
+        ),
+      );
+  if (!capture && (await hashFile(sqliteBinding)).sha256 !== sqliteHash)
     throw new Error("Unapproved SQLite addon.");
   await verifyRuntime(nodeRoot);
   if ((await hashFile(process.execPath)).sha256 !== runtimeFiles[0].sha256)
@@ -476,7 +500,7 @@ export async function packageCandidate({
     flag: "wx",
   });
   await mkdir(path.join(payload, "packages"));
-  for (const name of requiredPackages)
+  for (const name of packages)
     await copyWorkspacePackage(
       path.join(workspace, "packages", name),
       path.join(payload, "packages", name),
@@ -484,29 +508,37 @@ export async function packageCandidate({
     );
   await physicalDependencies(
     workspace,
-    requiredPackages.map((name) => path.join(workspace, "packages", name)),
+    packages.map((name) => path.join(workspace, "packages", name)),
     path.join(payload, "node_modules"),
   );
-  await mkdir(path.join(payload, "fixtures"));
-  await copyPhysical(
-    path.join(workspace, "tests", "fixtures", "foundation"),
-    path.join(payload, "fixtures", "foundation"),
-  );
-  await mkdir(path.join(payload, "native"));
-  await copyPhysical(
-    sqliteBinding,
-    path.join(payload, "native", "better_sqlite3.node"),
-  );
-  await mkdir(path.join(payload, "browser"));
-  for (const file of browserInventory.files) {
-    relativeName(file.path);
-    const source = path.join(browserRoot, ...file.path.split("/"));
-    const actual = await hashFile(source);
-    if (actual.bytes !== file.byteLength || actual.sha256 !== file.sha256)
-      throw new Error("Public browser inventory mismatch.");
-    const target = path.join(payload, "browser", ...file.path.split("/"));
-    await mkdir(path.dirname(target), { recursive: true });
-    await copyPhysical(source, target);
+  if (capture) {
+    await writeFile(
+      path.join(payload, "capture-policy.json"),
+      capturePolicyBytes(),
+      { flag: "wx" },
+    );
+  } else {
+    await mkdir(path.join(payload, "fixtures"));
+    await copyPhysical(
+      path.join(workspace, "tests", "fixtures", "foundation"),
+      path.join(payload, "fixtures", "foundation"),
+    );
+    await mkdir(path.join(payload, "native"));
+    await copyPhysical(
+      sqliteBinding,
+      path.join(payload, "native", "better_sqlite3.node"),
+    );
+    await mkdir(path.join(payload, "browser"));
+    for (const file of browserInventory.files) {
+      relativeName(file.path);
+      const source = path.join(browserRoot, ...file.path.split("/"));
+      const actual = await hashFile(source);
+      if (actual.bytes !== file.byteLength || actual.sha256 !== file.sha256)
+        throw new Error("Public browser inventory mismatch.");
+      const target = path.join(payload, "browser", ...file.path.split("/"));
+      await mkdir(path.dirname(target), { recursive: true });
+      await copyPhysical(source, target);
+    }
   }
   await copyRuntime(nodeRoot, path.join(bootstrap, "runtime"));
   await physicalDependencies(
@@ -535,18 +567,34 @@ export async function packageCandidate({
     flag: "wx",
   });
   const manifest = await inventory(payload);
-  const catalogSha256 = (
-    await hashFile(
-      path.join(payload, "fixtures", "foundation", "manifest.json"),
-    )
-  ).sha256;
+  const catalogSha256 = capture
+    ? undefined
+    : (
+        await hashFile(
+          path.join(payload, "fixtures", "foundation", "manifest.json"),
+        )
+      ).sha256;
   await writeFile(
     path.join(bootstrap, "release-policy.json"),
-    JSON.stringify({
-      version: 1,
-      manifestSha256: digest(manifest),
-      catalogSha256,
-    }),
+    JSON.stringify(
+      capture
+        ? {
+            version: 2,
+            kind: CAPTURE_PROFILE,
+            manifestSha256: digest(manifest),
+            capturePolicySha256: CAPTURE_POLICY_SHA256,
+          }
+        : {
+            version: 1,
+            manifestSha256: digest(manifest),
+            ...(capture
+              ? {
+                  profile: CAPTURE_PROFILE,
+                  capturePolicySha256: CAPTURE_POLICY_SHA256,
+                }
+              : { catalogSha256 }),
+          },
+    ),
     { flag: "wx" },
   );
   const bootstrapInventory = await inventory(bootstrap);
@@ -582,13 +630,35 @@ if (
   ];
   const args = process.argv.slice(2);
   if (
-    args.length !== 10 ||
-    names.some((name, index) => args[index * 2] !== name)
-  )
-    throw new Error(
-      "Usage: package-candidate.mjs --workspace <integrated build> --node-root <runtime> --browser-root <r1243> --sqlite-binding <ABI137> --output <NEW candidate>",
+    args.length === 8 &&
+    args[0] === "--profile" &&
+    args[1] === CAPTURE_PROFILE &&
+    args[2] === "--workspace" &&
+    args[4] === "--node-root" &&
+    args[6] === "--output"
+  ) {
+    process.stdout.write(
+      `${JSON.stringify(
+        await packageCandidate({
+          profile: CAPTURE_PROFILE,
+          workspace: args[3],
+          nodeRoot: args[5],
+          output: args[7],
+        }),
+        null,
+        2,
+      )}\n`,
     );
-  process.stdout.write(
-    `${JSON.stringify(await packageCandidate({ workspace: args[1], nodeRoot: args[3], browserRoot: args[5], sqliteBinding: args[7], output: args[9] }), null, 2)}\n`,
-  );
+  } else {
+    if (
+      args.length !== 10 ||
+      names.some((name, index) => args[index * 2] !== name)
+    )
+      throw new Error(
+        "Usage: package-candidate.mjs --workspace <integrated build> --node-root <runtime> --browser-root <r1243> --sqlite-binding <ABI137> --output <NEW candidate>",
+      );
+    process.stdout.write(
+      `${JSON.stringify(await packageCandidate({ workspace: args[1], nodeRoot: args[3], browserRoot: args[5], sqliteBinding: args[7], output: args[9] }), null, 2)}\n`,
+    );
+  }
 }

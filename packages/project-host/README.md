@@ -1,5 +1,57 @@
 # @design-studio/project-host
 
+## Separate native credential capture profile
+
+`figma-capture-v1` is a closed Windows x64 profile distinct from the fixture
+release. Its exact canonical policy authorizes only `capture` / `pat-helper`
+roles and native project/credential commands; API and image origin lists are
+empty. Version-1 fixture metadata, catalog policy and `installations` namespace
+are unchanged. Capture releases use version-2 policy and `capture-releases`;
+wrong-profile roles fail before admission.
+
+Candidate tooling accepts
+`--profile figma-capture-v1 --workspace <build> --node-root <pinned runtime> --output <NEW candidate>`.
+It reuses physical dependency copying, inventory, pinned Node, bootstrap preflight,
+native installation publication and resolution guards. No fixture catalog/browser
+is repurposed. Packaging refuses until the actual capture CLI and PAT-helper
+compiled roles exist; provisioning alone is not a shipped input command.
+Installation still requires independent approval of BOTH exact payload and
+bootstrap digests. No capture candidate or installation is approved implicitly.
+
+`verifyCaptureInstallation` creates a process-owned live lease, not a structural
+JSON grant. `openCaptureProject(lease)` creates one new app-ID project under the
+native KnownFolder `DesignStudio\capture-projects` namespace; passing its logical
+ID later reopens only its exact principal/profile/native-identity registration.
+No path adoption, fixture binding, environment root or caller trust Boolean is
+accepted. Native file/ACL primitives and registry checks are shared with the
+fixture implementation. The current-user boundary is not a same-user attacker
+sandbox.
+
+Each project holds an exclusive data-read handle on its private credential lock
+file, preventing overlapping app processes. Its nonsecret journal has at most
+1024 canonical, chained, no-replace records of at most 8 KiB each, flushed by the
+native publication primitive. Records contain only exact owned reference,
+pending/ready/absent/uncertain state and declared expiry/scopes. Torn or gapped
+history refuses further work and requires explicit reconciliation; it is never
+silently adopted, rewritten or filled with plaintext credentials.
+
+`openCaptureCredentials(project)` admits only an actual live native capture
+binding. It composes the fixed-entry adapter and internal one-use action authority
+with current native principal checks, an exact-reference confirmation and a
+fresh at-most-30-second admin context. No admin operation is added to public
+Operation/Job vocabulary. Merely opening the facade does not construct or read
+a vault entry. `status` is an explicit exact-entry credential read; setup never
+overwrites, and update/remove need their separately confirmed target. All vault
+actions still require independent user authorization.
+
+Active credential owners prevent project closure, and project owners prevent
+installation release. Startup cleanup failures retain the installation borrow
+and return a close-only `CaptureStartupCleanupRequired` for retry. The private
+composition imports the already-built host implementation inside the declared
+workspace dependency; no public host admin constructor/loader override is added.
+Tests use only exact owned TEMP roots, inert candidate bytes and synthetic native
+vault methods. These tests do not establish live vault or dialog behavior.
+
 Narrow Windows **fresh fixture-catalog projects only** provisioning for F08.
 This is not arbitrary directory adoption, an ACL repair service, an HTTP setup
 endpoint, a general filesystem sandbox, or a complete application.
