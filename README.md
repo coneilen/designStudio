@@ -31,18 +31,19 @@ Figma/device/model integration, handoff compiler, or app implementation workflow
 Existing user projects are not adopted. Fresh stores use private SQLite schema 4;
 older-schema migration remains blocked without verified migration-backup durability.
 
-**Release gates remain open.** Two subsequent owned diagnostic runs retained
-complete numeric reports: one completed the installed fixture workflow, while
-the other exceeded the CLI's unchanged 30-second observation deadline despite
-starting the renderer. The successful run also exposed a 26.6-second startup
-verification outlier. Earlier 56-60-second freshness checkpoints remain
-unexplained; neither reliable installed completion nor a latency fix is established.
+**Release gates remain open.** The approved minimal Node runtime profile passed
+three sequential, fresh-owned installed workflows with complete retained numeric
+reports and identical file/byte counts. Service checkpoints peaked at
+3.98-4.12 seconds with two active checks. This is bounded repeatability evidence,
+not a latency guarantee. Earlier full-runtime diagnostics included an observation
+deadline failure, a 26.6-second startup outlier and historical 56-60-second
+freshness checkpoints; their rare-outlier cause remains unresolved.
 See the [retained evidence](packages/application/README.md#retained-installed-diagnostics).
 No production installation was performed. The exact final bootstrap
 and payload inventories require separate user approval before installation.
 The user-approved packaging design now selects only the pinned Node executable
 and its original LICENSE, omitting unused npm/Corepack/setup tooling; this is
-not approval of a release or evidence that the latency issue is fixed.
+not approval of a release or proof that the rare stalls have been eliminated.
 The historical renderer calibration does not certify timing of later corrected
 code, the installed workflow, or other hosts.
 

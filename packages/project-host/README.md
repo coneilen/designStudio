@@ -672,6 +672,10 @@ Every shipped file retains the existing fresh namespace/identity/ACL/length
 checks and continuous pins; startup hashing, resolver guards, all absolute
 deadlines and actual-quiescence requirements are unchanged. Reducing unnecessary
 shipped TCB work is **not a demonstrated cure** for the intermittent 56-60-second
-checks. Actual minimal-profile installed validation awaits the separate review
-gate. No exact bootstrap/payload release or live installation is approved by
-this design choice.
+checks. Three separately approved sequential actual minimal-profile flows passed
+with exact two-file runtime inventories, identical 3,354-file / 432,861,345-byte
+test closures, ordinary two-check overlap and complete retained numeric capture.
+See the [bounded repeatability evidence](../application/README.md#approved-minimal-profile-repeatability).
+No historical outlier cause, statistical latency guarantee or two-second profile
+is established. Further runs and final release packaging require review; no exact
+bootstrap/payload release or live installation is approved by this design choice.

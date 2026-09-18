@@ -262,16 +262,96 @@ Sampling failures preserve operation results/errors, mark capture incomplete
 and fail reporting after quiescence. Version-two reports remain bounded to
 16 KiB and strict numeric/enum fields; version-one artifacts remain readable.
 
-**Remaining blocker:** ordinary installed completion is still intermittent,
-and the original 56-60-second checkpoint cause remains unknown. No third run,
-deadline increase, cache/coalescing/yield change or release candidate is implied.
-Repeated reliable actual completion and exact user bootstrap/payload approval
-remain separate gates.
+**Full-runtime finding:** ordinary installed completion was intermittent, and
+the original 56-60-second checkpoint cause was not established. Those baseline
+runs did not authorize further runs, deadline/cache/coalescing/yield changes or
+release packaging. Later profile-design approval and bounded repeats are
+documented separately below.
 
 The user subsequently approved the fixed minimal Node **packaging design**:
 unchanged pinned `node.exe` plus original `LICENSE`, with all application,
 browser and native dependencies retained. The packager implements that selection,
 not a reduction in per-shipped-file verification. The two retained runs above
-predate this profile; they are not minimal-profile performance evidence. Another
-actual installed diagnostic requires review before execution, and no exact
-release or live installation is approved.
+predate this profile; they are not minimal-profile performance evidence.
+The separately reviewed repeats below do not approve an exact release or live
+installation.
+
+### Approved minimal-profile repeatability
+
+Production profile commit `28aca32148d34e42db2882b50e70b3c285f74c29` was followed
+by one explicitly approved owned run, then two explicitly approved sequential
+repeats with an early-stop rule for failure or an observed interval of at least
+30 seconds. The exact-runtime assertion was committed as `905d34c` before the
+repeats; it had already passed in the first run. All three used identical
+production/test code, offline inputs and version-two instrumentation. Shipped
+documentation was held unchanged until all repeats finished. Each fresh owned
+KnownFolder/diagnostic destination was necessarily distinct.
+
+All three artifacts record **`functionalPassed: true`, `captureComplete: true`**:
+actual initialization, private-pipe acceptance, completed render with six receipt
+outputs, verified preview, observed owned process exits and cleanup passed.
+Before installation, the decoded bootstrap inventory was asserted to contain
+**exactly** `runtime/node.exe` and `runtime/LICENSE` with the approved lengths and
+hashes. Full startup hashing, current checks, native pins/ACLs, guards and
+quiescence remained unchanged, as did the original 30-second command/job budgets
+and installed 15-second authority allowance capped by remaining job lifetime.
+
+| Measurement | Minimal 01 | Minimal 02 | Minimal 03 |
+| --- | ---: | ---: | ---: |
+| Whole test including assembly/cleanup | 268.99 s | 268.93 s | 268.56 s |
+| Inventoried files | 3,354 | 3,354 | 3,354 |
+| Inventoried bytes | 432,861,345 | 432,861,345 | 432,861,345 |
+| Parent startup / full recheck | 3,507 / 3,687 ms | 3,644 / 3,887 ms | 3,935 / 3,905 ms |
+| Three serial current checks | 1,938 / 1,816 / 1,868 ms | 2,093 / 2,038 / 2,115 ms | 2,020 / 2,052 / 2,006 ms |
+| Nine-way stress batch | 16,830 ms | 16,982 ms | 16,318 ms |
+| Render service current maximum / active count | 4,121.5 ms / 2 | 3,980.9 ms / 2 | 4,026.7 ms / 2 |
+| Worker opening interval | 7,151.3 ms | 6,510.6 ms | 6,947.7 ms |
+| Renderer full verification | 3,894.4 ms | 3,651.0 ms | 3,847.6 ms |
+| Service maximum heartbeat gap | 4,197.0 ms | 4,249.1 ms | 4,232.1 ms |
+| Maximum heartbeat gap across processes | 4,512.0 ms | 4,494.6 ms | 4,273.5 ms |
+| Bootstrap startup range across processes | 3.706-4.051 s | 3.480-4.029 s | 3.462-3.722 s |
+| Payload startup range, including renderer | 3.894-4.322 s | 3.651-4.314 s | 3.763-4.096 s |
+
+Every run retained 15 complete reports (eight bootstrap, seven payload); the
+additional pair compared with the failed baseline is the now-reached preview
+process. All report faults/incomplete indicators were zero. After each cleanup,
+the artifact was independently re-read through the strict parser and checked
+for exact inventory totals and the early-stop threshold before proceeding.
+No checkpoint/startup/worker/heartbeat outlier reached that threshold; the largest
+assessed interval in each run was its separately labeled nine-way stress batch.
+That batch is not a nine-client or nine-way authority success guarantee.
+
+The reduction versus `baseline-02.json` is **exactly 1,992 files**, with no observer
+file-count change. Counts exclude the two outer inventories, which remain
+verified. The net byte reduction of 13,217,855 reconciles to the 13,245,848-byte
+runtime reduction minus 27,993 bytes of intervening copied README edits
+(application two copies: 12,222; CLI two: 456; project-host three: 15,315).
+The measured totals predate this result documentation and are not a final
+unchanged-code release inventory.
+
+The first minimal run's five render-service current checks totaled 12,917 ms
+elapsed; enumeration/file-pin/release maxima were 2,242/1,664/141 ms and sampled
+RSS peaked at 381 MiB. Service inclusive native totals were open 6,032 ms,
+inspect 8,338 ms, ACL 2,263 ms, pin 10,228 ms and hash 1,774 ms. Corresponding
+second-run totals were 5,803/8,032/2,150/9,960/1,774 ms and third-run totals
+5,761/8,270/2,163/9,868/1,751 ms. These nested groups include other project-host
+activity and must not be added as disjoint costs. No individual checked native
+open/inspect/pin operation showed a comparable multi-second stall.
+
+Artifacts remain beside the baselines in the same session's
+`files\installation-runs` directory:
+
+| Artifact | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `minimal-profile-01.json` | 41,044 | `be18be191453af4f171615f1b48b2ce6bb058900ee4b328adde7979a95554f5c` |
+| `minimal-profile-02.json` | 41,068 | `94e0b2a52307bfd212adff9a6282a86367d9a45db5bdf9e3f537fcc605c8cf5a` |
+| `minimal-profile-03.json` | 41,194 | `b5e63e5bceac9005de1b83498aa03f78bb5a393d8694519f289dae2496591907` |
+
+**Conclusion and remaining gate:** removing unused runtime tooling demonstrably
+reduced verified closure work, and three sequential actual flows establish
+bounded repeatability for this workload with ordinary two-check overlap.
+They do **not** establish a statistical latency guarantee, a two-second profile,
+or the root cause/elimination of the historical 26/56-second outliers. No fourth
+run, automatic retry, new optimization, release candidate or production install
+was authorized by these results. Final integrated-code release packaging and
+exact user bootstrap/payload approval remain separate review gates.
