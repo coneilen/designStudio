@@ -11,7 +11,9 @@ it("keeps masked input internal and Figma enrollment out of the built public CLI
       `
     const cli = await import("@design-studio/cli");
     if (typeof cli.parseArguments !== "function" || typeof cli.launchLocalSession !== "function") throw new Error("Public API missing");
-    if ("readMaskedSecret" in cli || "readMaskedSecretFromTerminal" in cli) throw new Error("Secret input leaked into public API");
+    for (const name of ["readMaskedSecret", "readMaskedSecretFromTerminal", "createDedicatedSecretInputOwner", "SecretInputFailure"]) {
+      if (name in cli) throw new Error("Secret input leaked into public API");
+    }
     for (const name of ["@design-studio/cli/masked-secret", "@design-studio/cli/dist/masked-secret-input.js"]) {
       try { await import(name); throw new Error("Internal entry became public"); }
       catch (error) { if (error.code !== "ERR_PACKAGE_PATH_NOT_EXPORTED") throw error; }

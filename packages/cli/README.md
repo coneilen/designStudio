@@ -33,30 +33,75 @@ input, 3 comparison policy failure, 4 inconclusive comparison, and 5
 conflict/required action. A queried Job is not necessarily completed work.
 No comparison engine, live provider or browser enrollment is implemented.
 
-## Internal masked-input primitive
+## Internal framed-input protocol: synthetic evidence only
 
-`masked-secret.ts` is not exported or connected to a command. It is preparation
-for a separately reviewed installed native credential setup flow, not permission
-to enroll a PAT from a worktree. Existing command parsing still rejects Figma
-credential commands, token arguments and file/stdin alternatives.
+**Secure PAT entry is not shipped.** `readMaskedSecret` explicitly returns
+`ACTION_REQUIRED`: no concrete native dedicated-terminal/profile/confirmation
+adapter is admitted. The old ordinary-TTY newline reader was unsafe because
+stream chunks are not input boundaries; split multiline pastes could return a
+credential prefix and leave trailing secret bytes for another reader. It is
+removed, not protected with a debounce or a guessed quiet period.
 
-The production primitive uses only real stdin/stderr TTY descriptors, never an
-injected stream, argv, environment or token file. The separate internal stream
-engine enables synthetic tests but is not a public package export. It refuses
-redirected, already-buffered, encoded or shared input. A fixed hidden-input prompt
-does not echo characters or token length; input is bounded to 4096 printable
-ASCII bytes. Ctrl+C, Escape, EOF, multiline/control input, overflow and a maximum
-five-minute interaction timeout fail closed. Owned buffers, listeners, timers
-and raw-mode changes are cleaned up; raw-mode restoration failure is explicitly
-`INTERRUPTED`, not successful input. JavaScript/native terminal copies cannot be
-guaranteed erased.
+The replacement is internal, not a public CLI export or command. Existing
+parsing still rejects Figma credential commands, token arguments and file/stdin
+alternatives. `createDedicatedSecretInputOwner` registers one opaque owner in a
+private WeakMap and rejects reused/shared/encoded/buffered/non-TTY streams. Its
+return value has owner-only inspection, confirmation and post-exit cleanup
+controls. This establishes **protocol ownership, not native trust or terminal
+support**. Current tests supply synthetic streams; no caller Boolean, structural
+owner clone, environment variable or TTY check attests a supported profile.
 
-Only the later trusted native coordinator may receive these owned bytes, recheck
-current principal/project/user approval, obtain a new at-most-30-second admin
-work capability without renewing expired proof, then call the fixed-entry
-boundary. No callback or boolean in this primitive establishes installation
-trust. The agent must not invoke, observe or screenshot the real secret prompt;
-the user will run it in their own local terminal after separate approval.
+`readMaskedSecretFromTerminal(owner, options)` incrementally consumes exactly
+one `ESC[200~` / `ESC[201~` bracketed paste frame, independent of chunk boundaries.
+Plain typing and CR/LF never submit. Candidate bytes are limited to 1..4096
+printable ASCII bytes; multiline/control/nested-marker/overflow input clears the
+entire candidate. An open rejected frame is drained through its known end marker,
+with constant-size marker state and at most 8192 parsed/drained bytes total.
+The original interaction deadline is at most five minutes, not reset by data.
+After a byte/time bound, parsing stops and only the zeroing discard sink remains.
+
+A complete frame produces an opaque, one-use confirmation receipt. It does not
+return bytes. Confirmation is a **separate owner control-plane action**, never
+dispatched from terminal characters; a literal end marker plus any pasted key
+cannot authenticate physical user confirmation. Receipts cannot be forged by
+copying their fields. Even after explicit confirmation, candidate bytes remain
+withheld until the owner observes dedicated terminal exit and cleanup succeeds.
+Any further input before exit invalidates the candidate, including a late second
+paste. There is no success-shaped return of a silently truncated first line.
+
+Cancel/EOF/deadline/input failure clears the candidate and rejects with
+`SecretInputFailure`: fixed primary code, `cleanupRequired`, opaque `owner`, and
+fixed `recoveryGuidance`. The same guidance is displayed without echoing input.
+It directs closure/discard of the **dedicated secret-input console**, never
+silent return to a normal calling shell in raw mode. An EOF or stream close alone
+is not asserted to prove native terminal exit. The native owner must separately
+observe its owned console/process lifecycle before calling `afterTerminalExit`;
+the internal primitive additionally requires a closed/destroyed empty input
+stream. No production issuer of that native observation exists in this chunk.
+
+Until exit is observed, exactly one bounded-memory data sink discards and zeroes
+subsequent chunks without buffering or further parsing beyond the budget.
+Ownership, raw mode and cleanup remain explicit, even after the input promise
+rejects. The owner cannot report `closed` while the input is live/queued. Cleanup
+failure reports primary and cleanup codes separately, with no raw exception or
+secret result; only that owner can retry release. All listeners/timers are removed
+after successful post-exit cleanup. Deadline expiry is not quiescence evidence.
+JavaScript strings, terminal/native copies and upstream allocation cannot be
+guaranteed erased; this is not a hostile same-user input sandbox.
+
+Before any usable setup command, a separate native-entry design must implement
+real input ownership, safe physical confirmation, supported paste-marker/control
+handling, bounded native stream delivery, terminal exit observation and resource
+cleanup. Bracketed-paste support or a mode-status reply alone is insufficient.
+A Windows native masked dialog is an alternative requiring its own review if a
+dedicated console cannot provide a usable, proven lifecycle. Synthetic owner
+tests and permanent `ACTION_REQUIRED` are **not** completion of user PAT setup.
+No console/dialog is spawned or displayed here.
+
+After that reviewed entry exists, its trusted owner must recheck native
+principal/project/user approval and issue an at-most-30-second admin capability,
+without renewing expired proof. No real PAT, vault access or agent-observed
+secret prompt is part of these tests.
 
 ## Supported invocation model
 
