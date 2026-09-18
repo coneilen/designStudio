@@ -519,10 +519,11 @@ payload reads during current checks, exercise nine concurrent checks and
 close-during-check, and verify actual write/rename denial and fresh namespace,
 ACL and registration-tamper rejection. Native length/identity and principal
 faults are separately labeled injected cases. No full installed-candidate timing
-is claimed from these small fixtures. F08 will measure three serial current
-checks and one nine-concurrent batch, separately from a full rehash sample,
-inside its next otherwise-required owned actual-candidate run. Report individual
-and maximum durations, not a statistical percentile or sub-five-second guarantee.
+is claimed from these small fixtures. The separately authorized actual F08
+diagnostics measured three serial current checks and one nine-concurrent stress
+batch, separately from full rehash samples; their retained outcomes are in the
+[application evidence](../application/README.md#retained-installed-diagnostics).
+They do not establish a percentile or sub-five-second guarantee.
 
 ### Bounded checkpoint phase diagnostic
 
@@ -592,3 +593,55 @@ and clears its heartbeat on every result path. Focused tests cover the exact
 2,048-sample boundary, start/phase/end sampler faults, duplicate end, and native
 checkpoint failure with all temporary handles released. No performance probe
 was repeated for this reporting-only correction.
+
+The subsequent actual F08 observer also covers startup verification and both
+bootstrap/payload module instances. Its additions are copied-code-only test
+instrumentation, sealed before inventories, not production configuration.
+Version-two numeric reports retain per-phase process CPU/RSS and bounded
+inclusive checked-operation timings. The builtin-only preflight still installs
+its guard before importing this test TCB; no timing hook interrupts native
+error-result handling. See the application evidence for the complete capture
+with a functional deadline failure and the unresolved 26/56-second outliers.
+
+### Read-only runtime closure analysis
+
+The current packager copies the full pinned Node distribution **once**, into
+`bootstrap\runtime`. Both bootstrap and payload verifier instances intentionally
+verify that same closure and retain their own pins. There is no second physical
+payload Node distribution.
+
+Read-only source accounting at merged production source `c3f8941`, before later
+documentation edits, projected the following current uninstrumented categories.
+This is **not** a recovered inventory of either cleaned test candidate:
+
+| Category | Files | Source bytes |
+| --- | ---: | ---: |
+| Bootstrap Node distribution | 1,994 | 106,986,507 |
+| Bootstrap dependencies (13 packages) | 965 | 7,685,747 |
+| Payload direct workspace packages | 292 | 2,474,674 |
+| Payload dependencies (64 packages) | 1,751 | 39,519,381 |
+| Approved browser inventory | 299 | 286,993,336 |
+| Original fixture catalog | 32 | 348,079 |
+| SQLite binding | 1 | 1,902,080 |
+| Generated/control files | 6 | Not projected |
+
+The 5,340-file projection excludes the two outer inventories and test observer
+helpers. Runtime composition is `node.exe` (93,580,104 bytes), `LICENSE`
+(160,555 bytes), bundled npm (1,926 files / 12,509,702 bytes), corepack
+(54 / 623,878), and twelve top-level wrappers/setup/documentation files
+(112,268 bytes). The fixed CLI and renderer launch paths use `node.exe`;
+bootstrap scripts use builtins and guarded bootstrap dependencies, not bundled
+npm/corepack or setup scripts. No adjacent runtime DLL is in this distribution.
+
+An explicit `node.exe` plus `LICENSE` release profile is a **proposal awaiting
+user approval, not implemented**. It would omit 1,992 offline-tooling files /
+13,245,848 bytes from every full closure traversal while keeping the original
+executable, notice and application/native/browser dependencies. Reducing shipped
+TCB work is not a demonstrated cure for the intermittent 56-60-second checks.
+It would require a separately reviewed fixed selection, physical-source and
+notice admission tests, exact-inventory/extra-file/tamper negatives and actual
+installed validation. Every shipped file would retain the existing fresh
+namespace/identity/ACL/length checks and continuous pins; startup hashing,
+guards, absolute deadlines and quiescence requirements would remain unchanged.
+There is no source filtering, deleted runtime content, new candidate or approval
+implied by this analysis.

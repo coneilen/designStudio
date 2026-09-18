@@ -6,6 +6,13 @@ function replaceOnce(text: string, from: string, to: string) {
     throw new Error("Diagnostic copied-code pattern is not unique.");
   return text.replace(from, to);
 }
+function measureFunction(text: string, name: string, kind: string) {
+  return replaceOnce(
+    text,
+    `function ${name}(`,
+    `function ${name}(...args) { return nativeCapture.measure("${kind}", () => diagnostic_${name}(...args)); }\nfunction diagnostic_${name}(`,
+  );
+}
 export async function instrumentCandidate(stage: string, directory: string) {
   const host = path.join(stage, "packages", "project-host", "dist");
   const helper = await readFile(
@@ -21,21 +28,45 @@ export async function instrumentCandidate(stage: string, directory: string) {
     ),
     { flag: "wx" },
   );
-  const index = path.join(host, "index.js");
-  const indexText = await readFile(index, "utf8");
-  if (indexText.includes("f08-diagnostics"))
-    throw new Error("Copied diagnostic import already present.");
-  await writeFile(index, `import "./f08-diagnostics.mjs";\n${indexText}`);
+  await writeFile(
+    path.join(host, "f08-native-timing.mjs"),
+    await readFile(new URL("./phase-native.mjs", import.meta.url)),
+    { flag: "wx" },
+  );
+  const nativePath = path.join(host, "native.js");
+  let native = await readFile(nativePath, "utf8");
+  for (const [name, kind] of [
+    ["open", "open"],
+    ["inspectHandle", "inspect"],
+    ["checkAcl", "acl"],
+    ["pin", "pin"],
+  ] as const)
+    native = measureFunction(native, name, kind);
+  const timingImport =
+    'import { nativeCapture } from "./f08-native-timing.mjs";\n';
+  await writeFile(nativePath, timingImport + native);
   const installation = path.join(host, "installation.js");
   const mark =
     'globalThis[Symbol.for("design-studio-owned-phase-test")]?.get(import.meta.url.includes("/bootstrap/") ? 1 : 2)';
+  let installed = replaceOnce(
+    await readFile(installation, "utf8"),
+    "return verifyInstalledRoot(bootstrapOrigin);",
+    `${mark}?.("verify-start");\ntry { const result = await verifyInstalledRoot(bootstrapOrigin); ${mark}?.("verify-end"); return result; }\ncatch(error) { ${mark}?.("verify-failed"); throw error; }`,
+  );
+  installed = replaceOnce(
+    installed,
+    "export async function verifyInstalledRoot(root) {",
+    "export async function verifyInstalledRoot(root) { const trace = traceInstallation(true); let success = false; try { const result = await diagnosticVerifyInstalledRoot(root, trace); success = true; return result; } finally { trace?.end(success); } }\nasync function diagnosticVerifyInstalledRoot(root, trace) {",
+  );
+  installed = replaceOnce(
+    installed,
+    "verified = await verifyTree(native, root, allFiles(meta), sid);",
+    "verified = await verifyTree(native, root, allFiles(meta), sid, true, trace);",
+  );
+  installed = measureFunction(installed, "checkHash", "hash");
   await writeFile(
     installation,
-    replaceOnce(
-      await readFile(installation, "utf8"),
-      "return verifyInstalledRoot(bootstrapOrigin);",
-      `${mark}?.("verify-start");\ntry { const result = await verifyInstalledRoot(bootstrapOrigin); ${mark}?.("verify-end"); return result; }\ncatch(error) { ${mark}?.("verify-failed"); throw error; }`,
-    ),
+    `import "./f08-diagnostics.mjs";\n${timingImport}${installed}`,
   );
   const app = path.join(
     stage,

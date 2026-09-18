@@ -58,6 +58,7 @@ export function phaseReport(bytes: Uint8Array, filename: string) {
     "groups",
     "ends",
     "records",
+    ...(value.version === 2 ? ["native"] : []),
   ]);
   for (const key of [
     "version",
@@ -75,7 +76,7 @@ export function phaseReport(bytes: Uint8Array, filename: string) {
   ])
     number(value[key]);
   if (
-    value.version !== 1 ||
+    ![1, 2].includes(Number(value.version)) ||
     ![1, 2].includes(Number(value.instance)) ||
     ![1, 2, 3, 4].includes(Number(value.role)) ||
     ![0, 1].includes(Number(value.incomplete)) ||
@@ -104,6 +105,9 @@ export function phaseReport(bytes: Uint8Array, filename: string) {
       "count",
       "activeMax",
       "handlesMax",
+      ...(value.version === 2
+        ? ["rssBytesMax", "cpuUserUs", "cpuSystemUs"]
+        : []),
     ]);
     if (
       !["current", "rehash"].includes(String(group.mode)) ||
@@ -117,6 +121,9 @@ export function phaseReport(bytes: Uint8Array, filename: string) {
       "count",
       "activeMax",
       "handlesMax",
+      ...(value.version === 2
+        ? ["rssBytesMax", "cpuUserUs", "cpuSystemUs"]
+        : []),
     ])
       number(group[key]);
   }
@@ -143,6 +150,28 @@ export function phaseReport(bytes: Uint8Array, filename: string) {
     )
       throw new Error("Invalid marker.");
     number(record.atMs);
+  }
+  if (value.version === 2) {
+    object(value.native);
+    keys(value.native, ["samplingErrors", "groups"]);
+    number(value.native.samplingErrors);
+    if (Number(value.native.samplingErrors) > 0 && value.incomplete !== 1)
+      throw new Error("Native timing failure cannot claim complete capture.");
+    if (!Array.isArray(value.native.groups) || value.native.groups.length > 5)
+      throw new Error("Native timing bound exceeded.");
+    const seen = new Set();
+    for (const group of value.native.groups) {
+      object(group);
+      keys(group, ["kind", "calls", "totalMs", "maxMs"]);
+      if (
+        typeof group.kind !== "string" ||
+        !["open", "inspect", "acl", "pin", "hash"].includes(group.kind) ||
+        seen.has(group.kind)
+      )
+        throw new Error("Invalid native timing kind.");
+      seen.add(group.kind);
+      for (const key of ["calls", "totalMs", "maxMs"]) number(group[key]);
+    }
   }
   return value;
 }

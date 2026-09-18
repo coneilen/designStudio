@@ -3,10 +3,13 @@
 F08 `designctl` implements one command dispatcher over the shared native
 application facade or authenticated loopback API. The shipped launcher and
 local fixture initialization are wired to the reviewed offline installation
-verifier. One actual installed, test-instrumented initialization/accept/render/
-preview/shutdown flow passed. Prior installed checks intermittently took
-56--60 seconds and failed the unchanged absolute deadline; the single pass does
-not establish reliable latency. See the application README for exact evidence
+verifier. The latest two retained, owned installed diagnostics produced one
+complete initialization/accept/render/preview/shutdown pass and one render
+observation `DEADLINE_EXCEEDED`, despite the renderer opening. This does not
+establish the failed observation's final job state. Prior installed checks
+intermittently took 56--60 seconds; the passing diagnostic also had a 26.6-second
+startup-verification outlier. Reliable latency and the outliers' root cause
+remain unresolved. See the application README for retained numerical evidence
 and the still-required final user release approval.
 
 `--json` writes one contract-valid JSON object and newline to stdout; it never
