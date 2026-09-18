@@ -73,6 +73,9 @@ export interface ContractTypes {
   FigmaBinding: Types.FigmaBinding;
   SourceIdentity: Types.SourceIdentity;
   SourceSnapshot: Types.SourceSnapshot;
+  FigmaIntakeManifest: Types.FigmaIntakeManifest;
+  FigmaSourceMap: Types.FigmaSourceMap;
+  FigmaConversionEvidence: Types.FigmaConversionEvidence;
   SourceStatus: Types.SourceStatus;
   Operation: Types.Operation;
   Diagnostic: Types.Diagnostic;
@@ -220,6 +223,9 @@ export const contractNames: readonly ContractName[] = [
   "FigmaBinding",
   "SourceIdentity",
   "SourceSnapshot",
+  "FigmaIntakeManifest",
+  "FigmaSourceMap",
+  "FigmaConversionEvidence",
   "SourceStatus",
   "Operation",
   "Diagnostic",
