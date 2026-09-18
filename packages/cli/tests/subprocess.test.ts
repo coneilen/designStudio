@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
 import { Duplex } from "node:stream";
@@ -27,6 +28,17 @@ function run(args: string[]) {
     },
   );
 }
+it("reports the actual workspace contracts package version", async () => {
+  const metadata = JSON.parse(
+    await readFile(
+      new URL("../../contracts/package.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  const result = await run(["--version", "--json"]);
+  expect(result.code).toBe(0);
+  expect(JSON.parse(result.stdout).data.contractVersion).toBe(metadata.version);
+});
 it.each([
   ["--help", 0],
   ["--version", 0],

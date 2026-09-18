@@ -1,0 +1,47 @@
+{
+  "name": "Original synthetic fixed-frame fixture",
+  "version": "synthetic-declared-version",
+  "nodes": {
+    "1:2": {
+      "document": {
+        "id": "1:2",
+        "name": "Original fixture",
+        "type": "FRAME",
+        "absoluteBoundingBox": {
+          "x": 100,
+          "y": 200,
+          "width": 240,
+          "height": 160
+        },
+        "layoutMode": "NONE",
+        "clipsContent": true,
+        "fills": [
+          { "type": "SOLID", "color": { "r": 1, "g": 1, "b": 1, "a": 1 } }
+        ],
+        "children": [
+          {
+            "id": "1:3",
+            "name": "Original blue rectangle",
+            "type": "RECTANGLE",
+            "absoluteBoundingBox": {
+              "x": 112,
+              "y": 220,
+              "width": 60,
+              "height": 30
+            },
+            "fills": [
+              {
+                "type": "SOLID",
+                "color": { "r": 0, "g": 0.25, "b": 0.75, "a": 1 }
+              }
+            ],
+            "cornerRadius": 4
+          }
+        ]
+      },
+      "components": {},
+      "componentSets": {},
+      "styles": {}
+    }
+  }
+}

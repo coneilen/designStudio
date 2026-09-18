@@ -14,7 +14,7 @@ Its `definitions` are the shared reference graph. Public per-artifact
 `*.schema.json` files and `src/generated.ts`, `catalog.generated.ts`, and
 `schema.generated.ts` are reproducibly generated, committed, and drift-checked.
 Do not edit generated files. All artifact `schemaVersion` values are `"1.0"`;
-the package version is `1.1.0`. The public dialect is JSON Schema **draft-07**.
+the package version is `1.2.0`. The public dialect is JSON Schema **draft-07**.
 The reserved `.invalid` schema IDs are stable identifiers, not network endpoints.
 Load the catalog locally when resolving references.
 
@@ -165,6 +165,17 @@ asserted/verified/unknown file binding are different identities. Historical
 fill gaps, null renders, downscaling, inaccessible dependencies, 429 retry
 deadlines and changed captures stay explicit in source/capability diagnostics.
 A label such as ARCHIVE is not a source-validity rule.
+
+The additive 1.2.0 vocabulary introduces `figma-offline` identity for
+user-supplied nodes-envelope bytes: asserted/unknown binding, optional declared
+version, unknown consistency, and no fabricated provider request history.
+`FigmaIntakeManifest`, `FigmaSourceMap` and `FigmaConversionEvidence` describe
+untrusted inventory and reproducible conversion evidence, not authorization.
+The [pure offline converter](packages/figma-import/README.md) provides a bounded
+fixed-geometry subset; all resource rights, reference pixels, host intake,
+runtime rendering and real Albums capture remain separate gates. Old readers
+may reject this new vocabulary; existing artifact/provider versions and
+foundation fixture bytes are unchanged.
 
 ## Artifact authority, handoff and jobs
 
