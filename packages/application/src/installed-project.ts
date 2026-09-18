@@ -1,8 +1,6 @@
-import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { Artifact } from "@design-studio/contracts";
 import { hashBytes } from "@design-studio/design-ir";
-import { SystemClock } from "@design-studio/host";
 import {
   type FixtureInstallationLease,
   type FixtureProjectBinding,
@@ -10,13 +8,13 @@ import {
 } from "@design-studio/project-host";
 import { RendererWorkerHost } from "@design-studio/renderer-host";
 import { loadCatalog } from "./catalog.js";
-import { publishDownload } from "./download.js";
+import type { CommandOperation } from "./command-lifetime.js";
 import {
   openFixtureApplication,
   StartupCleanupRequired,
 } from "./fixture-application.js";
+import { publishInstalledDownload } from "./installed-download.js";
 import { INSTALLED_FIXTURE_AUTHORITY_TIMEOUT_MS } from "./installed-profile.js";
-import { createFixturePolicy } from "./policy.js";
 import { ApplicationError } from "./response.js";
 import { ARTIFACT_ROOT, PERMISSION_SCOPE, PROJECT_ID } from "./routes.js";
 import { diagnosticLine } from "./telemetry.js";
@@ -54,6 +52,8 @@ export async function openProject(
     | undefined;
   let pendingStartup: (() => Promise<boolean>) | undefined;
   let closed = false;
+  let closing = false;
+  let activePublications = 0;
   let diagnosticCount = 0;
   const report = (line: string) => {
     if (diagnosticCount < 256) process.stderr.write(line);
@@ -67,7 +67,7 @@ export async function openProject(
     binding: project,
     catalog,
     async application() {
-      if (closed || pendingStartup)
+      if (closed || closing || pendingStartup)
         throw new ApplicationError("ACTION_REQUIRED", 409);
       if (application) return application;
       const nodeHash = hashBytes(await readFile(installation.paths.node));
@@ -142,46 +142,32 @@ export async function openProject(
         throw error;
       }
     },
-    async publish(artifact: Artifact, bytes: Uint8Array, relative: string) {
-      if (closed) throw new ApplicationError("ACTION_REQUIRED");
-      await installation.recheck();
-      const policy = createFixturePolicy({
-        clock: new SystemClock(),
-        expectedActor: project.principal.actorId,
-        currentActor: async () => {
-          await project.recheck();
-          return registry.currentPrincipal().actorId;
-        },
-        onRevoked: () => {},
-      });
-      const controller = new AbortController();
+    async publish(
+      artifact: Artifact,
+      bytes: Uint8Array,
+      relative: string,
+      operation: CommandOperation,
+    ) {
+      if (closed || closing) throw new ApplicationError("ACTION_REQUIRED");
+      activePublications++;
       try {
-        const context = await policy.issue({
-          requestId: randomUUID(),
-          signal: controller.signal,
-          grants: [
-            {
-              resourceKind: "artifact",
-              resourceId: "foundation_outputs",
-              operations: ["read", "write"],
-            },
-          ],
-        });
-        return await publishDownload(
+        return await publishInstalledDownload(
+          installation,
+          registry,
           project,
           artifact,
           bytes,
           relative,
-          context,
-          policy.verify,
+          operation,
         );
       } finally {
-        controller.abort();
-        policy.revoke();
+        activePublications--;
       }
     },
     async close(): Promise<boolean> {
       if (closed) return true;
+      closing = true;
+      if (activePublications !== 0) return false;
       if (pendingStartup && !(await pendingStartup())) return false;
       if (application && !(await application.close())) return false;
       await registry.close();

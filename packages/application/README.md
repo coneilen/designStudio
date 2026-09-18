@@ -96,6 +96,24 @@ canonical accepted bytes, or later authorization/discovery decisions. Validation
 alone does not provide object ownership; the return boundary explicitly copies
 nested state and never freezes caller-owned inputs.
 
+Artifact download metadata, content and local output publication share one frozen
+command operation: request identity, absolute deadline, monotonic epoch clock and
+live cancellation signal. Installed freshness checks, current-principal issuance,
+native staging/publication, durability and final binding checks cannot start a
+new timeout or extend that deadline. Pending callbacks are awaited to actual
+settlement; project/installation close refuses while a publication is active.
+An expiry does not roll back a native rename: already visible or uncertain bytes
+remain for inspection, never silently discarded or reported as a fresh success.
+
+Only the native download path can retain private, object-bound completion evidence
+after **all** publication, durability and current-policy checks finish within the
+original deadline. It binds the exact returned physical artifact, original command
+object/identity/deadline/clock/signal, output root/path/hash and source descriptor.
+That single-use evidence permits delivery after completed cleanup even if the
+deadline has since expired. A generic delayed publisher, copied result, different
+command, or unfinished/expired verification cannot manufacture that exception.
+No schema, persistent receipt, approval or generalized authorization is added.
+
 HTTP authenticates exact loopback Host/peer and raw singleton headers before
 dispatch. CLI bearer rejects browser Origin/Cookie/Fetch-Metadata; cookie mode
 requires exact Origin even for GET and independent CSRF for unsafe methods.

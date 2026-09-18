@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { createFakeClock } from "@design-studio/contracts/testing";
 import {
@@ -8,9 +9,11 @@ import {
 import { expect, it } from "vitest";
 import { parseArguments } from "../../cli/src/arguments.js";
 import { callApi } from "../../cli/src/client.js";
+import { callLocal } from "../../cli/src/local.js";
 import { loadCatalog } from "../src/catalog.js";
 import { openFixtureApplication } from "../src/fixture-application.js";
 import { listenHttp } from "../src/http.js";
+import { publishInstalledDownload } from "../src/installed-download.js";
 import { ARTIFACT_ROOT, PERMISSION_SCOPE, PROJECT_ID } from "../src/routes.js";
 import type { Invocation } from "../src/types.js";
 import { openAtTestRoot, ownedTest } from "./project-root.js";
@@ -290,6 +293,63 @@ it.runIf(process.platform === "win32" && process.arch === "x64")(
             if (remotelyRead.success && remotelyRead.data.kind === "revision")
               expect(remotelyRead.data.revision.id).toBe(revision.id);
             else throw new Error("Expected native API revision.");
+            const publisher: NonNullable<Parameters<typeof callApi>[2]> = (
+              artifact,
+              bytes,
+              relative,
+              operation,
+            ) =>
+              publishInstalledDownload(
+                {
+                  recheck: async () => {
+                    expect(
+                      (
+                        await loadCatalog(
+                          path.resolve("tests\\fixtures\\foundation"),
+                        )
+                      ).identity,
+                    ).toBe(catalog.identity);
+                  },
+                },
+                registry,
+                binding,
+                artifact,
+                bytes,
+                relative,
+                operation,
+              );
+            const downloadArgs = (relative: string) =>
+              parseArguments([
+                "artifacts",
+                "get",
+                revision.content.id,
+                "--sha256",
+                revision.content.sha256,
+                "--output-root",
+                "foundation_outputs",
+                "--output-relative",
+                relative,
+                "--json",
+              ]);
+            const apiCopy = await callApi(
+              downloadArgs("api-copy.json"),
+              { port: api.port, credential: credentials.credential },
+              publisher,
+            );
+            expect(apiCopy.success).toBe(true);
+            const localCopy = await callLocal(
+              downloadArgs("local-copy.json"),
+              application,
+              publisher,
+            );
+            expect(localCopy.success).toBe(true);
+            expect(
+              await readFile(path.join(binding.paths.outputs, "api-copy.json")),
+            ).toEqual(
+              await readFile(
+                path.join(binding.paths.outputs, "local-copy.json"),
+              ),
+            );
             const changed = await callApi(
               parseArguments([
                 "fixtures",

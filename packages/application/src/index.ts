@@ -1,5 +1,6 @@
 export * from "./application.js";
 export * from "./catalog.js";
+export * from "./command-lifetime.js";
 export * from "./doctor.js";
 export * from "./http.js";
 export * from "./http-auth.js";

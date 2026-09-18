@@ -2,11 +2,16 @@ import { createHash } from "node:crypto";
 import { request } from "node:http";
 import {
   ApplicationError,
+  type CommandOperation,
+  checkCommandOperation,
+  createCommandLifetime,
   describeApi,
   draftWarning,
   PROJECT_ID,
+  remainingCommandMs,
   success,
 } from "@design-studio/application";
+import { downloadResult } from "@design-studio/application/download";
 import {
   type Artifact,
   parseContract,
@@ -23,14 +28,16 @@ export type DownloadPublisher = (
   artifact: Artifact,
   bytes: Uint8Array,
   relative: string,
+  operation: CommandOperation,
 ) => Promise<Artifact>;
 export interface CommandConnection {
   json(
     path: string,
     method: string,
     timeout: number,
-    body?: unknown,
-    headers?: Record<string, string>,
+    body: unknown,
+    headers: Record<string, string> | undefined,
+    operation: CommandOperation,
   ): Promise<ResponseEnvelope>;
   receive<T>(
     path: string,
@@ -40,16 +47,14 @@ export interface CommandConnection {
     headers: Record<string, string>,
     mediaType: string,
     parse: (bytes: Uint8Array) => T,
+    operation: CommandOperation,
   ): Promise<T>;
 }
 export async function callApi(
   args: Arguments,
   session: LocalSession,
-  publish?: (
-    artifact: Artifact,
-    bytes: Uint8Array,
-    relative: string,
-  ) => Promise<Artifact>,
+  publish?: DownloadPublisher,
+  signal?: AbortSignal,
 ): Promise<ResponseEnvelope> {
   if (
     !Number.isInteger(session.port) ||
@@ -61,9 +66,18 @@ export async function callApi(
   return dispatchCommand(
     args,
     {
-      json: (path, method, timeout, body, headers) =>
-        send(session, path, method, timeout, body, headers),
-      receive: (path, method, timeout, body, headers, mediaType, parse) =>
+      json: (path, method, timeout, body, headers, operation) =>
+        send(session, path, method, timeout, body, headers, operation),
+      receive: (
+        path,
+        method,
+        timeout,
+        body,
+        headers,
+        mediaType,
+        parse,
+        operation,
+      ) =>
         receive(
           session,
           path,
@@ -73,23 +87,39 @@ export async function callApi(
           headers,
           mediaType,
           parse,
+          operation,
         ),
     },
     publish,
+    signal,
   );
 }
 export async function dispatchCommand(
   args: Arguments,
   connection: CommandConnection,
   publish?: DownloadPublisher,
+  signal?: AbortSignal,
+): Promise<ResponseEnvelope> {
+  const lifetime = createCommandLifetime(args.timeoutMs, signal);
+  try {
+    return await dispatchWithinOperation(
+      args,
+      connection,
+      lifetime.operation,
+      publish,
+    );
+  } finally {
+    lifetime.close();
+  }
+}
+async function dispatchWithinOperation(
+  args: Arguments,
+  connection: CommandConnection,
+  operation: CommandOperation,
+  publish?: DownloadPublisher,
 ): Promise<ResponseEnvelope> {
   const values = args.values.values;
-  const deadline = performance.now() + args.timeoutMs;
-  const remaining = () => {
-    const milliseconds = Math.floor(deadline - performance.now());
-    if (milliseconds < 1) throw new ApplicationError("DEADLINE_EXCEEDED", 504);
-    return milliseconds;
-  };
+  const remaining = () => remainingCommandMs(operation);
   const prefix = `/v1/projects/${PROJECT_ID}`;
   const requestKey = () => {
     if (
@@ -100,16 +130,30 @@ export async function dispatchCommand(
     return values["request-id"];
   };
   const get = (suffix: string) =>
-    connection.json(`${prefix}${suffix}`, "GET", remaining());
+    connection.json(
+      `${prefix}${suffix}`,
+      "GET",
+      remaining(),
+      undefined,
+      undefined,
+      operation,
+    );
   const post = (
     suffix: string,
     body: unknown,
     headers: Record<string, string>,
   ) =>
-    connection.json(`${prefix}${suffix}`, "POST", remaining(), body, {
-      "Idempotency-Key": requestKey(),
-      ...headers,
-    });
+    connection.json(
+      `${prefix}${suffix}`,
+      "POST",
+      remaining(),
+      body,
+      {
+        "Idempotency-Key": requestKey(),
+        ...headers,
+      },
+      operation,
+    );
   switch (args.command) {
     case "openapi": {
       const description = describeApi("openapi");
@@ -137,6 +181,7 @@ export async function dispatchCommand(
           if (failure.success && !failure.value.success) return failure.value;
           throw new ApplicationError("PROFILE_MISMATCH", 409);
         },
+        operation,
       );
     }
     case "doctor":
@@ -230,6 +275,7 @@ export async function dispatchCommand(
         {},
         "image/png",
         (value) => value,
+        operation,
       );
       const hash = createHash("sha256").update(bytes).digest("hex");
       const artifact = response.data.job.receipt.outputs.find(
@@ -268,6 +314,7 @@ export async function dispatchCommand(
         !values["output-relative"]
       )
         throw new ApplicationError("INVALID_SCHEMA", 502);
+      const source = structuredClone(metadata.data.artifact);
       const bytes = await connection.receive(
         `${prefix}/artifacts/${args.id}/content?sha256=${values.sha256}`,
         "GET",
@@ -276,21 +323,28 @@ export async function dispatchCommand(
         {},
         "application/octet-stream",
         (value) => value,
+        operation,
       );
       if (
-        createHash("sha256").update(bytes).digest("hex") !==
-          metadata.data.artifact.sha256 ||
-        bytes.length !== metadata.data.artifact.byteLength
+        createHash("sha256").update(bytes).digest("hex") !== source.sha256 ||
+        bytes.length !== source.byteLength
       )
         throw new ApplicationError("ARTIFACT_INTEGRITY", 502);
+      checkCommandOperation(operation);
       const artifact = await publish(
-        metadata.data.artifact,
+        structuredClone(source),
         bytes,
         values["output-relative"],
+        operation,
       );
       return success(metadata.requestId, {
         kind: "artifact",
-        artifact,
+        artifact: downloadResult(
+          artifact,
+          operation,
+          source,
+          values["output-relative"],
+        ),
         warnings: [],
       });
     }
@@ -311,8 +365,9 @@ function send(
   path: string,
   method: string,
   timeout: number,
-  body?: unknown,
-  extra: Record<string, string> = {},
+  body: unknown,
+  extra: Record<string, string> | undefined,
+  operation: CommandOperation,
 ): Promise<ResponseEnvelope> {
   return receive(
     session,
@@ -320,7 +375,7 @@ function send(
     method,
     timeout,
     body,
-    extra,
+    extra ?? {},
     "application/json",
     (bytes) => {
       const envelope = parseContract(
@@ -336,6 +391,7 @@ function send(
         throw new ApplicationError("INVALID_SCHEMA", 502);
       return envelope;
     },
+    operation,
   );
 }
 function receive<T>(
@@ -347,7 +403,9 @@ function receive<T>(
   extra: Record<string, string>,
   mediaType: string,
   parse: (bytes: Uint8Array) => T,
+  operation: CommandOperation,
 ): Promise<T> {
+  checkCommandOperation(operation);
   const bytes =
     body === undefined ? undefined : Buffer.from(JSON.stringify(body));
   if (bytes && bytes.length > 65536) throw new ApplicationError("INPUT_LIMIT");
@@ -360,6 +418,7 @@ function receive<T>(
         path,
         method,
         agent: false,
+        signal: operation.signal,
         headers: {
           Authorization: `Bearer ${session.credential}`,
           ...extra,
@@ -446,8 +505,20 @@ function receive<T>(
       reject(error);
     }
     req.on("error", () =>
-      finish(new ApplicationError("TRANSPORT_UNAVAILABLE", 503)),
+      finish(
+        operation.signal.aborted
+          ? operationError(operation)
+          : new ApplicationError("TRANSPORT_UNAVAILABLE", 503),
+      ),
     );
     req.end(bytes);
   });
+}
+function operationError(operation: CommandOperation): ApplicationError {
+  try {
+    checkCommandOperation(operation);
+  } catch (error) {
+    if (error instanceof ApplicationError) return error;
+  }
+  return new ApplicationError("CANCELLED");
 }

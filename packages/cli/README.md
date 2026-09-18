@@ -55,6 +55,15 @@ by each controller command. Transport sessions expire after five minutes without
 implicit renewal. Shutdown waits for authoritative quiescence before releasing
 installation ownership; incomplete cleanup is not a successful result.
 
+For `artifacts get --output-root foundation_outputs`, the command's original
+absolute deadline and cancellation signal cover metadata retrieval, content,
+installed/project rechecks, policy issuance and native publication. There is no
+fresh publication budget. A slow callback is awaited, not raced away while
+cleanup releases its resources. A late plain callback cannot return success;
+only the exact native result proven fully committed and verified within the
+same command deadline may be delivered after cleanup. Expiry may leave visible
+or uncertain output bytes and never implies rollback.
+
 Service startup owns fd3 before acquiring a project. Acquisition or subsequent
 startup failure always closes that channel; cleanup failures retain the primary
 typed error and a close-only retry capability for acquired resources.
