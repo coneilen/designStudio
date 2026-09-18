@@ -363,8 +363,14 @@ fingerprint, account profile or verified permission claim.
 Before write/delete, await durable nonsecret intent. Ambiguous/failed/late native
 mutation or verification returns `OUTPUT_UNCERTAIN`, retains pending/uncertain
 journal state and never rolls back automatically. Failed journal cleanup is
-explicit. Another mutation requires separately authorized status reconciliation;
-uncertain expiry claims are not promoted by a presence-only read. The original
+explicit. Other mutations require separately authorized status reconciliation;
+an exact pending removal may instead be retried only through a new explicitly
+confirmed remove capability and fresh authorized exact-entry read. This is not
+an automatic retry or permission to update an uncertain setup/update entry.
+Native composition reserves journal capacity before lookup and can retain
+pending-remove across ambiguous deletion/status observations to protect its
+terminal absence record.
+Uncertain expiry claims are not promoted by a presence-only read. The original
 promise and owned token bytes remain live until native work settles; `pending`
 does not become false merely because cancellation was requested. Caller-supplied
 owned token bytes are copied within a 4096-byte printable-ASCII bound, cleared on

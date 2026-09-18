@@ -333,7 +333,8 @@ export class CredentialAdministration {
               denied();
             if (
               action !== "status" &&
-              !["ready", "absent"].includes(prior.state)
+              !["ready", "absent"].includes(prior.state) &&
+              !(action === "remove" && prior.state === "pending-remove")
             )
               throw new HostBoundaryError(
                 "ACTION_REQUIRED",

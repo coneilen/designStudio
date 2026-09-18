@@ -5,9 +5,15 @@ import type { CredentialReference } from "@design-studio/contracts";
 import { validateContract } from "@design-studio/contracts";
 import { HostBoundaryError } from "@design-studio/host";
 import type {
+  CredentialAdminAction,
   CredentialAdminJournal,
   CredentialAdminState,
 } from "../../host/dist/credential-admin.js";
+import {
+  admitCredentialCapacity,
+  CREDENTIAL_JOURNAL_RECORDS,
+  credentialStateWrite,
+} from "./credential-capacity.js";
 import {
   assertCaptureInstallation,
   type CaptureInstallationLease,
@@ -37,7 +43,9 @@ interface Owned {
   binding: FixtureProjectBinding;
   registry: FixtureProjectRegistry;
   sid: string;
-  journal: CredentialAdminJournal;
+  journal: CredentialAdminJournal & {
+    begin(action: CredentialAdminAction): Promise<void>;
+  };
   live: boolean;
   users: number;
 }
@@ -129,13 +137,13 @@ export async function openCaptureProject(
       await check();
       const names: string[] = [];
       for await (const entry of await opendir(journalRoot)) {
-        if (names.length === 1024)
+        if (names.length === CREDENTIAL_JOURNAL_RECORDS)
           refuse("Credential journal exceeds its bounded sequence.");
         names.push(entry.name);
       }
       names.sort();
       if (
-        names.length > 1024 ||
+        names.length > CREDENTIAL_JOURNAL_RECORDS ||
         names.some(
           (name, index) => name !== `${String(index).padStart(4, "0")}.json`,
         )
@@ -190,14 +198,21 @@ export async function openCaptureProject(
       );
       return pending;
     };
-    const journal: CredentialAdminJournal = {
+    const journal: Owned["journal"] = {
+      begin: (action) =>
+        serial(async () => {
+          const prior = await readRecords();
+          admitCredentialCapacity(action, prior.count, prior.state?.state);
+        }),
       read: () => serial(async () => (await readRecords()).state),
       record: async (input) => {
         const state = checkedState(input, reference);
         return serial(async () => {
           const prior = await readRecords();
-          if (prior.count >= 1024)
-            refuse("Credential journal capacity reached.");
+          if (
+            credentialStateWrite(prior.state, state, prior.count) === "retain"
+          )
+            return;
           await check();
           native.createFile(
             path.join(

@@ -151,6 +151,7 @@ export async function openCaptureCredentials(project: CaptureProject) {
             },
             context,
           );
+          await owned.journal.begin(action);
           return await admin.execute(capability, secret);
         } finally {
           secret?.fill(0);

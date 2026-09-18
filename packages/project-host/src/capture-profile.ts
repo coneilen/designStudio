@@ -19,6 +19,8 @@ export const CAPTURE_POLICY = Object.freeze({
   maxTokenBytes: 4096,
   inputTimeoutMs: 300000,
   adminTimeoutMs: 30000,
+  journalRecords: 1024,
+  journalNormalReserve: 8,
   apiOrigins: Object.freeze([]),
   imageOrigins: Object.freeze([]),
 });

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, it, vi } from "vitest";
@@ -13,6 +14,7 @@ import {
   openCaptureProject,
 } from "../src/capture-project.js";
 import { verifyInstalledRoot } from "../src/installation.js";
+import { loadNative } from "../src/native.js";
 import { withCaptureInstallation } from "./capture-support.js";
 
 it("requires a runtime-owned capture installation before native project access", async () => {
@@ -108,6 +110,81 @@ it.skipIf(process.platform !== "win32")(
       }
     });
   },
+);
+
+it.skipIf(process.platform !== "win32")(
+  "denies exact 1023/full/malformed journal admission before any native credential lookup",
+  async () => {
+    const lookup = vi
+      .spyOn(OwnedFigmaCredentialAdapter.prototype, "read")
+      .mockRejectedValue(new Error("Synthetic backend must not be called"));
+    try {
+      await withCaptureInstallation(async (installation) => {
+        const project = await openCaptureProject(installation);
+        const credentials = await openCaptureCredentials(project);
+        try {
+          const native = await loadNative();
+          const sid = captureProjectOwner(project).sid;
+          const root = path.join(project.paths.temp, "credential-journal");
+          let previous = "";
+          let last = Buffer.alloc(0);
+          for (let sequence = 0; sequence < 1023; sequence++) {
+            last = Buffer.from(
+              JSON.stringify({
+                sequence,
+                previous,
+                state: { reference: project.reference, state: "ready" },
+              }),
+            );
+            native.createFile(
+              path.join(root, `${String(sequence).padStart(4, "0")}.json`),
+              sid,
+              last,
+            );
+            previous = createHash("sha256").update(last).digest("hex");
+          }
+          const signal = new AbortController().signal;
+          await expect(
+            credentials.execute(
+              "update",
+              project.reference.id,
+              signal,
+              Buffer.from("synthetic-capacity"),
+            ),
+          ).rejects.toThrow(/capacity/);
+          expect(lookup).not.toHaveBeenCalled();
+          const final = path.join(root, "1022.json");
+          await writeFile(final, Buffer.from("{"));
+          await expect(
+            credentials.execute("status", project.reference.id, signal),
+          ).rejects.toThrow(/torn/);
+          expect(lookup).not.toHaveBeenCalled();
+          await writeFile(final, last);
+          native.createFile(
+            path.join(root, "1023.json"),
+            sid,
+            Buffer.from(
+              JSON.stringify({
+                sequence: 1023,
+                previous,
+                state: { reference: project.reference, state: "ready" },
+              }),
+            ),
+          );
+          await expect(
+            credentials.execute("status", project.reference.id, signal),
+          ).rejects.toThrow(/capacity/);
+          expect(lookup).not.toHaveBeenCalled();
+        } finally {
+          credentials.close();
+          await project.close();
+        }
+      });
+    } finally {
+      lookup.mockRestore();
+    }
+  },
+  30_000,
 );
 
 it.skipIf(process.platform !== "win32")(

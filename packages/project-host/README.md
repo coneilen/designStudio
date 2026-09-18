@@ -35,6 +35,39 @@ pending/ready/absent/uncertain state and declared expiry/scopes. Torn or gapped
 history refuses further work and requires explicit reconciliation; it is never
 silently adopted, rewritten or filled with plaintext credentials.
 
+### Capacity and durable cleanup reserve
+
+The total remains **1024 records**, with no rollover, pruning, second index or
+in-memory-only reservation. The closed capture policy names this limit and the
+eight-slot normal-operation reserve. Admission reads and validates durable
+history under the project's exclusive lock before any vault lookup:
+
+| Action/state | Admission and append behavior |
+|---|---|
+| Setup/update | Require eight free slots before any backend call; intent remains durable before mutation. |
+| Status | Require one free slot, not eight. Unchanged ready/absent observations do not append; failed reads append nothing and never mean absent. Pending setup/update can reconcile with one terminal record. |
+| New removal | Require two free slots: pending-remove plus confirmed absence. |
+| Pending-remove retry | Require one free terminal slot. Every retry is a new explicit confirmed action with current authority and exact-entry read. Duplicate intent and ambiguous-delete metadata retain pending-remove without appending. No automatic retry. |
+| Status of pending-remove | At fewer than eight free slots, observing present retains the removal intent. Observing absent appends the terminal absence record. At normal capacity, an authorized present observation may reconcile to ready. |
+| Confirmed terminal absence | A later acknowledgement/cleanup error remains an interrupted operation, but does not overwrite durable observed absence with uncertain state. |
+| Full/malformed history | Reject before backend access. No assumption that an old exhausted history can be repaired by deleting credentials or erasing evidence. |
+
+Why eight slots suffice: an admitted setup/update may append intent, a terminal
+record whose acknowledgement fails, and then uncertain state (three slots).
+Restart reconciliation uses one slot, leaving at least four. Removal intent
+uses one; any number of separately authorized ambiguous deletions/present-status
+observations consume zero additional slots; confirmed absence uses one. At least
+two slots remain in this worst case. A crash leaving only setup/update intent
+uses less space and is still reconcilable; the eight-slot rule never blocks its
+status recovery. The append policy also enforces admission for new intent writes,
+not only the facade's preflight.
+
+This is a durable **state history**, not a counter/audit of every attempted action:
+repeated identical status, pending-removal retry and equivalent uncertainty states
+are deliberately deduplicated. Present status during low-capacity pending removal
+does not claim that the pending intent has been cleared. The fixed reference and
+current native ownership/one-use action authority are revalidated on every call.
+
 `openCaptureCredentials(project)` admits only an actual live native capture
 binding. It composes the fixed-entry adapter and internal one-use action authority
 with current native principal checks, an exact-reference confirmation and a
