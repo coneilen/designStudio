@@ -16,6 +16,8 @@ import {
   canonicalBytes,
   canonicalDigest,
   hashBytes,
+  KernelError,
+  pointerValue,
   resolveDesign,
   validateProvenance,
 } from "@design-studio/design-ir";
@@ -56,7 +58,6 @@ export interface FigmaConversion {
 }
 const profile = "figma-offline-fixed-v1";
 const metadata = new Set([
-  "name",
   "locked",
   "exportSettings",
   "annotations",
@@ -67,9 +68,9 @@ const metadata = new Set([
 const handled = new Set([
   "id",
   "type",
+  "name",
   "children",
   "absoluteBoundingBox",
-  "absoluteRenderBounds",
   "fills",
   "opacity",
   "cornerRadius",
@@ -125,6 +126,12 @@ export function convertFigmaSnapshot(
     );
   const originalBytes = Buffer.from(input.structureBytes);
   const raw = manifest.structure;
+  const projectionId = `conversion_${scopeId}`;
+  if (raw.id === projectionId)
+    fail(
+      "ARTIFACT_INTEGRITY",
+      "Source artifact collides with the derived conversion artifact.",
+    );
   if (
     raw.mediaType !== "application/json" ||
     raw.byteLength !== originalBytes.byteLength ||
@@ -137,7 +144,22 @@ export function convertFigmaSnapshot(
   const parsed = parseSource(originalBytes, selection.nodeId, budget);
   const sourceRef = { id: raw.id, sha256: raw.sha256 };
   const diagnostics: Diagnostic[] = [];
+  const diagnosticIndex = new Map<string, Diagnostic>();
   const losses: DiagnosticReport["losses"] = [];
+  const lossIds = new Set<string>();
+  let reportEntries = 0;
+  function reserveReportEntries(count = 1) {
+    budget.checkpoint();
+    const measured = reportEntries + count;
+    if (measured > budget.maxReportEntries)
+      throw new FigmaImportError(
+        "NODE_LIMIT",
+        "Conversion report entry limit exceeded.",
+        "",
+        { measured, allowed: budget.maxReportEntries, unit: "node" },
+      );
+    reportEntries = measured;
+  }
   const evidence: FigmaConversionEvidence = {
     schemaVersion: "1.0",
     adapter: profile,
@@ -226,8 +248,10 @@ export function convertFigmaSnapshot(
     severity: Diagnostic["severity"] = "error",
   ) {
     const id = `diagnostic_${canonicalDigest([input.intakeId, code, nodeId ?? null, pointer, message])}`;
-    if (!diagnostics.some((item) => item.id === id))
-      diagnostics.push({
+    let item = diagnosticIndex.get(id);
+    if (!item) {
+      reserveReportEntries();
+      item = {
         schemaVersion: "1.0",
         id,
         code,
@@ -239,8 +263,11 @@ export function convertFigmaSnapshot(
         evidenceIds: [],
         recovery:
           "Inspect original evidence and supply approved resources or implement the disclosed conversion feature.",
-      });
-    return id;
+      };
+      diagnosticIndex.set(id, item);
+      diagnostics.push(item);
+    }
+    return item;
   }
   const nodeId = (node: SourceNode) =>
     `node_${canonicalDigest([profile, input.projectId, input.designId, input.intakeId, node.id])}`;
@@ -253,14 +280,27 @@ export function convertFigmaSnapshot(
   ) {
     const pointer = `${node.pointer}${property ? `/${property}` : ""}`;
     const id = `loss_${canonicalDigest([nodeId(node), pointer, support, reason])}`;
-    if (losses.some((item) => item.id === id)) return;
+    if (lossIds.has(id)) return;
+    reserveReportEntries();
+    lossIds.add(id);
+    let evidencePointer = pointer;
+    try {
+      pointerValue(node.raw, property ? `/${property}` : "");
+    } catch (error) {
+      if (
+        !(error instanceof KernelError) ||
+        error.diagnostic.code !== "EVIDENCE_MISSING"
+      )
+        throw error;
+      evidencePointer = node.pointer;
+    }
     const evidenceId = `evidence_${id}`;
     provenance.evidence.push({
       id: evidenceId,
       artifact: sourceRef,
       kind: "source-property",
       sourceNodeId: node.id,
-      pointer: node.pointer,
+      pointer: evidencePointer,
     });
     losses.push({
       id,
@@ -274,20 +314,20 @@ export function convertFigmaSnapshot(
         "Preserve the source; review the unsupported property instead of assuming fidelity.",
       evidenceIds: [evidenceId],
     });
-    const diagnosticId = diagnostic(code, reason, nodeId(node), pointer);
-    const item = diagnostics.find((entry) => entry.id === diagnosticId);
-    if (item) item.evidenceIds = [evidenceId];
+    diagnostic(code, reason, nodeId(node), pointer).evidenceIds = [evidenceId];
   }
   function projection(
     node: SourceNode,
     outputPointer: string,
     value: unknown,
     rule: FigmaConversionEvidence["entries"][number]["rule"],
+    sourcePointer = node.pointer,
   ) {
+    reserveReportEntries();
     evidence.entries.push({
       nodeId: nodeId(node),
       sourceNodeId: node.id,
-      sourcePointer: node.pointer,
+      sourcePointer,
       outputPointer,
       rule,
       value: shape("JsonValue", value),
@@ -302,7 +342,9 @@ export function convertFigmaSnapshot(
       nodeId: nodeId(node),
     });
     for (const key of Object.keys(node.raw)) {
+      budget.checkpoint();
       if (metadata.has(key)) {
+        reserveReportEntries();
         evidence.ignoredProperties.push({
           pointer: `${node.pointer}/${escapePointer(key)}`,
           reason: "nonvisual-metadata",
@@ -367,6 +409,14 @@ export function convertFigmaSnapshot(
     };
     projection(node, "/layout", common.layout, "fixed-layout");
     projection(node, "/metadata/sourceAbsoluteBounds", bounds, "identity");
+    if (common.name !== undefined)
+      projection(
+        node,
+        "/name",
+        common.name,
+        "identity",
+        `${node.pointer}/name`,
+      );
     const style = appearance(node.raw, (key, reason) =>
       loss(node, key, reason),
     );
@@ -504,10 +554,7 @@ export function convertFigmaSnapshot(
       designId: input.designId,
       screen: {
         id: `screen_${scopeId}`,
-        name:
-          typeof parsed.root.raw.name === "string"
-            ? parsed.root.raw.name
-            : "Imported draft",
+        name: root.name ?? "Imported draft",
         viewport: {
           width: parsed.root.bounds.width,
           height: parsed.root.bounds.height,
@@ -624,6 +671,9 @@ export function convertFigmaSnapshot(
       maxExpandedNodes: budget.maxNodes,
       maxDepth: budget.maxDepth,
     });
+    reserveReportEntries(
+      resolution.report.diagnostics.length + resolution.report.losses.length,
+    );
     diagnostics.push(...resolution.report.diagnostics);
     losses.push(...resolution.report.losses);
   }
@@ -665,7 +715,7 @@ export function convertFigmaSnapshot(
   budget.checkpoint();
   // Projections explicitly name their source/rule. Raw source values are never relabeled as transformed values.
   const projectionRef: ArtifactReference = {
-    id: `conversion_${scopeId}`,
+    id: projectionId,
     sha256: canonicalDigest(evidence),
   };
   if (design)
@@ -696,9 +746,17 @@ export function convertFigmaSnapshot(
       provenance,
       (item): JsonValue => {
         budget.checkpoint();
-        return item.artifact.id === projectionRef.id
-          ? projectionValue
-          : parsed.envelope;
+        if (
+          item.artifact.id === projectionRef.id &&
+          item.artifact.sha256 === projectionRef.sha256
+        )
+          return projectionValue;
+        if (
+          item.artifact.id === sourceRef.id &&
+          item.artifact.sha256 === sourceRef.sha256
+        )
+          return parsed.envelope;
+        fail("ARTIFACT_INTEGRITY", "Unknown evidence artifact identity.");
       },
     );
     budget.checkpoint();

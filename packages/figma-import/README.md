@@ -36,6 +36,13 @@ the small ignored-metadata list is inventoried separately. Nodes-envelope shape
 support does not establish that the bytes came from Figma or are untruncated.
 Plugin `JSON_REST_V1` compatibility is **not** claimed.
 
+Copied node names have property-level projections; the screen label derives
+from the projected root label. `absoluteRenderBounds` is not reconstructed by
+this fixed profile and produces an explicit loss rather than a silently dropped
+visual footprint. Loss evidence points to the exact existing source property,
+including escaped JSON Pointer keys. A missing property instead references its
+containing source node, without inventing evidence at a nonexistent pointer.
+
 ## Implemented subset
 
 | Source | Conversion |
@@ -83,13 +90,20 @@ conversion relative to supplied source, **not authenticated Figma provenance**.
 Consumers must run source replay verification before trusting these projections,
 then independently enforce source/resource authority. Accepting a candidate's
 self-consistent projection alone is insufficient.
+Source artifact IDs cannot alias the generated projection artifact; evidence
+dispatch requires both the artifact ID and digest, rejecting unknown identities.
 
 ## Limits and execution
 
 Defaults: 25 MiB input, 20,000 source nodes, depth 128 (JSON syntax has its own
-128 limit), 25 MiB derived output, and a 30-second deadline. Caller limits may
-only reduce the profile bounds. Shared mutable buffers are rejected. Checkpoints
+128 limit), 25 MiB derived output, 200,000 report entries, and a 30-second
+deadline. Caller limits may only reduce the profile bounds. Shared mutable
+buffers are rejected. Checkpoints
 run before/after parse and during traversal; cancellation and expiry are typed.
+Every source property is checkpointed. Losses and diagnostics use constant-time
+ID indexes rather than rescanning their accumulated arrays. `maxReportEntries`
+limits the combined diagnostic/loss/projection/ignored-property inventory and
+rejects overflow explicitly rather than truncating the report.
 The completed projection is validated once per contract, then reused during
 provenance resolution with a deadline/cancellation checkpoint per evidence.
 The pure API is synchronous: it cannot interrupt JavaScript parsing mid-call.

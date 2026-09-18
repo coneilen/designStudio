@@ -6,7 +6,7 @@ import type {
   Typography,
 } from "@design-studio/contracts";
 import { solid } from "./appearance.js";
-import { FigmaImportError, numeric } from "./boundary.js";
+import { escapePointer, FigmaImportError, numeric } from "./boundary.js";
 
 export interface TextResult {
   typography: Typography;
@@ -144,7 +144,7 @@ export function textStyle(
       )
         continue;
       reject(
-        `${pointer}/${key}`,
+        `${pointer}/${escapePointer(key)}`,
         "Unsupported or unknown text style property.",
       );
     }

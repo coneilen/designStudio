@@ -5,7 +5,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import * as boundary from "../src/boundary.js";
 import { convertFigmaSnapshot } from "../src/index.js";
 
-function input(children: number) {
+function input(children: number, unknownProperties = 0) {
   const document: JsonObject = {
     id: "1:2",
     type: "FRAME",
@@ -18,6 +18,8 @@ function input(children: number) {
       fills: [{ type: "SOLID", color: { r: 0, g: 0, b: 0, a: 1 } }],
     })),
   };
+  for (let index = 0; index < unknownProperties; index++)
+    document[`future_${index}`] = index;
   const bytes = Buffer.from(JSON.stringify({ nodes: { "1:2": { document } } }));
   return {
     manifest: {
@@ -45,6 +47,92 @@ function input(children: number) {
 }
 
 afterEach(() => vi.restoreAllMocks());
+
+it("rejects oversized reports at the configured entry boundary without truncation", () => {
+  try {
+    convertFigmaSnapshot(input(0, 2048), { maxReportEntries: 128 });
+    throw new Error("Expected a report limit.");
+  } catch (error) {
+    expect(error).toBeInstanceOf(boundary.FigmaImportError);
+    if (!(error instanceof boundary.FigmaImportError)) throw error;
+    expect(error.diagnostic.limit).toEqual({
+      measured: 129,
+      allowed: 128,
+      unit: "node",
+    });
+  }
+  expect(() =>
+    convertFigmaSnapshot(input(0), { maxReportEntries: 200_001 }),
+  ).toThrow("Invalid conversion budget");
+});
+
+it("keeps loss and diagnostic deduplication work bounded for thousands of properties", () => {
+  const original = Array.prototype.some;
+  let comparisons = 0;
+  vi.spyOn(Array.prototype, "some").mockImplementation(function (
+    this: unknown[],
+    predicate,
+    receiver,
+  ) {
+    return original.call(this, (value, index, array) => {
+      if (
+        value &&
+        typeof value === "object" &&
+        "id" in value &&
+        typeof value.id === "string" &&
+        /^(loss|diagnostic)_/.test(value.id)
+      )
+        comparisons++;
+      return predicate.call(receiver, value, index, array);
+    });
+  });
+  const result = convertFigmaSnapshot(input(0, 2048));
+  expect(
+    result.report.losses.filter((loss) => loss.pointer.includes("/future_")),
+  ).toHaveLength(2048);
+  expect(comparisons).toBeLessThan(2048 * 4);
+});
+
+it("checks the deadline at every source property instead of after the whole inventory", () => {
+  const digest = kernel.canonicalDigest;
+  let now = 0;
+  let propertyLosses = 0;
+  vi.spyOn(kernel, "canonicalDigest").mockImplementation((value) => {
+    const hash = digest(value);
+    if (
+      Array.isArray(value) &&
+      value.length === 4 &&
+      typeof value[1] === "string" &&
+      value[1].includes("/future_")
+    ) {
+      propertyLosses++;
+      now = 100;
+    }
+    return hash;
+  });
+  expect(() =>
+    convertFigmaSnapshot(input(0, 1024), { deadline: 100, now: () => now }),
+  ).toThrow("deadline expired");
+  expect(propertyLosses).toBe(1);
+});
+
+it("resolves evidence only by its complete artifact identity", () => {
+  const validate = kernel.validateProvenance;
+  vi.spyOn(kernel, "validateProvenance").mockImplementation(
+    (design, snapshot, resolve) => {
+      if (!resolve) throw new Error("Missing resolver.");
+      return validate(design, snapshot, (entry) =>
+        resolve({
+          ...entry,
+          artifact: { ...entry.artifact, sha256: "0".repeat(64) },
+        }),
+      );
+    },
+  );
+  expect(() => convertFigmaSnapshot(input(0))).toThrow(
+    "Unknown evidence artifact",
+  );
+});
 
 it("validates the complete projection once, not once per evidence resolution", () => {
   const spy = vi.spyOn(boundary, "shape");
