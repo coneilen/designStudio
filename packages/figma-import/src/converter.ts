@@ -659,6 +659,10 @@ export function convertFigmaSnapshot(
   };
   source.diagnosticIds = diagnostics.map((item) => item.id);
   sourceMap.snapshot = { id: source.id, sha256: canonicalDigest(source) };
+  budget.checkpoint();
+  shape("FigmaConversionEvidence", evidence);
+  const projectionValue = shape("JsonValue", evidence);
+  budget.checkpoint();
   // Projections explicitly name their source/rule. Raw source values are never relabeled as transformed values.
   const projectionRef: ArtifactReference = {
     id: `conversion_${scopeId}`,
@@ -666,6 +670,7 @@ export function convertFigmaSnapshot(
   };
   if (design)
     for (const [index, entry] of evidence.entries.entries()) {
+      budget.checkpoint();
       const id = `evidence_${canonicalDigest([projectionRef.sha256, index])}`;
       provenance.evidence.push({
         id,
@@ -689,17 +694,19 @@ export function convertFigmaSnapshot(
     const problems = validateProvenance(
       design,
       provenance,
-      (item): JsonValue =>
-        item.artifact.id === projectionRef.id
-          ? shape("JsonValue", evidence)
-          : parsed.envelope,
+      (item): JsonValue => {
+        budget.checkpoint();
+        return item.artifact.id === projectionRef.id
+          ? projectionValue
+          : parsed.envelope;
+      },
     );
+    budget.checkpoint();
     if (problems.length)
       fail("EVIDENCE_MISSING", "Converted provenance did not validate.");
   }
   shape("SourceSnapshot", source);
   shape("FigmaSourceMap", sourceMap);
-  shape("FigmaConversionEvidence", evidence);
   shape("ProvenanceSnapshot", provenance);
   shape("DiagnosticReport", report);
   const result = {

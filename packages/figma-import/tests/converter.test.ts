@@ -183,7 +183,11 @@ describe("bounded offline Figma conversion", () => {
     }
   });
 
-  function textInput(content: string, overrides?: number[]) {
+  function textInput(
+    content: string,
+    overrides?: number[],
+    edit?: (child: JsonObject) => void,
+  ) {
     const converted = changed((_root, child) => {
       child.type = "TEXT";
       child.characters = content;
@@ -201,6 +205,7 @@ describe("bounded offline Figma conversion", () => {
         child.characterStyleOverrides = overrides;
         child.styleOverrideTable = { "1": { fontSize: 16 } };
       }
+      edit?.(child);
     });
     const resources = convertFigmaSnapshot(input()).resources;
     resources.fonts = fixtureResources.fonts;
@@ -209,6 +214,79 @@ describe("bounded offline Figma conversion", () => {
       resources: { snapshot: resources, bytes: canonicalBytes(resources) },
     };
   }
+
+  it("reports text glyph strokes instead of converting them to box borders", () => {
+    const result = convertFigmaSnapshot(
+      textInput("Outlined text", undefined, (child) => {
+        child.strokes = [{ type: "SOLID", color: { r: 1, g: 0, b: 0, a: 1 } }];
+        child.strokeWeight = 2;
+        child.strokeAlign = "INSIDE";
+      }),
+    );
+    const root = result.design?.root;
+    const text = root && "children" in root ? root.children[0] : undefined;
+    expect(text?.type).toBe("text");
+    expect(text?.type === "text" && text.appearance?.border).toBeUndefined();
+    expect(
+      result.report.losses.some(
+        (loss) =>
+          loss.sourceNodeId === "1:3" &&
+          loss.pointer.endsWith("/strokes") &&
+          loss.support === "unsupported",
+      ),
+    ).toBe(true);
+    expect(result.report.readiness).toBe("blocked");
+  });
+
+  it.each(["empty", "hidden"] as const)(
+    "does not invent text borders or glyph-stroke loss for %s strokes",
+    (kind) => {
+      const result = convertFigmaSnapshot(
+        textInput("Plain text", undefined, (child) => {
+          child.strokes =
+            kind === "empty"
+              ? []
+              : [
+                  {
+                    type: "SOLID",
+                    visible: false,
+                    color: { r: 1, g: 0, b: 0, a: 1 },
+                  },
+                ];
+          child.strokeWeight = 2;
+          child.strokeAlign = "INSIDE";
+        }),
+      );
+      const root = result.design?.root;
+      const text = root && "children" in root ? root.children[0] : undefined;
+      expect(text?.type).toBe("text");
+      expect(text?.type === "text" && text.appearance?.border).toBeUndefined();
+      expect(
+        result.report.losses.filter((loss) =>
+          loss.pointer.endsWith("/strokes"),
+        ),
+      ).toEqual([]);
+      expect(result.report.readiness).toBe("needs-review");
+    },
+  );
+
+  it("preserves the supported rectangle inside border", () => {
+    const result = convertFigmaSnapshot(
+      changed((_root, child) => {
+        child.strokes = [{ type: "SOLID", color: { r: 1, g: 0, b: 0, a: 1 } }];
+        child.strokeWeight = 2;
+        child.strokeAlign = "INSIDE";
+      }),
+    );
+    const root = result.design?.root;
+    const rectangle = root && "children" in root ? root.children[0] : undefined;
+    expect(
+      rectangle?.type === "shape" && rectangle.appearance?.border?.width,
+    ).toBe(2);
+    expect(
+      result.report.losses.filter((loss) => loss.pointer.endsWith("/strokes")),
+    ).toEqual([]);
+  });
 
   it("converts original synthetic mixed text without claiming font bytes, rights or renderability", () => {
     const result = convertFigmaSnapshot(textInput("Test", [0, 0, 1, 1]));

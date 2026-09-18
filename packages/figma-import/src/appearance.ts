@@ -101,12 +101,23 @@ export function appearance(
           }
         : { kind: "none" };
   }
-  if (
-    raw.strokes !== undefined &&
-    (!Array.isArray(raw.strokes) || raw.strokes.length)
-  ) {
-    const color = solid(raw.strokes);
-    if (
+  const strokes = Array.isArray(raw.strokes)
+    ? raw.strokes.filter(
+        (paint) =>
+          !paint ||
+          typeof paint !== "object" ||
+          Array.isArray(paint) ||
+          paint.visible !== false,
+      )
+    : raw.strokes;
+  if (strokes !== undefined && (!Array.isArray(strokes) || strokes.length)) {
+    const color = solid(strokes);
+    if (raw.type === "TEXT")
+      unsupported(
+        "strokes",
+        "Text glyph outlines are unsupported; they cannot be represented by a box border.",
+      );
+    else if (
       color &&
       numeric(raw.strokeWeight) &&
       raw.strokeWeight >= 0 &&

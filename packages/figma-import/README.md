@@ -44,7 +44,7 @@ Plugin `JSON_REST_V1` compatibility is **not** claimed.
 | Rectangles/ellipses | Existing DesignIR shape nodes. |
 | Solid paint | One visible solid sRGB fill; supported uniform inside border, uniform radius, opacity and bounds/rounded clipping. |
 | Auto-layout | Fixed captured geometry only, with an **approximated** loss and blocked strict readiness; not editable auto-layout equivalence. |
-| Text | Explicit characters/pixel metrics, exact matching declared PostScript face/family/weight/style, UTF-16 mixed ranges. Missing/ambiguous fonts or unsupported text styles become raw-preserved unsupported nodes. |
+| Text | Explicit characters/pixel metrics, exact matching declared PostScript face/family/weight/style, UTF-16 mixed ranges. Missing/ambiguous fonts or unsupported text styles become raw-preserved unsupported nodes. Visible glyph strokes produce a blocking property loss, never a box border; empty/hidden strokes produce neither. |
 | Images, vectors, components/instances | Raw-preserved opaque nodes or blocked paint losses; no decoded asset, invented expansion, generated SVG or screenshot fallback. |
 | Transforms, hidden nodes, masks, effects, advanced/unknown paint or layout | Explicit node/property losses. Rotated/transformed/hidden nodes are opaque; no geometry reconstruction from axis-aligned bounds. |
 
@@ -90,6 +90,8 @@ Defaults: 25 MiB input, 20,000 source nodes, depth 128 (JSON syntax has its own
 128 limit), 25 MiB derived output, and a 30-second deadline. Caller limits may
 only reduce the profile bounds. Shared mutable buffers are rejected. Checkpoints
 run before/after parse and during traversal; cancellation and expiry are typed.
+The completed projection is validated once per contract, then reused during
+provenance resolution with a deadline/cancellation checkpoint per evidence.
 The pure API is synchronous: it cannot interrupt JavaScript parsing mid-call.
 A future runtime must execute it in a bounded worker for hard wall-clock
 termination; no hard process-lifecycle guarantee is claimed here.
