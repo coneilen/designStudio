@@ -446,6 +446,100 @@ describe("bounded offline Figma conversion", () => {
     );
   });
 
+  it("projects copied node labels and derives the screen label from the root", () => {
+    const result = convertFigmaSnapshot(input());
+    const design = result.design;
+    if (!design || !("children" in design.root))
+      throw new Error("Missing fixture.");
+    for (const node of [design.root, ...design.root.children]) {
+      const projection = result.conversionEvidence.entries.find(
+        (entry) => entry.nodeId === node.id && entry.outputPointer === "/name",
+      );
+      expect(projection?.value).toBe(node.name);
+      expect(projection?.sourcePointer.endsWith("/name")).toBe(true);
+      expect(result.provenance.nodes[node.id]?.["/name"]).toBeDefined();
+    }
+    expect(design.screen.name).toBe(design.root.name);
+    expect(
+      result.conversionEvidence.ignoredProperties.some((entry) =>
+        entry.pointer.endsWith("/name"),
+      ),
+    ).toBe(false);
+  });
+
+  it("reports unconverted visual render bounds instead of silently dropping them", () => {
+    const result = convertFigmaSnapshot(
+      changed((_root, child) => {
+        child.absoluteRenderBounds = { x: 102, y: 210, width: 80, height: 50 };
+      }),
+    );
+    expect(
+      result.report.losses.some((loss) =>
+        loss.pointer.endsWith("/absoluteRenderBounds"),
+      ),
+    ).toBe(true);
+    expect(result.report.readiness).toBe("blocked");
+  });
+
+  it("links losses to exact existing properties including escaped keys", () => {
+    const result = convertFigmaSnapshot(
+      changed((_root, child) => {
+        child.effects = [{ type: "LAYER_BLUR", radius: 5 }];
+        child["future/~paint"] = "source-property";
+      }),
+    );
+    for (const suffix of ["/effects", "/future~1~0paint"]) {
+      const loss = result.report.losses.find((entry) =>
+        entry.pointer.endsWith(suffix),
+      );
+      if (!loss) throw new Error("Missing expected property loss.");
+      const evidence = result.provenance.evidence.find(
+        (entry) => entry.id === loss.evidenceIds[0],
+      );
+      expect(evidence?.pointer).toBe(loss.pointer);
+    }
+  });
+
+  it("retains exact nested style pointers and honest containing-node evidence for absent styles", () => {
+    const nested = convertFigmaSnapshot(
+      textInput("Original label", undefined, (child) => {
+        const style = child.style as JsonObject;
+        style["future/~style"] = true;
+      }),
+    );
+    const loss = nested.report.losses.find((entry) =>
+      entry.pointer.endsWith("/style/future~1~0style"),
+    );
+    expect(loss).toBeDefined();
+    expect(
+      nested.provenance.evidence.find(
+        (entry) => entry.id === loss?.evidenceIds[0],
+      )?.pointer,
+    ).toBe(loss?.pointer);
+    const missing = convertFigmaSnapshot(
+      textInput("Original label", undefined, (child) => {
+        delete child.style;
+      }),
+    );
+    const absent = missing.report.losses.find((entry) =>
+      entry.pointer.endsWith("/style"),
+    );
+    expect(absent).toBeDefined();
+    expect(
+      missing.provenance.evidence.find(
+        (entry) => entry.id === absent?.evidenceIds[0],
+      )?.pointer,
+    ).toBe("/nodes/1:2/document/children/0");
+    expect(missing.report.readiness).toBe("blocked");
+  });
+
+  it("rejects a source ID that aliases the derived conversion artifact", () => {
+    const selected = input();
+    selected.manifest.structure.id = `conversion_${canonicalDigest([selected.projectId, selected.designId, selected.intakeId])}`;
+    expect(() => convertFigmaSnapshot(selected)).toThrow(
+      "Source artifact collides",
+    );
+  });
   it("preserves unsupported source and property-level losses instead of flattening", () => {
     const result = convertFigmaSnapshot(
       changed((root, child) => {

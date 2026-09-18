@@ -69,6 +69,7 @@ export interface ConversionLimits {
   maxInputBytes?: number;
   maxNodes?: number;
   maxDepth?: number;
+  maxReportEntries?: number;
   deadline?: number;
   now?: () => number;
   signal?: AbortSignal;
@@ -103,6 +104,7 @@ export function limits(options: ConversionLimits) {
     maxInputBytes: cap(options.maxInputBytes, 26_214_400),
     maxNodes: cap(options.maxNodes, 20_000),
     maxDepth: cap(options.maxDepth, 128),
+    maxReportEntries: cap(options.maxReportEntries, 200_000),
     checkpoint,
   };
 }
