@@ -16,6 +16,7 @@ import {
   boundedFile,
   digest,
   encodeInventory,
+  exactTree,
   INSTALL_LIMITS,
   relativeName,
 } from "../dist/installation-manifest.js";
@@ -38,6 +39,18 @@ const requiredPackages = [
 ];
 const sqliteHash =
   "194c049b8781c3ca39f7e12b4f4a47c79027502b366151404ae8847fe6e2a9a1";
+const runtimeFiles = Object.freeze([
+  Object.freeze({
+    path: "node.exe",
+    bytes: 93580104,
+    sha256: "ba4e6d110e8c1592a1ecd390f6b05f3da124b13871a5be62b341a07a853c6c32",
+  }),
+  Object.freeze({
+    path: "LICENSE",
+    bytes: 160555,
+    sha256: "ed34dd8e3f0a78dbaf00d0444ce8e285b015b765379c2e17880455f70370f8e9",
+  }),
+]);
 let copiedFiles = 0;
 let copiedBytes = 0;
 async function hashFile(filename, sourceLinks = false) {
@@ -106,22 +119,44 @@ async function copyPhysical(source, destination) {
       throw new Error("Candidate copy differs from observed source.");
   }
 }
-async function copyRuntime(source, destination) {
-  // Runtime's own npm distribution is inventoried too; unlike dependency package roots, never omit node_modules.
+async function verifyRuntime(source) {
+  if (
+    !/^[A-Za-z]:\\/.test(source) ||
+    path.resolve(source) !== source ||
+    (await realpath(source)) !== source
+  )
+    throw new Error("Runtime source requires an exact physical local path.");
   const stat = await lstat(source);
-  if (stat.isSymbolicLink())
-    throw new Error("Runtime distribution contains a resolution link.");
-  if (stat.isDirectory()) {
-    await mkdir(destination);
-    for (const entry of await readdir(source)) {
-      relativeName(entry);
-      await copyRuntime(
-        path.join(source, entry),
-        path.join(destination, entry),
+  if (!stat.isDirectory() || stat.isSymbolicLink())
+    throw new Error("Runtime source must be a physical directory.");
+  for (const file of runtimeFiles) {
+    const filename = path.join(source, file.path);
+    const entry = await lstat(filename);
+    if (
+      !entry.isFile() ||
+      entry.isSymbolicLink() ||
+      entry.nlink !== 1 ||
+      (await realpath(filename)) !== filename
+    )
+      throw new Error(
+        "Runtime files must be exact physical single-link paths.",
       );
-    }
-    if ((await readdir(destination)).length === 0) await rmdir(destination);
-  } else await copyPhysical(source, destination);
+    const actual = await hashFile(filename);
+    if (actual.bytes !== file.bytes || actual.sha256 !== file.sha256)
+      throw new Error("Unapproved pinned Node executable or license notice.");
+  }
+}
+export async function copyRuntime(source, destination) {
+  await verifyRuntime(source);
+  await mkdir(destination);
+  for (const file of runtimeFiles)
+    await copyPhysical(
+      path.join(source, file.path),
+      path.join(destination, file.path),
+    );
+  // Revalidate the fixed pins after copying, not merely equality to mutable source bytes.
+  await verifyRuntime(destination);
+  await exactTree(destination, runtimeFiles);
 }
 export async function inventory(root) {
   const files = [];
@@ -427,12 +462,10 @@ export async function packageCandidate({
   );
   if ((await hashFile(sqliteBinding)).sha256 !== sqliteHash)
     throw new Error("Unapproved SQLite addon.");
-  if (
-    (await hashFile(path.join(nodeRoot, "node.exe"), true)).sha256 !==
-    (await hashFile(process.execPath, true)).sha256
-  )
+  await verifyRuntime(nodeRoot);
+  if ((await hashFile(process.execPath)).sha256 !== runtimeFiles[0].sha256)
     throw new Error(
-      "Candidate Node must match the explicitly trusted running pinned runtime bytes; never execute candidate source to inspect it.",
+      "Candidate tooling must run with the explicitly trusted pinned Node bytes; never execute candidate source to inspect it.",
     );
   await mkdir(output);
   const payload = path.join(output, "payload");

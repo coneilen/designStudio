@@ -3,10 +3,18 @@
 F08 `designctl` implements one command dispatcher over the shared native
 application facade or authenticated loopback API. The shipped launcher and
 local fixture initialization are wired to the reviewed offline installation
-verifier. One actual installed, test-instrumented initialization/accept/render/
-preview/shutdown flow passed. Prior installed checks intermittently took
-56--60 seconds and failed the unchanged absolute deadline; the single pass does
-not establish reliable latency. See the application README for exact evidence
+verifier. The retained full-runtime installed diagnostics produced one
+complete initialization/accept/render/preview/shutdown pass and one render
+observation `DEADLINE_EXCEEDED`, despite the renderer opening. This does not
+establish the failed observation's final job state. Prior installed checks
+intermittently took 56--60 seconds; the passing diagnostic also had a 26.6-second
+startup-verification outlier. Reliable latency and the outliers' root cause
+remain unresolved. The approved minimal runtime profile subsequently passed
+three sequential fresh-owned flows with complete retained evidence, identical
+file/byte counts and service current-check maxima of 3.98-4.12 seconds with two
+active checks. This is bounded repeatability for the exercised workflow, not a
+statistical guarantee or proof that the earlier outlier cause was eliminated.
+See the application README for retained numerical evidence
 and the still-required final user release approval.
 
 `--json` writes one contract-valid JSON object and newline to stdout; it never
@@ -104,6 +112,6 @@ See the application package README for current owner-integration blockers.
 Built subprocess tests cover metadata/usage, actual Windows overlapped-pipe
 credential delivery and secret-safe output on the pinned runtime. The same
 HTTP client reads actual accepted revisions/jobs from the owned native facade.
-The installed functional pass used real F08 entries with only disclosed copied
+The installed functional passes used real F08 entries with only disclosed copied
 KnownFolder/diagnostic instrumentation, not a user-approved release. No live
 installation or performance pass is claimed.

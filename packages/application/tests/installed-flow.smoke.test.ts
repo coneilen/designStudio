@@ -174,6 +174,23 @@ it.skipIf(process.env.F08_INSTALL_GATE !== "1")(
         ],
         { timeout: 180000, maxBuffer: 65536 },
       );
+      const selectedRuntime = decodeInventory(
+        await readFile(path.join(candidate, "bootstrap-inventory.json")),
+      ).filter((file) => file.path.startsWith("runtime/"));
+      expect(selectedRuntime).toEqual([
+        {
+          path: "runtime/LICENSE",
+          bytes: 160555,
+          sha256:
+            "ed34dd8e3f0a78dbaf00d0444ce8e285b015b765379c2e17880455f70370f8e9",
+        },
+        {
+          path: "runtime/node.exe",
+          bytes: 93580104,
+          sha256:
+            "ba4e6d110e8c1592a1ecd390f6b05f3da124b13871a5be62b341a07a853c6c32",
+        },
+      ]);
       const native = await loadNative();
       const seam = vi.spyOn(native, "localAppData").mockReturnValue(root);
       const created: { entry: InstallationEntry; directory: boolean }[] = [];

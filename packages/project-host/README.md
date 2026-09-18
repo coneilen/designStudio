@@ -232,7 +232,7 @@ Ordinary repository calls to `verifyFixtureInstallation()` return
 integrated application/CLI build entries are absent.
 
 The user's initial trust decision covers the complete selected bootstrap:
-pinned Windows x64 Node 24.21.0 distribution, bootstrap scripts, native bridge,
+pinned Windows x64 Node 24.21.0 executable and original LICENSE, bootstrap scripts, native bridge,
 all bootstrap dependencies, inventories and policy. Executing an untrusted
 bootstrap to ask whether it is trusted is **not safe**. Its self-checks establish
 integrity relative to the externally selected bytes, not provenance. Local
@@ -256,8 +256,15 @@ node packages\project-host\scripts\package-candidate.mjs `
 
 The tool neither downloads nor installs dependencies, runs package scripts,
 compiles native code, updates OS settings, nor executes candidate source
-executables. Candidate Node bytes must match the explicitly trusted running
-24.21.0 runtime. The SQLite addon is checked against the existing ABI137 binary
+executables. The fixed runtime profile selects **only `node.exe` and `LICENSE`**,
+with exact reviewed byte lengths and SHA-256 pins; the running 24.21.0 executable
+must match the same pin. Runtime source roots/files must be exact canonical local
+physical paths, without junction/symlink/case aliases or multiply-linked files.
+Both files are checked before allocating candidate output, then copied to new
+single-link files and rechecked against the fixed pins and exact two-file tree.
+There is no caller-selectable file list, environment switch or CLI override.
+Bundled npm, Corepack and setup wrappers remain available in development inputs
+but are not shipped. The SQLite addon is checked against the existing ABI137 binary
 pin, and all 299 Chromium r1243 inventory files against the reviewed renderer
 inventory. Those integrity checks do not replace release selection.
 
@@ -519,10 +526,11 @@ payload reads during current checks, exercise nine concurrent checks and
 close-during-check, and verify actual write/rename denial and fresh namespace,
 ACL and registration-tamper rejection. Native length/identity and principal
 faults are separately labeled injected cases. No full installed-candidate timing
-is claimed from these small fixtures. F08 will measure three serial current
-checks and one nine-concurrent batch, separately from a full rehash sample,
-inside its next otherwise-required owned actual-candidate run. Report individual
-and maximum durations, not a statistical percentile or sub-five-second guarantee.
+is claimed from these small fixtures. The separately authorized actual F08
+diagnostics measured three serial current checks and one nine-concurrent stress
+batch, separately from full rehash samples; their retained outcomes are in the
+[application evidence](../application/README.md#retained-installed-diagnostics).
+They do not establish a percentile or sub-five-second guarantee.
 
 ### Bounded checkpoint phase diagnostic
 
@@ -592,3 +600,82 @@ and clears its heartbeat on every result path. Focused tests cover the exact
 2,048-sample boundary, start/phase/end sampler faults, duplicate end, and native
 checkpoint failure with all temporary handles released. No performance probe
 was repeated for this reporting-only correction.
+
+The subsequent actual F08 observer also covers startup verification and both
+bootstrap/payload module instances. Its additions are copied-code-only test
+instrumentation, sealed before inventories, not production configuration.
+Version-two numeric reports retain per-phase process CPU/RSS and bounded
+inclusive checked-operation timings. The builtin-only preflight still installs
+its guard before importing this test TCB; no timing hook interrupts native
+error-result handling. See the application evidence for the complete capture
+with a functional deadline failure and the unresolved 26/56-second outliers.
+
+### Approved minimal runtime profile and historical closure analysis
+
+The full-distribution packager used for the retained baselines copied the pinned
+Node distribution **once**, into `bootstrap\runtime`. The approved minimal
+profile now copies only the fixed executable and original notice there. Both
+bootstrap and payload verifier instances still intentionally verify that same
+closure and retain their own pins. There is no second physical payload Node
+distribution and neither verifier pass is removed.
+
+Read-only source accounting at merged production source `c3f8941`, before later
+documentation edits, projected the following current uninstrumented categories.
+This is **not** a recovered inventory of either cleaned test candidate:
+
+| Category | Files | Source bytes |
+| --- | ---: | ---: |
+| Bootstrap Node distribution | 1,994 | 106,986,507 |
+| Bootstrap dependencies (13 packages) | 965 | 7,685,747 |
+| Payload direct workspace packages | 292 | 2,474,674 |
+| Payload dependencies (64 packages) | 1,751 | 39,519,381 |
+| Approved browser inventory | 299 | 286,993,336 |
+| Original fixture catalog | 32 | 348,079 |
+| SQLite binding | 1 | 1,902,080 |
+| Generated/control files | 6 | Not projected |
+
+The 5,340-file projection excludes the two outer inventories and test observer
+helpers. Runtime composition is `node.exe` (93,580,104 bytes), `LICENSE`
+(160,555 bytes), bundled npm (1,926 files / 12,509,702 bytes), corepack
+(54 / 623,878), and twelve top-level wrappers/setup/documentation files
+(112,268 bytes). The fixed CLI and renderer launch paths use `node.exe`;
+bootstrap scripts use builtins and guarded bootstrap dependencies, not bundled
+npm/corepack or setup scripts. No adjacent runtime DLL is in this distribution.
+
+The user approved the **profile design only**: fixed `node.exe` plus `LICENSE`,
+two files / 93,740,659 bytes. It omits 1,992 offline-tooling files / 13,245,848
+bytes from the source profile above, while keeping the unchanged executable,
+original full Node notice and every application/native/browser dependency and
+its notices. Development inputs are not deleted or modified.
+
+| Selected file | Exact bytes | SHA-256 |
+| --- | ---: | --- |
+| `node.exe` | 93,580,104 | `ba4e6d110e8c1592a1ecd390f6b05f3da124b13871a5be62b341a07a853c6c32` |
+| `LICENSE` | 160,555 | `ed34dd8e3f0a78dbaf00d0444ce8e285b015b765379c2e17880455f70370f8e9` |
+
+These pins identify the already reviewed input bytes; they do not authenticate
+an untrusted bootstrap or confer approval on a resulting release. Fixed-entry
+launches use that executable, Node builtins and separately inventoried
+dependencies; bundled npm/Corepack/setup scripts are not invoked. The profile
+is not a general Node development distribution.
+
+Observed RED/GREEN covered missing notice and aliased source admission reaching
+candidate allocation before the fix (a test interceptor stopped that allocation).
+The focused cases now reject missing/wrong executable or notice, source junctions,
+noncanonical/case aliases and hardlinks before output; copy only the two pinned
+single-link files despite extra source tooling/caller arguments; reject source
+changes after admission; and reject unsupported CLI selection flags. Synthetic
+native engine cases independently reject reinjected `runtime\npm.cmd` and
+`runtime\node_modules\npm` before creating any installation namespace.
+
+Every shipped file retains the existing fresh namespace/identity/ACL/length
+checks and continuous pins; startup hashing, resolver guards, all absolute
+deadlines and actual-quiescence requirements are unchanged. Reducing unnecessary
+shipped TCB work is **not a demonstrated cure** for the intermittent 56-60-second
+checks. Three separately approved sequential actual minimal-profile flows passed
+with exact two-file runtime inventories, identical 3,354-file / 432,861,345-byte
+test closures, ordinary two-check overlap and complete retained numeric capture.
+See the [bounded repeatability evidence](../application/README.md#approved-minimal-profile-repeatability).
+No historical outlier cause, statistical latency guarantee or two-second profile
+is established. Further runs and final release packaging require review; no exact
+bootstrap/payload release or live installation is approved by this design choice.

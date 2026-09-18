@@ -1,6 +1,7 @@
 import { cp, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { expect, it } from "vitest";
 import { instrumentCandidate } from "./phase-instrument.js";
 
@@ -40,8 +41,39 @@ it("patches only expected copied functions exactly once before inventory and lea
     expect(changed).toContain('"worker-open"');
     expect(changed).toContain('"claimed"');
     expect(changed).toContain("await worker.open(context)");
+    const installation = await readFile(
+      path.join(root, "packages", "project-host", "dist", "installation.js"),
+      "utf8",
+    );
+    expect(installation).toContain('import "./f08-diagnostics.mjs";');
+    expect(installation).toContain(
+      "diagnosticVerifyInstalledRoot(root, trace)",
+    );
+    expect(installation).toContain(
+      "verifyTree(native, root, allFiles(meta), sid, true, trace)",
+    );
+    const native = await readFile(
+      path.join(root, "packages", "project-host", "dist", "native.js"),
+      "utf8",
+    );
+    expect(native).toContain('nativeCapture.measure("open"');
+    expect(native).toContain('nativeCapture.measure("acl"');
+    expect(native).toContain('nativeCapture.measure("inspect"');
+    expect(native).toContain('nativeCapture.measure("pin"');
+    for (const filename of [
+      "installation.js",
+      "native.js",
+      "f08-diagnostics.mjs",
+      "f08-native-timing.mjs",
+    ])
+      await promisify(execFile)(process.execPath, [
+        "--check",
+        path.join(root, "packages", "project-host", "dist", filename),
+      ]);
     await expect(instrumentCandidate(root, diagnostics)).rejects.toThrow();
   } finally {
     await rm(root, { recursive: true });
   }
 });
+
+import { execFile } from "node:child_process";

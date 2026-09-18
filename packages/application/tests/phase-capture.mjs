@@ -2,6 +2,7 @@ import { lstatSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import koffi from "koffi";
+import { nativeCapture } from "./f08-native-timing.mjs";
 import { captureInstallationForTest } from "./installation-diagnostics.js";
 
 const directory = "__F08_DIAGNOSTIC_DIRECTORY__";
@@ -93,13 +94,23 @@ function finish(exitFallback) {
     incomplete = true;
   }
   const failure = capture.failure;
+  const native = nativeCapture.report();
   incomplete ||=
     failure.samplingErrors !== 0 ||
     failure.overflowed ||
-    failure.droppedSamples !== 0;
+    failure.droppedSamples !== 0 ||
+    native.samplingErrors !== 0;
   const groups = new Map();
   const ends = [];
+  const starts = new Map();
+  const previousSamples = new Map();
   for (const sample of capture.samples) {
+    if (sample.phase === "start") starts.set(sample.id, sample);
+    const previous =
+      (sample.phase === "end"
+        ? starts.get(sample.id)
+        : previousSamples.get(sample.id)) ?? sample;
+    previousSamples.set(sample.id, sample);
     const key = `${sample.mode}:${sample.phase}`;
     let group = groups.get(key);
     if (!group) {
@@ -112,6 +123,9 @@ function finish(exitFallback) {
         count: 0,
         activeMax: 0,
         handlesMax: 0,
+        rssBytesMax: 0,
+        cpuUserUs: 0,
+        cpuSystemUs: 0,
       };
       groups.set(key, group);
     }
@@ -121,6 +135,9 @@ function finish(exitFallback) {
     group.count = Math.max(group.count, sample.count);
     group.activeMax = Math.max(group.activeMax, sample.active);
     group.handlesMax = Math.max(group.handlesMax, sample.handles);
+    group.rssBytesMax = Math.max(group.rssBytesMax, sample.rssBytes);
+    group.cpuUserUs += sample.cpuUserUs - previous.cpuUserUs;
+    group.cpuSystemUs += sample.cpuSystemUs - previous.cpuSystemUs;
     if (sample.phase === "end")
       ends.push({
         id: sample.id,
@@ -130,7 +147,7 @@ function finish(exitFallback) {
       });
   }
   const output = {
-    version: 1,
+    version: 2,
     timeOrigin: performance.timeOrigin,
     pid: process.pid,
     instance,
@@ -145,6 +162,7 @@ function finish(exitFallback) {
     groups: [...groups.values()],
     ends: ends.slice(-16),
     records,
+    native,
   };
   try {
     const now = lstatSync(directory, { bigint: true });
