@@ -67,8 +67,39 @@ export function startCapturePatDialog(
   let cancelTransportFailed = false;
   let pipeFailed = false;
   let staged: Buffer | undefined;
+  let inputDeadline: number | undefined;
+  let inputStopped = false;
   let terminalDeadline: number | undefined;
+  let terminationRequested = false;
+  const beginTerminal = () => {
+    terminalDeadline ??=
+      Math.min(performance.now(), inputDeadline ?? Infinity) + 5000;
+    if (child && !observedExit && !killTimer) {
+      killTimer = setTimeout(
+        () => {
+          if (!observedExit) {
+            terminationRequested = true;
+            scrubbed = false;
+            try {
+              if (joined && job) job.terminate();
+              else child?.kill();
+            } catch {
+              spawnFailed = true;
+            }
+          }
+        },
+        Math.max(0, terminalDeadline - performance.now()),
+      );
+    }
+  };
   const cancel = () => {
+    if (!inputStopped) {
+      if (inputDeadline !== undefined && performance.now() >= inputDeadline)
+        expired = true;
+      inputStopped = true;
+      if (deadlineTimer) clearTimeout(deadlineTimer);
+    }
+    beginTerminal();
     abort.abort();
     staged?.fill(0);
     staged = undefined;
@@ -78,19 +109,17 @@ export function startCapturePatDialog(
         cancelTransportFailed = true;
       });
     }
-    if (child && !observedExit && !killTimer) {
-      killTimer = setTimeout(() => {
-        try {
-          if (joined && job) job.terminate();
-          else child?.kill();
-        } catch {
-          spawnFailed = true;
-        }
-      }, 5000);
-    }
   };
   const checkpoint = () => {
     captureProjectOwner(project);
+    if (
+      !inputStopped &&
+      inputDeadline !== undefined &&
+      performance.now() >= inputDeadline
+    ) {
+      expired = true;
+      cancel();
+    }
     if (signal.aborted || abort.signal.aborted)
       throw new HostBoundaryError(
         expired ? "DEADLINE_EXCEEDED" : "CANCELLED",
@@ -117,10 +146,7 @@ export function startCapturePatDialog(
           pipeClose = undefined;
         });
       }
-      const end =
-        !stop && terminalDeadline !== undefined
-          ? terminalDeadline
-          : performance.now() + 5000;
+      const end = terminalDeadline ?? performance.now() + 5000;
       while ((child && !observedExit) || (channel && !pipeClosed)) {
         if (performance.now() >= end) {
           cancel();
@@ -134,6 +160,8 @@ export function startCapturePatDialog(
       }
       if (job && job.members().length !== 0)
         return { closed: false, scrub: "unconfirmed" } as const;
+      if (terminationRequested || (observedExit && observedExit.code !== 0))
+        scrubbed = false;
       if (cancelWrite)
         await cancelWrite.catch(() => {
           cancelTransportFailed = true;
@@ -191,20 +219,26 @@ export function startCapturePatDialog(
       const pipe = child.stdio[3];
       if (!(pipe instanceof Duplex)) throw interrupted();
       channel = new PatChannel(pipe, nonce);
-      const receive = async (timeout: number): Promise<PatFrame> => {
+      const receive = async (
+        timeout: number,
+        inputWait = false,
+      ): Promise<PatFrame | null> => {
         if (!channel) throw interrupted();
-        const frame = await channel.read(timeout);
+        const frame = inputWait
+          ? await channel.readInput(timeout, abort.signal)
+          : await channel.read(timeout);
         try {
           captureProjectOwner(project);
           if (spawnFailed) throw interrupted();
           return frame;
         } catch (error) {
-          frame.bytes.fill(0);
+          frame?.bytes.fill(0);
           throw error;
         }
       };
       await channel.send(PatKind.init, 0, Buffer.from(id, "ascii"));
       const membership = await receive(5000);
+      if (!membership) throw interrupted();
       try {
         if (
           membership.kind !== PatKind.joined ||
@@ -223,9 +257,12 @@ export function startCapturePatDialog(
       const duration = Buffer.alloc(4);
       duration.writeUInt32BE(300_000);
       const deadline = performance.now() + 300_000;
+      inputDeadline = deadline;
       deadlineTimer = setTimeout(() => {
-        expired = true;
-        cancel();
+        if (!inputStopped) {
+          expired = true;
+          cancel();
+        }
       }, 300_000);
       await channel.send(PatKind.start, 0, duration);
       duration.fill(0);
@@ -233,17 +270,38 @@ export function startCapturePatDialog(
       let acceptedSeen = false;
       let failure: HostBoundaryError | undefined;
       let ended = false;
-      for (let frames = 0; frames < 4 && !ended; frames++) {
+      let frames = 0;
+      while (frames < 4 && !ended) {
         const remaining = Math.ceil(deadline - performance.now());
-        if (remaining <= 0)
-          throw new HostBoundaryError(
-            "DEADLINE_EXCEEDED",
-            "PAT input deadline exceeded.",
-          );
+        if (remaining <= 0 && !expired && !inputStopped) {
+          expired = true;
+          cancel();
+        }
+        const terminalRemaining =
+          terminalDeadline === undefined
+            ? undefined
+            : Math.ceil(terminalDeadline - performance.now());
+        if (terminalRemaining !== undefined && terminalRemaining <= 0)
+          throw interrupted();
         const frame = await receive(
-          ready ? remaining : Math.min(5000, remaining),
+          terminalRemaining !== undefined
+            ? Math.min(5000, terminalRemaining)
+            : ready
+              ? remaining
+              : Math.min(5000, remaining),
+          ready && terminalDeadline === undefined,
         );
+        if (!frame) {
+          if (!abort.signal.aborted) expired = true;
+          cancel();
+          continue;
+        }
+        frames++;
         try {
+          if (performance.now() >= deadline && !expired && !inputStopped) {
+            expired = true;
+            cancel();
+          }
           if (
             frame.kind === PatKind.ready &&
             !ready &&
@@ -259,6 +317,7 @@ export function startCapturePatDialog(
             !failure &&
             frame.sequence === 1
           ) {
+            beginTerminal();
             acceptedSeen = true;
             validatePatBytes(frame.bytes);
             if (!signal.aborted && !abort.signal.aborted)
@@ -277,6 +336,9 @@ export function startCapturePatDialog(
               frame.bytes[0] === 2 ||
               frame.bytes[0] === 3)
           ) {
+            inputStopped = true;
+            if (deadlineTimer) clearTimeout(deadlineTimer);
+            beginTerminal();
             const reason = frame.bytes[0];
             failure =
               reason === 1
@@ -288,21 +350,31 @@ export function startCapturePatDialog(
                     )
                   : interrupted();
           } else if (frame.kind === PatKind.closed && frame.sequence === 1) {
-            scrubbed = frame.bytes[0] === 3;
+            beginTerminal();
+            scrubbed = frame.bytes[0] === 3 && !terminationRequested;
             ended = true;
           } else throw interrupted();
         } finally {
           frame.bytes.fill(0);
         }
       }
-      if (signal.aborted || abort.signal.aborted)
+      if (expired && (!failure || failure.code === "CANCELLED"))
+        failure = new HostBoundaryError(
+          "DEADLINE_EXCEEDED",
+          "PAT input deadline exceeded.",
+        );
+      else if (signal.aborted || abort.signal.aborted)
         failure ??= new HostBoundaryError(
           expired ? "DEADLINE_EXCEEDED" : "CANCELLED",
           "PAT input cancelled or expired.",
         );
       if (!ended || !scrubbed || (!staged && !failure)) throw interrupted();
-      terminalDeadline = performance.now() + 5000;
-      await channel.finalizeReceive(5000);
+      beginTerminal();
+      const eofRemaining = Math.ceil(
+        (terminalDeadline ?? 0) - performance.now(),
+      );
+      if (eofRemaining <= 0) throw interrupted();
+      await channel.finalizeReceive(Math.min(5000, eofRemaining));
       if (!failure) {
         await project.recheck();
         checkpoint();

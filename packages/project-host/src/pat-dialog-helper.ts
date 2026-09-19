@@ -1,6 +1,5 @@
 import { Socket } from "node:net";
 import path from "node:path";
-import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 import { HostBoundaryError } from "../../host/dist/guards.js";
 import { loadJobs } from "../../host/dist/owned-job.js";
@@ -17,18 +16,10 @@ async function main(): Promise<number> {
     return 2;
   const socket = new Socket({ fd: 3, readable: true, writable: true });
   const channel = new PatChannel(socket);
-  const abort = new AbortController();
-  let ended = false;
-  let control: Promise<void> | undefined;
-  let ready: Promise<void> | undefined;
-  let accepted: Buffer | undefined;
-  let clean = false;
+  let sessionStarted = false;
   let code = 0;
   let installation: CaptureInstallationLease | undefined;
   let guard: { close(): void } | undefined;
-  let inputErrorType:
-    | typeof import("../../host/dist/windows-pat-dialog.js").NativePatDialogError
-    | undefined;
   try {
     const init = await channel.read(5000);
     let job: string;
@@ -66,9 +57,7 @@ async function main(): Promise<number> {
     if (installation.paths.dialogEntry !== ownFile)
       throw new Error("wrong-role");
     guard = host.registerCaptureInstallationGuards(installation);
-    const input = await import("../../host/dist/windows-pat-dialog.js");
-    const { validatePatBytes } = await import("../../host/dist/pat-input.js");
-    inputErrorType = input.NativePatDialogError;
+    const input = await import("./pat-dialog-input.js");
     const start = await channel.read(5000);
     let duration: number;
     try {
@@ -79,74 +68,32 @@ async function main(): Promise<number> {
     } finally {
       start.bytes.fill(0);
     }
-    const deadline = performance.now() + duration;
-    control = (async () => {
-      try {
-        const frame = await channel.read(duration);
-        try {
-          if (frame.kind !== PatKind.cancel || frame.sequence !== 0)
-            throw new Error("protocol");
-          abort.abort();
-        } finally {
-          frame.bytes.fill(0);
-        }
-      } catch {
-        if (!ended) abort.abort();
-      }
-    })();
-    accepted = await input.collectWindowsPat(abort.signal, deadline, () => {
-      if (ready) throw new Error("duplicate-ready");
-      ready = channel.send(PatKind.ready, 0);
-      void ready.catch(() => abort.abort());
-    });
-    clean = true;
-    validatePatBytes(accepted);
-    if (abort.signal.aborted || performance.now() >= deadline)
-      throw new HostBoundaryError("CANCELLED", "PAT input cancelled.");
-    await ready;
-    await channel.send(PatKind.accepted, 1, accepted);
+    sessionStarted = true;
+    code = await input.runPatDialogInput(channel, duration);
   } catch (error) {
-    const inputError =
-      inputErrorType !== undefined && error instanceof inputErrorType
-        ? error
-        : undefined;
-    const primary =
-      inputError?.primaryCode ??
-      (error instanceof HostBoundaryError ? error.code : undefined);
-    const cancelled = primary === "CANCELLED";
-    const expired = primary === "DEADLINE_EXCEEDED";
-    clean ||= inputError?.cleanupComplete === true;
-    code = clean ? 0 : 1;
-    try {
-      await channel.send(
-        PatKind.error,
-        ready ? 1 : 0,
-        Buffer.of(cancelled ? 1 : expired ? 2 : 3),
-      );
-    } catch {
-      code = 1;
-    }
-  } finally {
-    ended = true;
-    accepted?.fill(0);
-    if (ready) {
+    code = 1;
+    if (!sessionStarted) {
+      const primary =
+        error instanceof HostBoundaryError ? error.code : undefined;
       try {
-        await ready;
+        await channel.send(
+          PatKind.error,
+          0,
+          Buffer.of(
+            primary === "CANCELLED"
+              ? 1
+              : primary === "DEADLINE_EXCEEDED"
+                ? 2
+                : 3,
+          ),
+        );
+        await channel.send(PatKind.closed, 1, Buffer.of(0));
       } catch {
         code = 1;
       }
     }
-    try {
-      await channel.send(
-        PatKind.closed,
-        1,
-        Buffer.of(clean && code === 0 ? 3 : 0),
-      );
-    } catch {
-      code = 1;
-    }
+  } finally {
     await channel.close();
-    await control;
     guard?.close();
     await installation?.close();
   }

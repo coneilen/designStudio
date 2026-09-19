@@ -462,11 +462,31 @@ default requests), rather than always making the window visible. The regression
 first reproduced `INTERRUPTED` with successful cleanup, then passed the corrected
 sequence; genuinely invisible windows and cancellation still fail closed.
 
+Private `PatChannel.readInput(timeout, signal?)` separates a clean input-wait
+expiry/cancellation (`null`) from transport failure. It retains the nonce and
+queued complete frames for the terminal exchange, but a partial header/body,
+bad nonce or existing failure still destroys the channel and remains sticky.
+It does not assert EOF or cleanup. The original 300,000ms read cap is unchanged;
+ordinary `read` timeouts and terminal `finalizeReceive` stay fail-closed.
+The helper's private input session uses the unchanged absolute input deadline,
+then at most the existing five-second terminal grace, rather than destroying
+its own receipt channel at the instant input expires. No public trace, new IPC
+kind or credential callback is introduced. Protocol tests mock the UI collector
+explicitly before invoking this actual helper-session code.
+
 The previous supervised dummy-only attempt failed before READY. No successful
 real display, masking, clipboard or vault proof is claimed. The correction has
 not been shown to a user yet. Later separately user-approved synthetic
 display testing must verify actual masking, gesture/paste routes, ABI/callback
 lifetime and window/process teardown before any real token enrollment.
+
+A later supervised corrected-startup attempt reached READY but ended with
+`INTERRUPTED`/unconfirmed scrub near the input deadline; user behavior was not
+observed. Source analysis found both endpoints' same-deadline reads could destroy
+the receipt channel during teardown. Deterministic real-channel/fake-clock tests
+reproduce that race and the correction, including late bytes and failed cleanup.
+They do **not** establish which timer won in the real attempt, or actual Win32
+timeout, masking, paste rejection or user-Cancel success. Those remain gated.
 
 From the root: build before typecheck; tests are co-located under `tests/`.
 Focused tests first failed for missing modules, then passed with implementations.

@@ -150,6 +150,25 @@ real Job membership, private bytes and observed child exit with a synthetic
 peer, not the real UI or full installed-helper startup cost. Real native UI
 verification/display latency remains an explicit later user-approved test gate.
 
+The fixed helper delegates only its already-authorized START to private
+`pat-dialog-input`; that module imports the real collector directly, with no
+production callback override. Input expiry aborts input without poisoning a
+clean binary channel. A control wait may then span only the remaining original
+deadline-plus-five-second terminal budget. The controller likewise transitions
+its input wait to one fixed terminal deadline on cancellation/error/acceptance;
+ERROR, CLOSED, peer EOF and process exit share that allowance, never a renewed
+five seconds per frame. Pre-deadline cancellation retains its cause, and accepted
+bytes cannot be delivered after the original input deadline.
+
+Scrub confirmation still requires genuine collector cleanup, valid terminal
+transcript/EOF, normal helper exit and empty Job. Failed cleanup, partial/foreign
+frames, missing EOF or abnormal/forced exit remain unconfirmed. A child that has
+not actually exited keeps its owner/close retry even after the wait bound.
+Fake-clock tests exercise both endpoint orders, START-delivery offset, near-
+deadline cancellation, late accepted-byte zeroing and hung teardown without
+native UI. The supervised READY-but-interrupted attempt remains failed evidence;
+no actual Win32 timeout or user behavior success is inferred from those tests.
+
 Narrow Windows **fresh fixture-catalog projects only** provisioning for F08.
 This is not arbitrary directory adoption, an ACL repair service, an HTTP setup
 endpoint, a general filesystem sandbox, or a complete application.

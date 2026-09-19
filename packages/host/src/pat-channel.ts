@@ -188,6 +188,16 @@ export class PatChannel {
   get receiveFinalized(): boolean {
     return this.#finalized && this.#peerEof && !this.#receiveFailed;
   }
+  get receiveFailed(): boolean {
+    return this.#receiveFailed;
+  }
+  get hasBufferedInput(): boolean {
+    return (
+      this.#frames.length !== 0 ||
+      this.#headerSize !== 0 ||
+      this.#body !== undefined
+    );
+  }
   private finishReceive(): void {
     if (
       this.#receiveFailed ||
@@ -232,24 +242,62 @@ export class PatChannel {
     }
   }
   async read(timeoutMs: number): Promise<PatFrame> {
+    const frame = await this.readWait(timeoutMs, false);
+    if (!frame) throw failure();
+    return frame;
+  }
+  /** Expected input expiry/cancellation can end a clean waiter, never a partial transcript. */
+  readInput(timeoutMs: number, signal?: AbortSignal): Promise<PatFrame | null> {
+    return this.readWait(timeoutMs, true, signal);
+  }
+  private async readWait(
+    timeoutMs: number,
+    inputWait: boolean,
+    signal?: AbortSignal,
+  ): Promise<PatFrame | null> {
     if (
       !Number.isSafeInteger(timeoutMs) ||
       timeoutMs < 1 ||
       timeoutMs > 300_000 ||
-      this.#waiter
+      this.#waiter ||
+      (signal !== undefined && !(signal instanceof AbortSignal))
     )
       throw failure();
+    if (inputWait && signal?.aborted) {
+      if (this.#headerSize || this.#body) this.stop(true);
+      if (this.#stopped || this.#ended) throw failure();
+      return null;
+    }
     const frame = this.#frames.shift();
     if (frame) return frame;
     if (this.#stopped || this.#ended) throw failure();
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let expire: (() => void) | undefined;
     try {
-      return await new Promise<PatFrame>((resolve, reject) => {
-        this.#waiter = { resolve, reject };
-        timer = setTimeout(() => this.stop(), timeoutMs);
+      return await new Promise<PatFrame | null>((resolve, reject) => {
+        const waiter = { resolve, reject };
+        this.#waiter = waiter;
+        expire = () => {
+          if (this.#waiter !== waiter) return;
+          if (
+            !inputWait ||
+            this.#headerSize ||
+            this.#body ||
+            this.#receiveFailed
+          ) {
+            this.stop(true);
+            return;
+          }
+          this.#waiter = undefined;
+          resolve(null);
+        };
+        timer = setTimeout(expire, timeoutMs);
+        signal?.addEventListener("abort", expire, { once: true });
+        if (signal?.aborted) expire();
       });
     } finally {
       if (timer) clearTimeout(timer);
+      if (expire) signal?.removeEventListener("abort", expire);
     }
   }
   async send(
