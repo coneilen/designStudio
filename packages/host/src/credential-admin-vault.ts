@@ -6,9 +6,10 @@ import {
   validateOwnedFigmaReference,
 } from "./credential-admin.js";
 import { HostBoundaryError } from "./guards.js";
+import { normalizeNativeSecret } from "./native-secret.js";
 
 export interface NativeAdminEntry {
-  getSecret(): Promise<Uint8Array | undefined>;
+  getSecret(): Promise<unknown>;
   setSecret(bytes: Uint8Array): Promise<void>;
   deleteCredential(): Promise<boolean>;
 }
@@ -65,7 +66,7 @@ export class OwnedFigmaCredentialAdapter implements OwnedCredentialAdapter {
   }
   async read(): Promise<Uint8Array | undefined> {
     try {
-      return await (await this.entry()).getSecret();
+      return normalizeNativeSecret(await (await this.entry()).getSecret());
     } catch {
       throw new HostBoundaryError(
         "PROVIDER_UNAVAILABLE",

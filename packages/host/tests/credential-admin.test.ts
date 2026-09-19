@@ -10,6 +10,7 @@ import {
   type CredentialAdminState,
   type OwnedCredentialAdapter,
 } from "../src/credential-admin.js";
+import { OwnedFigmaCredentialAdapter } from "../src/credential-admin-vault.js";
 import { LocalSessionAuthenticator } from "../src/security.js";
 import { deferred } from "./deferred.js";
 
@@ -18,7 +19,7 @@ const reference = {
   providerId: "figma_rest",
   store: "windows-credential-manager",
 } as const;
-function fixture(clock?: Clock) {
+function fixture(clock?: Clock, nativeNull = false) {
   const raw = syntheticContext(clock ? { clock } : {});
   const sessions = new LocalSessionAuthenticator({
     clock: raw.clock,
@@ -63,6 +64,34 @@ function fixture(clock?: Clock) {
       return present;
     },
   };
+  if (nativeNull) {
+    const read = backend.read.bind(backend);
+    const write = backend.write.bind(backend);
+    const remove = backend.remove.bind(backend);
+    const adapter = new OwnedFigmaCredentialAdapter(
+      {
+        projectId: raw.projectId,
+        actorId: authorization.actorId,
+        reference,
+      },
+      async () => ({
+        AsyncEntry: class {
+          async getSecret() {
+            return (await read()) ?? null;
+          }
+          setSecret(bytes: Uint8Array) {
+            return write(bytes);
+          }
+          deleteCredential() {
+            return remove();
+          }
+        },
+      }),
+    );
+    backend.read = adapter.read.bind(adapter);
+    backend.write = adapter.write.bind(adapter);
+    backend.remove = adapter.remove.bind(adapter);
+  }
   const admin = new CredentialAdministration({
     projectId: raw.projectId,
     actorId: authorization.actorId,
@@ -97,6 +126,50 @@ const admit = (
     },
     f.context,
   );
+
+it.skipIf(process.platform !== "win32")(
+  "native null supports absent status/setup/removal without permitting a present-value overwrite",
+  async () => {
+    const f = fixture(undefined, true);
+    expect(await f.admin.execute(await admit(f, "status"))).toMatchObject({
+      status: "complete",
+      value: { presence: "absent" },
+    });
+    expect(
+      await f.admin.execute(
+        await admit(f, "setup"),
+        Buffer.from("synthetic-native-only"),
+      ),
+    ).toMatchObject({ status: "complete", value: { presence: "present" } });
+    expect(
+      await f.admin.execute(
+        await admit(f, "setup"),
+        Buffer.from("must-not-overwrite"),
+      ),
+    ).toMatchObject({ error: { code: "CONFLICT" } });
+    expect(f.calls.filter((call) => call === "write")).toHaveLength(1);
+    expect(await f.admin.execute(await admit(f, "remove"))).toMatchObject({
+      status: "complete",
+      value: { presence: "absent" },
+    });
+    expect(await f.admin.execute(await admit(f, "status"))).toMatchObject({
+      status: "complete",
+      value: { presence: "absent" },
+    });
+    await f.backend.write(new Uint8Array());
+    const writes = f.calls.filter((call) => call === "write").length;
+    expect(await f.admin.execute(await admit(f, "status"))).toMatchObject({
+      value: { presence: "present" },
+    });
+    expect(
+      await f.admin.execute(
+        await admit(f, "setup"),
+        Buffer.from("must-not-overwrite-empty"),
+      ),
+    ).toMatchObject({ error: { code: "CONFLICT" } });
+    expect(f.calls.filter((call) => call === "write")).toHaveLength(writes);
+  },
+);
 
 it("enrolls only a fresh entry, reports exact-entry status, confirms replacement/removal and never returns bytes", async () => {
   const f = fixture();

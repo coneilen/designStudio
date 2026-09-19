@@ -316,12 +316,28 @@ Cancellation is checked before/after native work. The native call is deliberatel
 not passed an AbortSignal: N-API abort-wrapper rejection does not prove the
 underlying native read has settled. Late returned bytes are zeroed and rejected.
 
+Both native byte-read adapters validate an `unknown` result at one shared
+internal boundary. Only `null` and `undefined` normalize to internal absence.
+An actual `Uint8Array` retains its identity, including empty bytes (which are
+present, not absence); strings, arrays, other objects/types and shared buffers
+fail closed without exposing the returned value. Native rejection remains a
+sanitized failure. Admin reads return `undefined` for absence; the consumer
+reader still throws `RESOURCE_UNRESOLVED`, never a successful missing secret.
+
 `nativeVaultCapability()` loads the module without constructing an entry.
 The Windows x64 prebuilt module loaded on Node 24.21.0 with install scripts
 disabled and no compiler; missing binding/unsupported host remains explicit.
 Injected-native tests exercise the byte API, missing entry, error and abort
-paths. **No actual user's vault was read or modified.** Windows live access,
-locked/permission prompts and all macOS native execution remain unverified.
+paths. A separately authorized Windows dummy-key preflight and same-key
+type-only diagnostic observed actual `null` from pinned 2.0.0 asynchronous
+`getSecret`, despite its `.d.ts` declaring `Uint8Array | undefined`. The shipped
+loader directly exports the native class; its synchronous declaration also
+documents `null`. This correction therefore validates runtime values rather
+than trusting that asynchronous declaration. The diagnostic used one newly
+generated test actor/project/reference mapping, not an existing user credential
+or native-project authority claim. It performed no enumeration, write or delete.
+Write/read/delete lifecycle, installed enrollment, locked/permission behavior
+and all macOS native execution remain separate proof gates.
 The package is MIT; retain its notices and native dependency notices when
 distributing. No dependency build-policy exception is needed for the tested
 prebuilt path.
