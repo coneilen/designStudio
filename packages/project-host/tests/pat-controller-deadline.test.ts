@@ -72,6 +72,12 @@ it.each([
   "parent-first",
   "helper-first",
   "manual-near",
+  "manual-deadline",
+  "manual-deadline-repeated",
+  "manual-deadline-badframe",
+  "manual-deadline-cleanup-failed",
+  "manual-helper-error",
+  "expired-cancel-repeated",
   "cleanup-failed",
   "abnormal-exit",
   "partial-eof",
@@ -82,6 +88,8 @@ it.each([
 ] as const)(
   "actual controller/helper deadline ordering without native/UI calls: %s",
   async (mode) => {
+    const helperDeadline = mode.startsWith("manual-deadline");
+    const manual = mode.startsWith("manual-");
     expect(vi.isMockFunction(spawn)).toBe(true);
     expect(vi.isMockFunction(collectWindowsPat)).toBe(true);
     vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
@@ -100,7 +108,7 @@ it.each([
     const pipes = patMemoryPair();
     if (mode === "missing-eof" || mode === "late-terminal-no-eof")
       pipes.child.endPeerOnDestroy = false;
-    if (mode === "partial-eof") {
+    if (mode === "partial-eof" || mode === "manual-deadline-badframe") {
       const destroy = pipes.child.destroy.bind(pipes.child);
       vi.spyOn(pipes.child, "destroy").mockImplementation((error) => {
         if (!pipes.child.destroyed) pipes.parent.push(Buffer.alloc(12));
@@ -118,6 +126,13 @@ it.each([
       return true;
     };
     const channel = new PatChannel(pipes.child);
+    const receipts: { at: number; reason: number }[] = [];
+    const send = channel.send.bind(channel);
+    vi.spyOn(channel, "send").mockImplementation((kind, sequence, bytes) => {
+      if (kind === PatKind.error)
+        receipts.push({ at: performance.now(), reason: bytes?.[0] ?? 0 });
+      return send(kind, sequence, bytes);
+    });
     const returned: Buffer[] = [];
     let releaseHung: (() => void) | undefined;
     let cleaned = false;
@@ -132,7 +147,9 @@ it.each([
             if (timer) clearTimeout(timer);
             signal.removeEventListener("abort", cancelled);
             const settled = () => {
-              cleaned = mode !== "cleanup-failed";
+              cleaned =
+                mode !== "cleanup-failed" &&
+                mode !== "manual-deadline-cleanup-failed";
               if (mode === "late-accepted") {
                 const bytes = Buffer.from("synthetic-late-input");
                 returned.push(bytes);
@@ -140,7 +157,11 @@ it.each([
               } else
                 reject(
                   new NativePatDialogError(
-                    code,
+                    helperDeadline
+                      ? "DEADLINE_EXCEEDED"
+                      : mode === "manual-helper-error"
+                        ? "INTERRUPTED"
+                        : code,
                     cleaned,
                     cleaned ? undefined : "window-destroy",
                   ),
@@ -148,7 +169,10 @@ it.each([
             };
             if (mode === "hung-cleanup") releaseHung = settled;
             else
-              setTimeout(settled, mode === "late-terminal-no-eof" ? 4900 : 2);
+              setTimeout(
+                settled,
+                mode === "late-terminal-no-eof" ? 4900 : helperDeadline ? 3 : 2,
+              );
           };
           const cancelled = () => finish("CANCELLED");
           signal.addEventListener("abort", cancelled, { once: true });
@@ -173,7 +197,7 @@ it.each([
       start.bytes.fill(0);
       expect(duration).toBe(300000);
       inputDeadline = performance.now() + duration;
-      if (mode === "parent-first")
+      if (mode === "parent-first" || mode === "expired-cancel-repeated")
         await new Promise<void>((resolve) => setTimeout(resolve, 5));
       const code = await runPatDialogInput(channel, duration);
       if (mode !== "hung-cleanup") {
@@ -201,9 +225,18 @@ it.each([
     try {
       await vi.advanceTimersByTimeAsync(10);
       expect(inputDeadline).toBeGreaterThan(0);
-      if (mode === "manual-near") {
+      if (manual) {
         await vi.advanceTimersByTimeAsync(inputDeadline - 1 - Date.now());
+        expect(performance.now()).toBe(300999);
         abort.abort();
+      }
+      if (
+        mode === "manual-deadline-repeated" ||
+        mode === "expired-cancel-repeated"
+      ) {
+        await vi.advanceTimersByTimeAsync(inputDeadline + 1 - Date.now());
+        run.cancel();
+        run.cancel();
       }
       const needsGrace = [
         "missing-eof",
@@ -221,11 +254,37 @@ it.each([
       }
       const error = await result;
       expect(delivered).toBe(false);
-      if (["parent-first", "helper-first", "late-accepted"].includes(mode))
+      if (helperDeadline) expect(receipts).toEqual([{ at: 301002, reason: 2 }]);
+      if (mode === "parent-first" || mode === "expired-cancel-repeated")
+        expect(receipts).toEqual([{ at: 301002, reason: 1 }]);
+      if (
+        [
+          "parent-first",
+          "helper-first",
+          "late-accepted",
+          "expired-cancel-repeated",
+        ].includes(mode)
+      )
         expect(error).toMatchObject({ code: "DEADLINE_EXCEEDED" });
-      else if (mode === "manual-near")
+      else if (
+        ["manual-near", "manual-deadline", "manual-deadline-repeated"].includes(
+          mode,
+        )
+      )
         expect(error).toMatchObject({ code: "CANCELLED" });
       else expect(error).toBeDefined();
+      if (
+        mode === "manual-deadline-badframe" ||
+        mode === "manual-deadline-cleanup-failed"
+      ) {
+        expect(error).toMatchObject({
+          code: expect.stringMatching(/^(TRANSPORT_UNAVAILABLE|INTERRUPTED)$/),
+        });
+      }
+      if (mode === "manual-helper-error") {
+        expect(receipts).toEqual([{ at: 301001, reason: 3 }]);
+        expect(error).toMatchObject({ code: "INTERRUPTED" });
+      }
       if (mode === "hung-cleanup") {
         expect(await run.close()).toMatchObject({
           closed: false,
@@ -244,6 +303,10 @@ it.each([
         "parent-first",
         "helper-first",
         "manual-near",
+        "manual-deadline",
+        "manual-deadline-repeated",
+        "expired-cancel-repeated",
+        "manual-helper-error",
         "late-accepted",
       ].includes(mode);
       expect(await run.close()).toMatchObject({

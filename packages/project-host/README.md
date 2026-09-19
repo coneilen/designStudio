@@ -168,6 +168,10 @@ Fake-clock tests exercise both endpoint orders, START-delivery offset, near-
 deadline cancellation, late accepted-byte zeroing and hung teardown without
 native UI. The supervised READY-but-interrupted attempt remains failed evidence;
 no actual Win32 timeout or user behavior success is inferred from those tests.
+For otherwise valid cancel/deadline receipts, the first locally recorded stop
+cause takes precedence; a later helper deadline cannot relabel an earlier
+manual cancellation. Protocol, transport and cleanup failures still override
+ordinary cancellation and never become confirmed cleanup through this rule.
 
 Narrow Windows **fresh fixture-catalog projects only** provisioning for F08.
 This is not arbitrary directory adoption, an ACL repair service, an HTTP setup

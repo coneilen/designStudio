@@ -339,7 +339,10 @@ export function startCapturePatDialog(
             inputStopped = true;
             if (deadlineTimer) clearTimeout(deadlineTimer);
             beginTerminal();
-            const reason = frame.bytes[0];
+            let reason = frame.bytes[0];
+            // cancel() fixes the local cause; an ordinary receipt cannot relabel it.
+            if ((reason === 1 || reason === 2) && abort.signal.aborted)
+              reason = expired ? 2 : 1;
             failure =
               reason === 1
                 ? new HostBoundaryError("CANCELLED", "PAT entry cancelled.")
