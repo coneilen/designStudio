@@ -317,6 +317,9 @@ URL credentials/query/fragment metadata. `addSecret` returns an idempotent
 release function; overlapping registrations are reference-counted, so one
 operation cannot remove another's redaction. Avoid logging untrusted objects or
 design content in the first place; it is not an all-secrets detector.
+`containsSecretValue` applies the existing callback-result check to parsed
+private capture data, including encoded strings and numeric byte-array aliases;
+it does not weaken the credential callback return guard.
 `decideEgress` defaults deny and records provider, data classes and evidence IDs
 separately from configured policy. Every class and exact provider must be
 allowed, with a trusted `model-egress` grant and nonzero external-call budget.

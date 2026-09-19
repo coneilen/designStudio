@@ -223,6 +223,9 @@ export class Redactor {
   containsSecret(text: string): boolean {
     return [...this.secrets.keys()].some((secret) => text.includes(secret));
   }
+  containsSecretValue(value: unknown): boolean {
+    return secretInValue(value, this);
+  }
   redact(text: string): string {
     let safe = text;
     for (const secret of [...this.secrets.keys()].sort(

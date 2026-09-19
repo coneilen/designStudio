@@ -122,6 +122,30 @@ importers:
         specifier: workspace:*
         version: link:../contracts
 
+  packages/figma-capture:
+    dependencies:
+      '@design-studio/assets':
+        specifier: workspace:*
+        version: link:../assets
+      '@design-studio/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@design-studio/design-ir':
+        specifier: workspace:*
+        version: link:../design-ir
+      '@design-studio/figma-import':
+        specifier: workspace:*
+        version: link:../figma-import
+      '@design-studio/host':
+        specifier: workspace:*
+        version: link:../host
+      '@design-studio/jobs':
+        specifier: workspace:*
+        version: link:../jobs
+      '@design-studio/storage':
+        specifier: workspace:*
+        version: link:../storage
+
   packages/figma-import:
     dependencies:
       '@design-studio/contracts':
