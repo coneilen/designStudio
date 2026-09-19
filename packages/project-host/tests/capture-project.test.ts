@@ -28,6 +28,7 @@ it("requires a runtime-owned capture installation before native project access",
           bootstrapEntry: "fake",
           cliEntry: "fake",
           dialogEntry: "fake",
+          sqliteBinding: "fake",
         },
         recheck: async () => {},
         checkCurrent: async () => {},
@@ -36,10 +37,10 @@ it("requires a runtime-owned capture installation before native project access",
     ),
   ).rejects.toThrow(/verified capture installation/);
 });
-it("admits only the exact closed nonnetwork capture policy", () => {
+it("admits only the exact closed capture policy without learned origins", () => {
   validateCapturePolicy(capturePolicyBytes());
   const policy = JSON.parse(capturePolicyBytes().toString());
-  policy.apiOrigins.push("https://api.figma.com");
+  policy.apiOrigins.push("https://unapproved.invalid");
   expect(() =>
     validateCapturePolicy(Buffer.from(JSON.stringify(policy))),
   ).toThrow();

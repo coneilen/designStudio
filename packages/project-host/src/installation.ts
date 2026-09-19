@@ -49,6 +49,7 @@ export interface CaptureInstallationPaths {
   readonly bootstrapEntry: string;
   readonly cliEntry: string;
   readonly dialogEntry: string;
+  readonly sqliteBinding: string;
 }
 export interface CaptureInstallationLease {
   readonly paths: CaptureInstallationPaths;
@@ -338,6 +339,7 @@ function capturePaths(root: string): CaptureInstallationPaths {
       "dist",
       "pat-dialog-helper.js",
     ),
+    sqliteBinding: path.join(root, "payload", "native", "better_sqlite3.node"),
   });
 }
 function required(meta: Metadata): void {
@@ -353,6 +355,9 @@ function required(meta: Metadata): void {
     : [
         "packages/cli/dist/capture-main.js",
         "packages/project-host/dist/pat-dialog-helper.js",
+        "native/better_sqlite3.node",
+        "node_modules/@design-studio/figma-capture/dist/index.js",
+        "node_modules/@design-studio/figma-import/dist/index.js",
         "node_modules/@design-studio/project-host/dist/index.js",
         "capture-policy.json",
       ])

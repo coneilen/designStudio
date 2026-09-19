@@ -20,7 +20,7 @@ import { loadNative, refuse } from "./native.js";
 /** Native-only composition. Neither paths, JSON grants nor fixture bindings are accepted. */
 export async function openCaptureCredentials(project: CaptureProject) {
   const owned = captureProjectOwner(project);
-  if (owned.users)
+  if (owned.users || owned.work)
     refuse(
       "This capture project's credential reference already has an active owner.",
     );

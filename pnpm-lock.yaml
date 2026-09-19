@@ -50,6 +50,12 @@ importers:
       '@design-studio/design-ir':
         specifier: workspace:*
         version: link:../design-ir
+      '@design-studio/figma-capture':
+        specifier: workspace:*
+        version: link:../figma-capture
+      '@design-studio/figma-import':
+        specifier: workspace:*
+        version: link:../figma-import
       '@design-studio/host':
         specifier: workspace:*
         version: link:../host

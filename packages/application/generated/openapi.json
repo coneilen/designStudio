@@ -4014,6 +4014,124 @@
               "nextEligibleAt": { "$ref": "#/definitions/Timestamp" }
             }
           },
+          "NativeCaptureEnvelope": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "schemaVersion",
+              "operation",
+              "projectId",
+              "requestId",
+              "status"
+            ],
+            "properties": {
+              "schemaVersion": { "$ref": "#/definitions/SchemaVersion" },
+              "operation": {
+                "enum": ["capture", "inspect", "convert", "artifact"]
+              },
+              "projectId": { "$ref": "#/definitions/StableId" },
+              "requestId": { "$ref": "#/definitions/StableId" },
+              "status": {
+                "enum": [
+                  "accepted",
+                  "complete",
+                  "partial",
+                  "failed",
+                  "unavailable",
+                  "cancelled",
+                  "interrupted"
+                ]
+              },
+              "error": { "$ref": "#/definitions/ContractError" },
+              "value": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "jobId",
+                  "jobStatus",
+                  "artifacts",
+                  "readiness",
+                  "missing"
+                ],
+                "properties": {
+                  "jobId": { "$ref": "#/definitions/StableId" },
+                  "jobStatus": { "$ref": "#/definitions/JobStatus" },
+                  "capture": { "$ref": "#/definitions/FigmaCaptureResult" },
+                  "readiness": {
+                    "enum": ["not-evaluated", "needs-review", "blocked"]
+                  },
+                  "missing": {
+                    "type": "array",
+                    "maxItems": 64,
+                    "items": { "type": "string", "maxLength": 160 }
+                  },
+                  "remediationOrigin": {
+                    "type": "string",
+                    "pattern": "^https://[A-Za-z0-9.-]+$",
+                    "maxLength": 260
+                  },
+                  "outputRelative": { "$ref": "#/definitions/RelativePath" },
+                  "artifacts": {
+                    "type": "array",
+                    "maxItems": 32,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["role", "artifact"],
+                      "properties": {
+                        "role": {
+                          "enum": [
+                            "metadata",
+                            "nodes",
+                            "render-map",
+                            "reference",
+                            "source",
+                            "manifest",
+                            "result",
+                            "design",
+                            "resources",
+                            "source-map",
+                            "conversion-evidence",
+                            "provenance",
+                            "report"
+                          ]
+                        },
+                        "artifact": { "$ref": "#/definitions/Artifact" }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "status": { "enum": ["accepted", "complete", "partial"] }
+                  },
+                  "required": ["status"]
+                },
+                "then": { "required": ["value"] }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "status": {
+                      "enum": [
+                        "partial",
+                        "failed",
+                        "unavailable",
+                        "cancelled",
+                        "interrupted"
+                      ]
+                    }
+                  },
+                  "required": ["status"]
+                },
+                "then": { "required": ["error"] }
+              }
+            ]
+          },
           "FigmaIntakeManifest": {
             "type": "object",
             "additionalProperties": false,
@@ -4182,7 +4300,9 @@
             ],
             "properties": {
               "schemaVersion": { "$ref": "#/definitions/SchemaVersion" },
-              "adapter": { "const": "figma-offline-fixed-v1" },
+              "adapter": {
+                "enum": ["figma-offline-fixed-v1", "figma-structure-fixed-v1"]
+              },
               "source": { "$ref": "#/definitions/ArtifactReference" },
               "entries": {
                 "type": "array",

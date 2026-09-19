@@ -93,6 +93,17 @@ Repeated close is safe. A close rejected for interrupted publication leaves
 the boundary usable for the existing owned-retry recovery path.
 F03 owns cross-instance maintenance, database references and crash recovery.
 
+`closePreservingStages()` uses the same serialized lifecycle and busy/uncertain
+publication refusals, but leaves every pending stage file and directory
+physically unchanged. After quiescence it closes admission and releases only
+in-memory metadata, for native capture attempts whose existing job journal must
+survive interruption. Later preserve-close or ordinary close is a no-op: it
+cannot silently delete those retained files or recreate staging directories.
+Reads/stages/publish/discard remain refused. A failed uncertain-publication
+close retains the live boundary and exact metadata for authorized reconciliation.
+This is disposal, not stage adoption, effect settlement, recovery completion or
+deletion authority; the default `close()` behavior on an open boundary is unchanged.
+
 Published paths round-trip without assuming the input and artifact roots match:
 `read({artifactRootId: "artifacts", path: published.path}, context)`.
 The root ID is retained by the caller alongside the contract artifact; it is

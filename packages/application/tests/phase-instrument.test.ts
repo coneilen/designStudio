@@ -26,6 +26,23 @@ it("patches only expected copied functions exactly once before inventory and lea
       "render-worker.js",
     );
     const before = await readFile(entry);
+    const installationPath = path.join(
+      root,
+      "packages",
+      "project-host",
+      "dist",
+      "installation.js",
+    );
+    const installationBefore = await readFile(installationPath, "utf8");
+    const captureWrappers = (text: string) => [
+      text.match(
+        /export async function verifyCaptureInstallation\(\) \{[\s\S]*?\n\}/,
+      )?.[0],
+      text.match(
+        /export async function verifyCaptureInstalledRoot\(root\) \{[\s\S]*?\n\}/,
+      )?.[0],
+    ];
+    expect(captureWrappers(installationBefore).every(Boolean)).toBe(true);
     await instrumentCandidate(root, diagnostics);
     expect(await readFile(entry)).toEqual(before);
     const changed = await readFile(
@@ -52,6 +69,26 @@ it("patches only expected copied functions exactly once before inventory and lea
     expect(installation).toContain(
       "verifyTree(native, root, allFiles(meta), sid, true, trace)",
     );
+    expect(captureWrappers(installation)).toEqual(
+      captureWrappers(installationBefore),
+    );
+    expect(installation).toContain(
+      'const lease = await verifyProfileRoot(root, "fixture", trace);',
+    );
+    expect(installation).toContain(
+      "async function verifyProfileRoot(root, profile, trace) {",
+    );
+    expect(
+      installation.match(
+        /export async function verifyFixtureInstallation\(\) \{[\s\S]*?\n\}/,
+      )?.[0],
+    ).toContain(
+      "const result = await verifyInstalledRoot(await verifiedBootstrapRoot());",
+    );
+    expect(installation.match(/"verify-start"/g)).toHaveLength(1);
+    expect(
+      installation.match(/const trace = traceInstallation\(true\)/g),
+    ).toHaveLength(1);
     const native = await readFile(
       path.join(root, "packages", "project-host", "dist", "native.js"),
       "utf8",

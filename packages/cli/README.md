@@ -128,7 +128,29 @@ launch.mjs capture credential status --project <capture-ID> --confirm-reference 
 launch.mjs capture credential remove --project <capture-ID> --confirm-reference <figma_pat-ID> [--json]
 launch.mjs capture credential setup --project <capture-ID> --confirm-reference <figma_pat-ID> --interactive
 launch.mjs capture credential update --project <capture-ID> --confirm-reference <figma_pat-ID> --interactive
+launch.mjs capture figma capture --project <capture-ID> --url <single-frame URL> --request-id <logical ID>
+launch.mjs capture figma inspect --project <capture-ID> --request-id <logical ID>
+launch.mjs capture figma convert --project <capture-ID> --request-id <logical ID>
+launch.mjs capture figma artifact --project <capture-ID> --request-id <logical ID> --role <role> --output <private filename>
 ```
+
+Figma commands emit one closed `NativeCaptureEnvelope`, never raw source.
+Exit 0 means accepted/complete (not render readiness), exit 4 means partial,
+and a failed/cancelled/interrupted result is nonzero. A completed partial job
+is not relabeled full success. The same logical ID cannot change selection;
+replay makes no new network call. Persisted 429 cooldown and unknown spent
+effects prevent automatic retries with another ID. Inspection is metadata only;
+explicit artifact export stays in the owned private project, with no arbitrary
+root, overwrite, raw stdout, source upload or learned CDN allowlist.
+
+Capture has at most four requests/30 seconds across vault/DNS/TLS/HTTP/decode/
+stage/commit. Node/installed closure verification precedes that work deadline.
+Default empty image origins stop after metadata/nodes/render-map with a partial
+result and safe origin remediation. No URL establishes authentication or rights.
+Draft conversion is source-bound to the private committed job and uses the
+shared source-neutral converter, never promotion of offline asserted JSON.
+Remaining actual native UI/vault/ABI/full helper latency/exact-release and
+CDN-origin approval gates are not replaced by synthetic test success.
 
 Setup/update reject `--json` and require explicit `--interactive`; optional
 `--expires-at <ISO timestamp>` is only a user-declared claim. There is no token
@@ -160,8 +182,8 @@ pinned-Node/Job no-UI probe are not a real dialog or vault feasibility proof.
 No real UI display, clipboard read or vault action was run during this slice.
 Synthetic display validation, exact capture release/candidate approval, fresh
 private project creation and real entry enrollment remain separate user gates.
-The existing installed fixture release/project is unchanged. No network capture
-or Figma permission/seat/quota proof is enabled.
+The existing installed fixture release/project is unchanged. Native capture
+code does not establish actual Figma permission, seat or quota availability.
 
 ## Supported invocation model
 

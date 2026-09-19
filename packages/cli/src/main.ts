@@ -86,7 +86,7 @@ try {
         result = success(requestId, {
           kind: "version",
           cliVersion: "1.0.0",
-          contractVersion: "1.3.0",
+          contractVersion: "1.4.0",
           apiVersion: "v1",
           warnings: [],
         });

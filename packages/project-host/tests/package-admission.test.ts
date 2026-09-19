@@ -182,3 +182,54 @@ test("canonical scoped dependencies materialize only inside the exact candidate 
     ).toBe("@scope/safe.name");
   });
 });
+
+test("capture and importer workspace dependencies have a physical runtime closure without source fallback", async () => {
+  await ownedTest(async (root) => {
+    const workspace = path.join(root, "workspace");
+    const destination = path.join(root, "candidate", "node_modules");
+    await manifest(path.join(workspace, "packages", "root"), {
+      name: "safe-root",
+      version: "1.0.0",
+      files: [],
+      dependencies: { "@design-studio/figma-capture": "workspace:*" },
+    });
+    for (const name of ["figma-capture", "figma-import"]) {
+      const directory = path.join(workspace, "packages", name);
+      await manifest(directory, {
+        name: `@design-studio/${name}`,
+        version: "1.0.0",
+        type: "module",
+        files: ["dist"],
+        exports: { ".": "./dist/index.js" },
+        ...(name === "figma-capture"
+          ? { dependencies: { "@design-studio/figma-import": "workspace:*" } }
+          : {}),
+      });
+      await mkdir(path.join(directory, "dist"));
+      await writeFile(
+        path.join(directory, "dist", "index.js"),
+        name === "figma-capture"
+          ? 'export { marker } from "@design-studio/figma-import";'
+          : 'export const marker = "synthetic-physical-closure";',
+      );
+    }
+    expect(await admission(workspace, destination)).toEqual({
+      status: "copied",
+      blocked: 0,
+    });
+    const result = await execute(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        'const value = await import("@design-studio/figma-capture"); process.stdout.write(value.marker);',
+      ],
+      { cwd: path.dirname(destination), env: {}, timeout: 5000 },
+    );
+    expect(result.stdout).toBe("synthetic-physical-closure");
+    for (const name of ["figma-capture", "figma-import"])
+      expect(
+        await readdir(path.join(destination, "@design-studio", name)),
+      ).toEqual(["dist", "package.json"]);
+  });
+});

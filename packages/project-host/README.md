@@ -4,19 +4,23 @@
 
 `figma-capture-v1` is a closed Windows x64 profile distinct from the fixture
 release. Its exact canonical policy authorizes only `capture` / `pat-helper`
-roles and native project/credential commands; API and image origin lists are
-empty. Version-1 fixture metadata, catalog policy and `installations` namespace
+roles and native project/credential/selected-frame commands. API access is fixed
+to `https://api.figma.com`, with four calls and an original 30-second work deadline;
+the independent image-origin list remains empty. Version-1 fixture metadata, catalog policy and `installations` namespace
 are unchanged. Capture releases use version-2 policy and `capture-releases`;
 wrong-profile roles fail before admission.
 
 Candidate tooling accepts
-`--profile figma-capture-v1 --workspace <build> --node-root <pinned runtime> --output <NEW candidate>`.
+`--profile figma-capture-v1 --workspace <build> --node-root <pinned runtime> --sqlite-binding <approved binding> --output <NEW candidate>`.
 It reuses physical dependency copying, inventory, pinned Node, bootstrap preflight,
 native installation publication and resolution guards. No fixture catalog/browser
 is repurposed. Packaging refuses until the actual capture CLI and PAT-helper
 compiled roles exist; provisioning alone is not a shipped input command.
 Installation still requires independent approval of BOTH exact payload and
 bootstrap digests. No capture candidate or installation is approved implicitly.
+Capture roles include the capture/import workspace packages and the pinned
+SQLite binding. This changed policy selects a new independently approved
+namespace; it does not upgrade or adopt the old credential-only project profile.
 
 `verifyCaptureInstallation` creates a process-owned live lease, not a structural
 JSON grant. `openCaptureProject(lease)` creates one new app-ID project under the
@@ -86,6 +90,15 @@ Tests use only exact owned TEMP roots and synthetic native vault methods. Most
 candidate fixtures are inert; the explicitly named no-UI process probe uses the
 approved pinned Node bytes with a synthetic lifecycle peer. Neither establishes
 live vault or dialog behavior.
+
+`acquireCaptureWork(project)` accepts only the process's actual registry-owned
+project. Its work loan excludes simultaneous credential/dialog work. Fixed-scope
+native authority is issued internally using the current principal, project,
+installed policy, original deadline and declared credential expiry. It accepts
+neither an authority callback nor caller grants. `credentials()` reads only the
+fixed app-owned entry through ScopedCredentialStore; no lookup occurs on import
+or construction. Original readers remain held through actual settlement, and
+late buffers are zeroed before close can release the native loan.
 
 ## Fixed owned PAT dialog role
 

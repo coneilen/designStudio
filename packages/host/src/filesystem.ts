@@ -183,6 +183,7 @@ export class ProjectFileSystem implements FileSystemBoundary {
   private readonly nativePublisher = new WindowsNtfsPublisher();
   private tail: Promise<void> = Promise.resolve();
   private closed = false;
+  private preserved = false;
   private constructor(private readonly options: ProjectFileSystemOptions) {
     if (
       options.publicationProfile !== undefined &&
@@ -739,6 +740,18 @@ export class ProjectFileSystem implements FileSystemBoundary {
   close(): Promise<void> {
     return this.serial(() => this.cleanup(), true);
   }
+  /** Dispose this boundary without discarding privately journaled source attempts. */
+  closePreservingStages(): Promise<void> {
+    return this.serial(async () => {
+      if (this.preserved) return;
+      this.assertCloseable();
+      this.closed = true;
+      this.preserved = true;
+      this.pending.clear();
+      this.nativeReceipts.clear();
+      for (const root of this.roots.values()) delete root.staging;
+    }, true);
+  }
   get publicationDurability(): string {
     return this.options.publicationProfile === WINDOWS_PUBLICATION_PROFILE
       ? "documented-ntfs-write-through-request-not-power-cut-tested"
@@ -1111,7 +1124,7 @@ export class ProjectFileSystem implements FileSystemBoundary {
       return { removed: true };
     });
   }
-  private async cleanup(): Promise<void> {
+  private assertCloseable(): void {
     if ([...this.pending.values()].some((pending) => pending.busy))
       throw new HostBoundaryError(
         "CONFLICT",
@@ -1126,6 +1139,10 @@ export class ProjectFileSystem implements FileSystemBoundary {
         "OUTPUT_UNCERTAIN",
         "Visible interrupted publications must be reconciled before close; the boundary remains usable for retry.",
       );
+  }
+  private async cleanup(): Promise<void> {
+    if (this.preserved) return;
+    this.assertCloseable();
     this.closed = true;
     for (const [id, pending] of this.pending) {
       await this.checkStaging(pending.root);

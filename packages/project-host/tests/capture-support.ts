@@ -21,6 +21,7 @@ import { ownedTest, weakenTestAcl } from "./support.js";
 interface CaptureFixtureBytes {
   node?: Buffer;
   helper?: Buffer;
+  sqlite?: Buffer;
 }
 export async function captureCandidate(
   root: string,
@@ -48,6 +49,9 @@ export async function captureCandidate(
     "packages/project-host/dist/pat-dialog-helper.js":
       fixture.helper ?? synthetic,
     "node_modules/@design-studio/project-host/dist/index.js": synthetic,
+    "node_modules/@design-studio/figma-capture/dist/index.js": synthetic,
+    "node_modules/@design-studio/figma-import/dist/index.js": synthetic,
+    "native/better_sqlite3.node": fixture.sqlite ?? synthetic,
     "capture-policy.json": capturePolicyBytes(),
   });
   const bootstrap = await write("bootstrap", {
@@ -125,6 +129,7 @@ export async function withCaptureInstallation(
       throw new AggregateError(
         errors,
         "Capture fixture operation/cleanup failed.",
+        { cause: errors[0] },
       );
   });
 }

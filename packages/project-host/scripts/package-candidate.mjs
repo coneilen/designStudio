@@ -432,7 +432,19 @@ export async function packageCandidate({
     throw new Error("Unknown closed release profile.");
   const capture = profile === CAPTURE_PROFILE;
   const packages = capture
-    ? ["contracts", "host", "project-host", "application", "cli"]
+    ? [
+        "contracts",
+        "host",
+        "project-host",
+        "application",
+        "cli",
+        "figma-capture",
+        "figma-import",
+        "design-ir",
+        "assets",
+        "storage",
+        "jobs",
+      ]
     : requiredPackages;
   if (
     process.version !== "v24.21.0" ||
@@ -443,7 +455,7 @@ export async function packageCandidate({
       "Candidate tooling requires pinned Windows x64 Node 24.21.0.",
     );
   for (const item of capture
-    ? [workspace, nodeRoot, output]
+    ? [workspace, nodeRoot, sqliteBinding, output]
     : [workspace, nodeRoot, browserRoot, sqliteBinding, output])
     if (!path.isAbsolute(item))
       throw new Error(
@@ -490,7 +502,7 @@ export async function packageCandidate({
           "browser-windows-x64.json",
         ),
       );
-  if (!capture && (await hashFile(sqliteBinding)).sha256 !== sqliteHash)
+  if ((await hashFile(sqliteBinding)).sha256 !== sqliteHash)
     throw new Error("Unapproved SQLite addon.");
   await verifyRuntime(nodeRoot);
   if ((await hashFile(process.execPath)).sha256 !== runtimeFiles[0].sha256)
@@ -517,6 +529,11 @@ export async function packageCandidate({
     packages.map((name) => path.join(workspace, "packages", name)),
     path.join(payload, "node_modules"),
   );
+  await mkdir(path.join(payload, "native"));
+  await copyPhysical(
+    sqliteBinding,
+    path.join(payload, "native", "better_sqlite3.node"),
+  );
   if (capture) {
     await writeFile(
       path.join(payload, "capture-policy.json"),
@@ -528,11 +545,6 @@ export async function packageCandidate({
     await copyPhysical(
       path.join(workspace, "tests", "fixtures", "foundation"),
       path.join(payload, "fixtures", "foundation"),
-    );
-    await mkdir(path.join(payload, "native"));
-    await copyPhysical(
-      sqliteBinding,
-      path.join(payload, "native", "better_sqlite3.node"),
     );
     await mkdir(path.join(payload, "browser"));
     for (const file of browserInventory.files) {
@@ -593,12 +605,7 @@ export async function packageCandidate({
         : {
             version: 1,
             manifestSha256: digest(manifest),
-            ...(capture
-              ? {
-                  profile: CAPTURE_PROFILE,
-                  capturePolicySha256: CAPTURE_POLICY_SHA256,
-                }
-              : { catalogSha256 }),
+            catalogSha256,
           },
     ),
     { flag: "wx" },
@@ -616,7 +623,9 @@ export async function packageCandidate({
     status: "candidate-awaiting-user-release-approval",
     manifestSha256: digest(manifest),
     bootstrapSha256: digest(bootstrapInventory),
-    catalogSha256,
+    ...(capture
+      ? { profile: CAPTURE_PROFILE, capturePolicySha256: CAPTURE_POLICY_SHA256 }
+      : { catalogSha256 }),
     output,
     provenance:
       "Candidate inventory only. User must independently trust and approve exact bootstrap and payload release before running installation.",
@@ -636,12 +645,13 @@ if (
   ];
   const args = process.argv.slice(2);
   if (
-    args.length === 8 &&
+    args.length === 10 &&
     args[0] === "--profile" &&
     args[1] === CAPTURE_PROFILE &&
     args[2] === "--workspace" &&
     args[4] === "--node-root" &&
-    args[6] === "--output"
+    args[6] === "--sqlite-binding" &&
+    args[8] === "--output"
   ) {
     process.stdout.write(
       `${JSON.stringify(
@@ -649,7 +659,8 @@ if (
           profile: CAPTURE_PROFILE,
           workspace: args[3],
           nodeRoot: args[5],
-          output: args[7],
+          sqliteBinding: args[7],
+          output: args[9],
         }),
         null,
         2,

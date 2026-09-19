@@ -1,6 +1,6 @@
 {
   "name": "@design-studio/contracts",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "private": true,
   "description": "Versioned deterministic Design Studio contracts, authoring boundary, and explicit test utilities.",
   "type": "module",

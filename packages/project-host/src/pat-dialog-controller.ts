@@ -38,7 +38,10 @@ export function startCapturePatDialog(
   signal: AbortSignal,
 ): PatDialogRun {
   const owner = captureProjectOwner(project);
-  if (owner.helpers) refuse("This private project already owns a PAT dialog.");
+  if (owner.helpers || owner.work)
+    refuse(
+      "This private project already owns active capture work or a PAT dialog.",
+    );
   if (!(signal instanceof AbortSignal))
     refuse("Native dialog needs an owned cancellation signal.");
   const nonce = randomBytes(32);

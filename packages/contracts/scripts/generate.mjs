@@ -61,6 +61,7 @@ const publicArtifacts = [
   "FigmaCaptureRequest",
   "FigmaCaptureManifest",
   "FigmaCaptureResult",
+  "NativeCaptureEnvelope",
   "FigmaIntakeManifest",
   "FigmaSourceMap",
   "FigmaConversionEvidence",

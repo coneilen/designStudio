@@ -2,6 +2,12 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { ApplicationError } from "@design-studio/application";
+import {
+  type NativeCaptureInput,
+  type NativeCaptureRuntime,
+  NativeCaptureStartupCleanupRequired,
+  openNativeCapture,
+} from "@design-studio/application/capture";
 import { type ErrorCode, validateContract } from "@design-studio/contracts";
 import {
   type CaptureInstallationLease,
@@ -17,10 +23,18 @@ import {
 
 type Action = "setup" | "status" | "update" | "remove";
 interface NativeArguments {
-  command: "help" | "project-create" | Action;
+  command:
+    | "help"
+    | "project-create"
+    | Action
+    | "figma-capture"
+    | "figma-inspect"
+    | "figma-convert"
+    | "figma-artifact";
   project?: string;
   reference?: string;
   expires?: string;
+  capture?: NativeCaptureInput;
 }
 export function parseCaptureArguments(
   argv: readonly string[],
@@ -29,11 +43,80 @@ export function parseCaptureArguments(
   if (args.length === 0 || (args.length === 1 && args[0] === "--help"))
     return { command: "help" };
   if (
-    args.length > 12 ||
+    args.length > 14 ||
     args.some((arg) => typeof arg !== "string" || arg.length > 256)
   )
     throw new ApplicationError("INVALID_INPUT");
   const [area, verb] = args;
+  if (area === "figma") {
+    if (!verb || !["capture", "inspect", "convert", "artifact"].includes(verb))
+      throw new ApplicationError("INVALID_INPUT");
+    const options = new Map<string, string>();
+    for (let index = 2; index < args.length; index += 2) {
+      const name = args[index];
+      const value = args[index + 1];
+      if (
+        !name ||
+        !value ||
+        value.startsWith("--") ||
+        options.has(name) ||
+        ![
+          "--project",
+          "--request-id",
+          ...(verb === "capture" ? ["--url"] : []),
+          ...(verb === "artifact" ? ["--role", "--output"] : []),
+        ].includes(name)
+      )
+        throw new ApplicationError("INVALID_INPUT");
+      options.set(name, value);
+    }
+    const project = options.get("--project");
+    const requestId = options.get("--request-id");
+    if (
+      !project ||
+      !/^capture_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+        project,
+      ) ||
+      !requestId ||
+      !validateContract("StableId", requestId).success ||
+      (verb === "capture" && !options.has("--url")) ||
+      (verb === "artifact" &&
+        (!options.has("--role") || !options.has("--output")))
+    )
+      throw new ApplicationError("INVALID_INPUT");
+    const role = options.get("--role");
+    const roles = [
+      "metadata",
+      "nodes",
+      "render-map",
+      "reference",
+      "source",
+      "manifest",
+      "result",
+      "design",
+      "resources",
+      "source-map",
+      "conversion-evidence",
+      "provenance",
+      "report",
+    ] as const;
+    const selectedRole = roles.find((item) => item === role);
+    if (role && !selectedRole) throw new ApplicationError("INVALID_INPUT");
+    const operation = verb as NativeCaptureInput["operation"];
+    const url = options.get("--url");
+    const outputRelative = options.get("--output");
+    return {
+      command: `figma-${operation}`,
+      project,
+      capture: {
+        operation,
+        requestId,
+        ...(url ? { url } : {}),
+        ...(selectedRole ? { role: selectedRole } : {}),
+        ...(outputRelative ? { outputRelative } : {}),
+      },
+    };
+  }
   const flags = new Map<string, string | true>();
   for (let index = 2; index < args.length; index++) {
     const name = args[index];
@@ -114,9 +197,12 @@ export async function runCaptureCommand(args: readonly string[]) {
         "project create --new [--json]",
         "credential status|remove --project <ID> --confirm-reference <REF> [--json]",
         "credential setup|update --project <ID> --confirm-reference <REF> --interactive [--expires-at <ISO timestamp>]",
+        "figma capture --project <ID> --url <single-frame URL> --request-id <logical ID>",
+        "figma inspect|convert --project <ID> --request-id <logical ID>",
+        "figma artifact --project <ID> --request-id <logical ID> --role <artifact role> --output <private filename>",
       ],
       limitation:
-        "Native entry needs an independently approved capture release. Setup/update display an app-owned masked Figma PAT dialog; status reads one owned vault entry; remove deletes only the explicitly confirmed entry. No network capture is enabled.",
+        "Native entry needs an independently approved capture release. Setup/update display an app-owned masked Figma PAT dialog; status reads one owned vault entry; remove deletes only the explicitly confirmed entry. Capture allows at most four calls in 30 seconds. The default empty download-origin policy yields a partial result before CDN contact. Inspection is private metadata only; explicit artifact output stays in the owned private project. Conversion is an unapproved draft, never render-readiness.",
     };
   let installation: CaptureInstallationLease | undefined;
   let guard: { close(): void } | undefined;
@@ -125,6 +211,7 @@ export async function runCaptureCommand(args: readonly string[]) {
     | Awaited<ReturnType<typeof openCaptureCredentials>>
     | undefined;
   let dialog: PatDialogRun | undefined;
+  let runtime: NativeCaptureRuntime | undefined;
   let startupCleanup: (() => Promise<void>) | undefined;
   const abort = new AbortController();
   const cancel = () => abort.abort();
@@ -148,7 +235,12 @@ export async function runCaptureCommand(args: readonly string[]) {
         reference: project.reference,
         privateRoot: path.dirname(project.paths.database),
       };
+    } else if (request.capture) {
+      runtime = await openNativeCapture(project);
+      result = await runtime.execute(request.capture, abort.signal);
     } else {
+      if (!["setup", "status", "update", "remove"].includes(request.command))
+        throw new ApplicationError("INVALID_INPUT");
       credentials = await openCaptureCredentials(project);
       let secret: Buffer | undefined;
       try {
@@ -166,7 +258,7 @@ export async function runCaptureCommand(args: readonly string[]) {
         }, 30_000);
         try {
           result = await credentials.execute(
-            request.command,
+            request.command as Action,
             request.reference ?? "",
             abort.signal,
             secret,
@@ -183,7 +275,10 @@ export async function runCaptureCommand(args: readonly string[]) {
     }
   } catch (error) {
     primary = safeCode(error);
-    if (error instanceof CaptureStartupCleanupRequired)
+    if (
+      error instanceof CaptureStartupCleanupRequired ||
+      error instanceof NativeCaptureStartupCleanupRequired
+    )
       startupCleanup = error.close;
   } finally {
     let warned = false;
@@ -203,6 +298,7 @@ export async function runCaptureCommand(args: readonly string[]) {
           await startupCleanup();
           startupCleanup = undefined;
         }
+        await runtime?.close();
         credentials?.close();
         await project?.close();
         guard?.close();
@@ -220,6 +316,29 @@ export async function runCaptureCommand(args: readonly string[]) {
     }
     process.removeListener("SIGINT", cancel);
     process.removeListener("SIGTERM", cancel);
+  }
+  if (primary && request.capture && request.project) {
+    const checked = validateContract("NativeCaptureEnvelope", {
+      schemaVersion: "1.0",
+      operation: request.capture.operation,
+      projectId: request.project,
+      requestId: request.capture.requestId,
+      status:
+        primary === "CANCELLED"
+          ? "cancelled"
+          : primary === "INTERRUPTED"
+            ? "interrupted"
+            : "failed",
+      error: {
+        code: primary,
+        message:
+          "Native capture or cleanup did not complete. Inspect the logical request before any retry.",
+        retryable: false,
+        diagnosticIds: [],
+      },
+    });
+    if (!checked.success) throw new ApplicationError("INTERNAL_ERROR");
+    return checked.value;
   }
   return primary
     ? {
@@ -240,9 +359,14 @@ async function main() {
       result &&
       typeof result === "object" &&
       "status" in result &&
-      result.status === "complete"
+      (result.status === "complete" || result.status === "accepted")
         ? 0
-        : 1;
+        : result &&
+            typeof result === "object" &&
+            "status" in result &&
+            result.status === "partial"
+          ? 4
+          : 1;
   } catch {
     process.stdout.write(
       '{"status":"failed","error":{"code":"INVALID_INPUT","message":"Invalid native capture command."}}\n',

@@ -5,6 +5,11 @@ export {
   openCaptureProject,
 } from "./capture-project.js";
 export {
+  acquireCaptureWork,
+  assertCaptureWork,
+  type CaptureWork,
+} from "./capture-work.js";
+export {
   type CaptureInstallationLease,
   type FixtureInstallationLease,
   type FixtureInstallationPaths,

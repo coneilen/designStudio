@@ -1,13 +1,13 @@
 import { randomUUID } from "node:crypto";
 import type {
   AuthorizationContext,
+  Clock,
   OperationContext,
 } from "@design-studio/contracts";
 import { canonicalDigest } from "@design-studio/design-ir";
 import { authorizeOperation } from "@design-studio/host";
 import type { RecoveryFacts } from "@design-studio/jobs";
 import type { JobReconciliation, StoredJob } from "@design-studio/storage";
-import type { FixturePolicy } from "./policy.js";
 import { ApplicationError } from "./response.js";
 import { PROJECT_ID } from "./routes.js";
 
@@ -17,9 +17,18 @@ interface RecoveryProof {
   interruptedIdentity?: string;
   decisionDigest?: string;
 }
+interface RecoveryPolicy {
+  actorId: string;
+  clock: Clock;
+  verify(authorization: AuthorizationContext): boolean;
+  check(): Promise<void>;
+}
 export class RecoveryDecisions {
   private readonly proofs = new WeakMap<AuthorizationContext, RecoveryProof>();
-  constructor(private readonly policy: FixturePolicy) {}
+  constructor(
+    private readonly policy: RecoveryPolicy,
+    private readonly projectId = PROJECT_ID,
+  ) {}
   private identity(record: RecoveryRecord) {
     return canonicalDigest([
       record.job.projectId,
@@ -37,8 +46,8 @@ export class RecoveryDecisions {
   private checkContext(record: RecoveryRecord, context: OperationContext) {
     if (
       !this.policy.verify(context.authorization) ||
-      context.projectId !== PROJECT_ID ||
-      record.job.projectId !== PROJECT_ID ||
+      context.projectId !== this.projectId ||
+      record.job.projectId !== this.projectId ||
       record.job.actorId !== this.policy.actorId ||
       context.authorization.actorId !== record.job.actorId ||
       context.jobId !== record.job.id ||
@@ -51,7 +60,7 @@ export class RecoveryDecisions {
     authorizeOperation(
       context,
       {
-        projectId: PROJECT_ID,
+        projectId: this.projectId,
         resourceKind: "job",
         resourceId: record.job.id,
         operation: "write",

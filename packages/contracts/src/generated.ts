@@ -376,6 +376,66 @@ export type ErrorCode =
   | "INTERNAL_ERROR";
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "NativeCaptureEnvelope".
+ */
+export type NativeCaptureEnvelope = {
+  [k: string]: unknown;
+} & {
+  schemaVersion: SchemaVersion;
+  operation: "capture" | "inspect" | "convert" | "artifact";
+  projectId: StableId;
+  requestId: StableId;
+  status: "accepted" | "complete" | "partial" | "failed" | "unavailable" | "cancelled" | "interrupted";
+  error?: ContractError;
+  value?: {
+    jobId: StableId;
+    jobStatus: JobStatus;
+    capture?: FigmaCaptureResult;
+    readiness: "not-evaluated" | "needs-review" | "blocked";
+    /**
+     * @maxItems 64
+     */
+    missing: string[];
+    remediationOrigin?: string;
+    outputRelative?: RelativePath;
+    /**
+     * @maxItems 32
+     */
+    artifacts: {
+      role:
+        | "metadata"
+        | "nodes"
+        | "render-map"
+        | "reference"
+        | "source"
+        | "manifest"
+        | "result"
+        | "design"
+        | "resources"
+        | "source-map"
+        | "conversion-evidence"
+        | "provenance"
+        | "report";
+      artifact: Artifact;
+    }[];
+  };
+};
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "JobStatus".
+ */
+export type JobStatus =
+  | "queued"
+  | "running"
+  | "waiting-for-user"
+  | "retry-wait"
+  | "cancel-requested"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "interrupted";
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "Operation".
  */
 export type Operation =
@@ -514,20 +574,6 @@ export type HandoffManifest = {
     })[];
   };
 };
-/**
- * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "JobStatus".
- */
-export type JobStatus =
-  | "queued"
-  | "running"
-  | "waiting-for-user"
-  | "retry-wait"
-  | "cancel-requested"
-  | "completed"
-  | "failed"
-  | "cancelled"
-  | "interrupted";
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "Job".
@@ -753,6 +799,7 @@ export interface ContractCatalog {
   FigmaCaptureRequest: FigmaCaptureRequest;
   FigmaCaptureManifest: FigmaCaptureManifest;
   FigmaCaptureResult: FigmaCaptureResult;
+  NativeCaptureEnvelope: NativeCaptureEnvelope;
   FigmaIntakeManifest: FigmaIntakeManifest;
   FigmaSourceMap: FigmaSourceMap;
   FigmaConversionEvidence: FigmaConversionEvidence;
@@ -1945,6 +1992,18 @@ export interface FigmaCaptureResult {
 }
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "ContractError".
+ */
+export interface ContractError {
+  code: ErrorCode;
+  message: string;
+  retryable: boolean;
+  retryAfter?: Timestamp;
+  jobId?: StableId;
+  diagnosticIds: StableId[];
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "FigmaIntakeManifest".
  */
 export interface FigmaIntakeManifest {
@@ -2011,7 +2070,7 @@ export interface FigmaSourceMap {
  */
 export interface FigmaConversionEvidence {
   schemaVersion: SchemaVersion;
-  adapter: "figma-offline-fixed-v1";
+  adapter: "figma-offline-fixed-v1" | "figma-structure-fixed-v1";
   source: ArtifactReference;
   /**
    * @maxItems 200000
@@ -2348,18 +2407,6 @@ export interface ReadinessReceipt {
   controls: RequiredControl[];
   viewport: Bounds;
   error?: ContractError;
-}
-/**
- * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "ContractError".
- */
-export interface ContractError {
-  code: ErrorCode;
-  message: string;
-  retryable: boolean;
-  retryAfter?: Timestamp;
-  jobId?: StableId;
-  diagnosticIds: StableId[];
 }
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema

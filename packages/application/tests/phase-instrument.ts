@@ -50,13 +50,23 @@ export async function instrumentCandidate(stage: string, directory: string) {
     'globalThis[Symbol.for("design-studio-owned-phase-test")]?.get(import.meta.url.includes("/bootstrap/") ? 1 : 2)';
   let installed = replaceOnce(
     await readFile(installation, "utf8"),
-    "return verifyInstalledRoot(bootstrapOrigin);",
-    `${mark}?.("verify-start");\ntry { const result = await verifyInstalledRoot(bootstrapOrigin); ${mark}?.("verify-end"); return result; }\ncatch(error) { ${mark}?.("verify-failed"); throw error; }`,
+    "export async function verifyFixtureInstallation() {\n    return verifyInstalledRoot(await verifiedBootstrapRoot());\n}",
+    `export async function verifyFixtureInstallation() {\n${mark}?.("verify-start");\ntry { const result = await verifyInstalledRoot(await verifiedBootstrapRoot()); ${mark}?.("verify-end"); return result; }\ncatch(error) { ${mark}?.("verify-failed"); throw error; }\n}`,
   );
   installed = replaceOnce(
     installed,
     "export async function verifyInstalledRoot(root) {",
     "export async function verifyInstalledRoot(root) { const trace = traceInstallation(true); let success = false; try { const result = await diagnosticVerifyInstalledRoot(root, trace); success = true; return result; } finally { trace?.end(success); } }\nasync function diagnosticVerifyInstalledRoot(root, trace) {",
+  );
+  installed = replaceOnce(
+    installed,
+    'const lease = await verifyProfileRoot(root, "fixture");',
+    'const lease = await verifyProfileRoot(root, "fixture", trace);',
+  );
+  installed = replaceOnce(
+    installed,
+    "async function verifyProfileRoot(root, profile) {",
+    "async function verifyProfileRoot(root, profile, trace) {",
   );
   installed = replaceOnce(
     installed,

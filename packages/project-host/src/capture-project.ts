@@ -49,6 +49,7 @@ interface Owned {
   live: boolean;
   users: number;
   helpers: number;
+  work: number;
 }
 const projects = new WeakMap<CaptureProject, Owned>();
 const uuid =
@@ -242,6 +243,7 @@ export async function openCaptureProject(
       live: true,
       users: 0,
       helpers: 0,
+      work: 0,
     };
     const project: CaptureProject = Object.freeze({
       projectId: scope.projectId,
@@ -252,7 +254,7 @@ export async function openCaptureProject(
       recheck: check,
       async close() {
         if (closed) return;
-        if (owned.users || owned.helpers)
+        if (owned.users || owned.helpers || owned.work)
           refuse(
             "Close credential owners and dialog helpers before the private capture project.",
           );
