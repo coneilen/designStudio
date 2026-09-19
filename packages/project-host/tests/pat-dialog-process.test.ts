@@ -19,6 +19,7 @@ it.skipIf(process.platform !== "win32" || process.arch !== "x64")(
     const helper = Buffer.from(`
       // Synthetic lifecycle peer only: no UI, clipboard, vault, or application operation.
       import { Socket } from "node:net";
+      import { createRequire } from "node:module";
       import { setTimeout as delay } from "node:timers/promises";
       import { PatChannel, PatKind } from ${JSON.stringify(moduleUrl("../../host/dist/pat-channel.js"))};
       import { loadJobs } from ${JSON.stringify(moduleUrl("../../host/dist/owned-job.js"))};
@@ -28,6 +29,14 @@ it.skipIf(process.platform !== "win32" || process.arch !== "x64")(
         const init = await channel.read(5000);
         const id = init.bytes.toString("ascii"); init.bytes.fill(0);
         (await loadJobs()).joinCurrent("Local\\\\design-studio-" + id, "pat-dialog");
+        const koffi = createRequire(${JSON.stringify(moduleUrl("../package.json"))})("koffi");
+        const startup = Buffer.alloc(104);
+        try {
+          startup.writeUInt32LE(104);
+          koffi.load("kernel32.dll").func("void __stdcall GetStartupInfoW(_Out_ void *)")(startup);
+          if (startup.readUInt32LE(0) !== 104 || (startup.readUInt32LE(60) & 1) === 0 || startup.readUInt16LE(64) !== 0)
+            throw new Error("Pinned hidden-helper STARTUPINFO mismatch");
+        } finally { startup.fill(0); }
         await channel.send(PatKind.joined, 0);
         const start = await channel.read(5000); start.bytes.fill(0);
         await channel.send(PatKind.ready, 0);

@@ -870,7 +870,12 @@ export async function collectWindowsPat(
         Math.max(1, deadline - performance.now()),
       );
       validLifetime();
-      show(root, 5);
+      // Consume the helper's inherited STARTF_USESHOWWINDOW/SW_HIDE first.
+      // The subsequent SW_SHOWNORMAL explicitly displays only our owned root.
+      show(root, 10);
+      validLifetime();
+      if (closing || !isWindow(root)) throw nativeFailure();
+      show(root, 1);
       if (!isWindow(root) || !visible(root)) throw nativeFailure();
       focus(edit);
       onReady();

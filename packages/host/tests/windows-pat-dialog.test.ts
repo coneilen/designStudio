@@ -117,6 +117,11 @@ class FakeWin32 {
   reentrantPaste = false;
   onClipboard?: () => void;
   accepted = false;
+  startupShow?: number;
+  showCalls: number[] = [];
+  readyCalls = 0;
+  failVisibility = false;
+  onShow?: () => void;
   script: "accept" | "reject" | "cancel" | "ctrl-v" | "shift-insert" = "accept";
   id(id: number) {
     const found = [...this.windows].find(([, value]) => value.id === id);
@@ -210,7 +215,20 @@ class FakeWin32 {
         return window?.visible ? 1 : 0;
       case "ShowWindow": {
         if (!window) throw new Error("Synthetic control absent");
-        window.visible = true;
+        expect(hwnd).toBe(this.root);
+        const wasVisible = window.visible;
+        const requested = Number(args[1]);
+        const command =
+          this.startupShow !== undefined &&
+          (this.showCalls.length === 0 || requested === 10)
+            ? this.startupShow
+            : requested === 10
+              ? 1
+              : requested;
+        this.showCalls.push(requested);
+        window.visible = !this.failVisibility && command !== 0;
+        this.onShow?.();
+        if (!window.visible || wasVisible) return wasVisible ? 1 : 0;
         if (this.script === "cancel")
           this.queue.push({ target: this.root, code: 0x10, wp: 0n, lp: 0n });
         else {
@@ -246,6 +264,7 @@ class FakeWin32 {
       case "EnableWindow":
         return 1;
       case "SetFocus":
+        expect(this.windows.get(this.root)?.visible).toBe(true);
         return 0n;
       case "GetKeyState":
         return (this.script === "ctrl-v" && Number(args[0]) === 0x11) ||
@@ -363,8 +382,77 @@ async function synthetic(
   const koffi = await import("koffi");
   // Safety gate: never execute these tests against a real native/UI binding.
   expect(vi.isMockFunction(koffi.load)).toBe(true);
-  return collectWindowsPat(signal, performance.now() + 5000, () => {});
+  return collectWindowsPat(signal, performance.now() + 5000, () => {
+    expect(script.windows.get(script.root)?.visible).toBe(true);
+    script.readyCalls++;
+  });
 }
+windows(
+  "honors explicit PAT display after the measured inherited first-show SW_HIDE override",
+  async () => {
+    const native = new FakeWin32();
+    native.startupShow = 0;
+    native.script = "cancel";
+    await expect(synthetic(native)).rejects.toMatchObject({
+      primaryCode: "CANCELLED",
+      cleanupComplete: true,
+    });
+    expect(native.showCalls).toEqual([10, 1]);
+    expect(native.readyCalls).toBe(1);
+    expect(native.clipboardReads).toBe(0);
+    expect(native.windows.size).toBe(0);
+    expect(native.callbacks.size).toBe(0);
+  },
+);
+windows(
+  "consumes default startup then explicitly shows only the owned root with ordinary startup",
+  async () => {
+    const native = new FakeWin32();
+    native.script = "cancel";
+    await expect(synthetic(native)).rejects.toMatchObject({
+      primaryCode: "CANCELLED",
+      cleanupComplete: true,
+    });
+    expect(native.showCalls).toEqual([10, 1]);
+    expect(native.clipboardReads).toBe(0);
+  },
+);
+windows(
+  "still fails closed when explicit display remains invisible after two bounded calls",
+  async () => {
+    const native = new FakeWin32();
+    native.startupShow = 0;
+    native.failVisibility = true;
+    await expect(synthetic(native)).rejects.toMatchObject({
+      primaryCode: "INTERRUPTED",
+      cleanupComplete: true,
+    });
+    expect(native.showCalls).toEqual([10, 1]);
+    expect(native.calls).not.toContain("SetFocus");
+    expect(native.calls).not.toContain("PeekMessageW");
+    expect(native.readyCalls).toBe(0);
+    expect(native.clipboardReads).toBe(0);
+    expect(native.windows.size).toBe(0);
+    expect(native.callbacks.size).toBe(0);
+  },
+);
+windows(
+  "rechecks cancellation before consuming the second explicit display call",
+  async () => {
+    const native = new FakeWin32();
+    const abort = new AbortController();
+    native.startupShow = 0;
+    native.onShow = () => abort.abort();
+    await expect(synthetic(native, abort.signal)).rejects.toMatchObject({
+      primaryCode: "CANCELLED",
+      cleanupComplete: true,
+    });
+    expect(native.showCalls).toEqual([10]);
+    expect(native.readyCalls).toBe(0);
+    expect(native.clipboardReads).toBe(0);
+    expect(native.windows.size).toBe(0);
+  },
+);
 windows(
   "synthetic Win32 adapter accepts complete input only after every owned HWND and callback closes",
   async () => {

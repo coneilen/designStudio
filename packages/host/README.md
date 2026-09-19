@@ -443,7 +443,28 @@ never an exception through the native callback boundary or inferred scrub succes
 
 All default UI tests use an explicit mocked-Koffi safety check before invoking
 the adapter. Real Job/pipe no-UI probes import no dialog or clipboard module.
-No real UI, clipboard or vault proof is claimed. Later user-approved synthetic
+The pinned hidden-helper probe also checks actual Windows x64 STARTUPINFO:
+`STARTF_USESHOWWINDOW` is set and `wShowWindow` is `SW_HIDE`. A separately
+approved hidden initialization diagnostic passed real class/control creation,
+five subclasses and cleanup, stopping before any ShowWindow/focus/input call.
+It observed flags `0x101` and show state `0`; this is not display proof.
+
+The original one-call display conflicted with the documented
+[first-ShowWindow startup override](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-showwindow).
+The PAT-only sequence now consumes `SW_SHOWDEFAULT`, rechecks lifetime/owned
+HWND/closing state, and explicitly requests `SW_SHOWNORMAL`. The final
+IsWindow/IsWindowVisible assertions still precede focus and READY. The helper
+console remains hidden; Job membership, fixed argv, before-START behavior,
+five-second startup and five-minute input limits are unchanged. This is two
+documented display steps, not a timer/retry loop or relaxed visibility check.
+The corrected mock models inherited first-show state (and subsequent explicit
+default requests), rather than always making the window visible. The regression
+first reproduced `INTERRUPTED` with successful cleanup, then passed the corrected
+sequence; genuinely invisible windows and cancellation still fail closed.
+
+The previous supervised dummy-only attempt failed before READY. No successful
+real display, masking, clipboard or vault proof is claimed. The correction has
+not been shown to a user yet. Later separately user-approved synthetic
 display testing must verify actual masking, gesture/paste routes, ABI/callback
 lifetime and window/process teardown before any real token enrollment.
 
