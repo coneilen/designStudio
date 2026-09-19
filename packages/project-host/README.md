@@ -121,6 +121,16 @@ requires CLOSED/scrub evidence, child `close` and empty Job membership; forced
 kill or an unconfirmed scrub cannot produce a credential result. Retained
 cleanup is explicit and keeps the project helper count until observed quiescence.
 
+CLOSED is provisional, not a terminal transcript proof. Before delivery the
+controller requires actual peer EOF with no queued extra frames, partial header/
+body or prior receive failure, then actual child close and empty Job membership.
+The terminal validation state survives local disposal; closing a stream cannot
+turn an invalid transcript into a valid one. Extra bytes after CLOSED fail even
+if the first receipt claimed successful cleanup. Staged credential bytes are
+zeroed on violation. Resource owners can be released after proven process/pipe
+quiescence without delivering a credential or reporting scrub-confirmed success
+for a bad protocol.
+
 Five-second startup/close bounds and five-minute input time are distinct from
 admin time and never silently refreshed. The no-UI process probe exercises
 real Job membership, private bytes and observed child exit with a synthetic

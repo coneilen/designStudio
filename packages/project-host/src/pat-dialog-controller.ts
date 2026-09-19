@@ -64,6 +64,7 @@ export function startCapturePatDialog(
   let cancelTransportFailed = false;
   let pipeFailed = false;
   let staged: Buffer | undefined;
+  let terminalDeadline: number | undefined;
   const cancel = () => {
     abort.abort();
     staged?.fill(0);
@@ -113,7 +114,10 @@ export function startCapturePatDialog(
           pipeClose = undefined;
         });
       }
-      const end = performance.now() + 5000;
+      const end =
+        !stop && terminalDeadline !== undefined
+          ? terminalDeadline
+          : performance.now() + 5000;
       while ((child && !observedExit) || (channel && !pipeClosed)) {
         if (performance.now() >= end) {
           cancel();
@@ -294,6 +298,8 @@ export function startCapturePatDialog(
           "PAT input cancelled or expired.",
         );
       if (!ended || !scrubbed || (!staged && !failure)) throw interrupted();
+      terminalDeadline = performance.now() + 5000;
+      await channel.finalizeReceive(5000);
       if (!failure) {
         await project.recheck();
         checkpoint();
@@ -304,7 +310,8 @@ export function startCapturePatDialog(
         !release.closed ||
         observedExit?.code !== 0 ||
         !scrubbed ||
-        spawnFailed
+        spawnFailed ||
+        !channel.receiveFinalized
       )
         throw interrupted();
       if (failure) throw failure;
@@ -315,6 +322,7 @@ export function startCapturePatDialog(
       staged = undefined;
       return result;
     } catch (error) {
+      if (!channel?.receiveFinalized) scrubbed = false;
       staged?.fill(0);
       staged = undefined;
       quiescent = true;

@@ -53,6 +53,12 @@ export class PatChannel {
   #sent = 0;
   #stopped = false;
   #ended = false;
+  #peerEof = false;
+  #disposed = false;
+  #receiveFailed = false;
+  #terminal = false;
+  #finalized = false;
+  #terminalWaiter: { resolve(): void; reject(error: Error): void } | undefined;
   #waiter:
     | { resolve(frame: PatFrame): void; reject(error: Error): void }
     | undefined;
@@ -74,23 +80,32 @@ export class PatChannel {
     this.#nonce = nonce === undefined ? undefined : Buffer.from(nonce);
     this.#closed = new Promise<void>((resolve) => {
       pipe.once("close", () => {
-        this.end();
+        if (!this.#peerEof && !this.#disposed) this.stop(true);
+        this.#ended = true;
         resolve();
       });
     });
     pipe.on("data", this.receive);
-    pipe.on("error", () => this.stop());
+    pipe.on("error", () => {
+      if (!this.#disposed) this.stop(true);
+    });
     pipe.on("end", () => this.end());
   }
   private end() {
     this.#ended = true;
-    if (this.#headerSize || this.#body) this.stop();
-    else if (!this.#frames.length) {
+    this.#peerEof = true;
+    if (this.#disposed || this.#headerSize || this.#body) this.stop(true);
+    else if (this.#terminal) this.finishReceive();
+    if (!this.#frames.length) {
       this.#waiter?.reject(failure());
       this.#waiter = undefined;
     }
   }
-  private stop() {
+  private stop(invalid = true) {
+    if (invalid) this.#receiveFailed = true;
+    else this.#disposed = true;
+    this.#terminalWaiter?.reject(failure());
+    this.#terminalWaiter = undefined;
     if (this.#stopped) return;
     this.#stopped = true;
     this.#header.fill(0);
@@ -109,6 +124,7 @@ export class PatChannel {
       return;
     }
     try {
+      if (chunk.length && (this.#terminal || this.#peerEof)) throw failure();
       let offset = 0;
       while (offset < chunk.length && !this.#stopped) {
         if (!this.#body) {
@@ -169,6 +185,52 @@ export class PatChannel {
       chunk.fill(0);
     }
   };
+  get receiveFinalized(): boolean {
+    return this.#finalized && this.#peerEof && !this.#receiveFailed;
+  }
+  private finishReceive(): void {
+    if (
+      this.#receiveFailed ||
+      this.#disposed ||
+      this.#frames.length ||
+      this.#headerSize ||
+      this.#body
+    ) {
+      this.stop(true);
+      return;
+    }
+    if (this.#peerEof) {
+      this.#finalized = true;
+      this.#terminalWaiter?.resolve();
+      this.#terminalWaiter = undefined;
+    }
+  }
+  /** A terminal frame is not EOF. Disposal cannot manufacture or erase transcript evidence. */
+  async finalizeReceive(timeoutMs: number): Promise<void> {
+    if (this.receiveFinalized) return;
+    if (
+      !Number.isSafeInteger(timeoutMs) ||
+      timeoutMs < 1 ||
+      timeoutMs > 5000 ||
+      this.#waiter ||
+      this.#terminalWaiter
+    )
+      throw failure();
+    this.#terminal = true;
+    this.finishReceive();
+    if (this.#receiveFailed || this.#disposed) throw failure();
+    if (this.receiveFinalized) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        this.#terminalWaiter = { resolve, reject };
+        timer = setTimeout(() => this.stop(true), timeoutMs);
+      });
+      if (!this.receiveFinalized) throw failure();
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
   async read(timeoutMs: number): Promise<PatFrame> {
     if (
       !Number.isSafeInteger(timeoutMs) ||
@@ -227,7 +289,7 @@ export class PatChannel {
     }
   }
   async close(): Promise<void> {
-    this.stop();
+    this.stop(false);
     await Promise.allSettled([...this.#writes]);
     await this.#closed;
     this.pipe.removeListener("data", this.receive);

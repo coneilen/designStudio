@@ -38,6 +38,15 @@ export class NativePatDialogError extends HostBoundaryError {
   constructor(
     readonly primaryCode: ErrorCode,
     readonly cleanupComplete: boolean,
+    readonly cleanupCause?:
+      | "callback"
+      | "subclass-removal"
+      | "default-procedure"
+      | "edit-clear"
+      | "window-destroy"
+      | "class-unregister"
+      | "callback-unregister"
+      | "clipboard",
   ) {
     super(
       cleanupComplete ? primaryCode : "INTERRUPTED",
@@ -285,11 +294,15 @@ export async function collectWindowsPat(
     let accepted: Buffer | undefined;
     let primary: HostBoundaryError | undefined;
     let resourceFailure = false;
+    let callbackFailure: HostBoundaryError | undefined;
+    let cleanupCause: NativePatDialogError["cleanupCause"];
     let timer: ReturnType<typeof setTimeout> | undefined;
     let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
     let boundary: PatEditBoundary | undefined;
     const windows = new Map<string, { hwnd: Handle; id: number }>();
     const destroyed = new Set<string>();
+    const subclassRemoved = new Set<string>();
+    const destructionDefaultCompleted = new Set<string>();
     const message = Buffer.alloc(48);
     const buffers = new Set<Uint8Array>();
     const own = <T extends Uint8Array>(bytes: T): T => {
@@ -299,6 +312,15 @@ export async function collectWindowsPat(
     const wipe = (bytes: Uint8Array) => {
       bytes.fill(0);
       buffers.delete(bytes);
+    };
+    const callbackFailed = (
+      error: HostBoundaryError,
+      cause: NonNullable<NativePatDialogError["cleanupCause"]>,
+    ) => {
+      callbackFailure ??= error;
+      primary ??= error;
+      cleanupCause ??= cause;
+      accepted?.fill(0);
     };
     const validLifetime = () => {
       if (signal.aborted)
@@ -336,22 +358,38 @@ export async function collectWindowsPat(
       if (timer) clearTimeout(timer);
       if (deadlineTimer) clearTimeout(deadlineTimer);
       signal.removeEventListener("abort", abort);
-      let failed = resourceFailure;
+      let failed = resourceFailure || callbackFailure !== undefined;
+      if (resourceFailure) cleanupCause ??= "clipboard";
       try {
         clear();
       } catch {
         failed = true;
+        cleanupCause ??= "edit-clear";
       }
-      if (!nil(root) && isWindow(root)) {
-        try {
-          if (!destroy(root)) failed = true;
-        } catch {
-          failed = true;
+      try {
+        if (!nil(root) && isWindow(root)) {
+          if (!destroy(root)) {
+            failed = true;
+            cleanupCause ??= "window-destroy";
+          }
         }
+      } catch {
+        failed = true;
+        cleanupCause ??= "window-destroy";
       }
-      for (const { hwnd } of windows.values()) {
+      // Destruction invokes synchronous callbacks; inspect sticky failures after they unwind.
+      failed ||= callbackFailure !== undefined;
+      for (const { hwnd, id } of windows.values()) {
         try {
-          if (isWindow(hwnd) || !destroyed.has(key(hwnd))) failed = true;
+          if (
+            isWindow(hwnd) ||
+            !destroyed.has(key(hwnd)) ||
+            !destructionDefaultCompleted.has(key(hwnd)) ||
+            (id !== 0 && !subclassRemoved.has(key(hwnd)))
+          ) {
+            failed = true;
+            cleanupCause ??= "window-destroy";
+          }
         } catch {
           failed = true;
         }
@@ -361,14 +399,18 @@ export async function collectWindowsPat(
       message.fill(0);
       if (!failed) {
         try {
-          if (registered && !unregister(className, instance))
+          if (registered && !unregister(className, instance)) {
+            cleanupCause ??= "class-unregister";
             throw nativeFailure();
+          }
           if (childCallback !== undefined) koffi.unregister(childCallback);
           if (rootCallback !== undefined) koffi.unregister(rootCallback);
         } catch {
           failed = true;
+          cleanupCause ??= "callback-unregister";
         }
       }
+      failed ||= callbackFailure !== undefined;
       try {
         validLifetime();
       } catch (error) {
@@ -378,12 +420,20 @@ export async function collectWindowsPat(
       if (failed || primary || !accepted) {
         accepted?.fill(0);
         reject(
-          new NativePatDialogError(primary?.code ?? "INTERNAL_ERROR", !failed),
+          new NativePatDialogError(
+            primary?.code ?? "INTERNAL_ERROR",
+            !failed,
+            cleanupCause,
+          ),
         );
       } else resolve(accepted);
     };
     const finish = (error?: HostBoundaryError, bytes?: Buffer) => {
       if (closing) {
+        if (error) {
+          primary ??= error;
+          accepted?.fill(0);
+        }
         bytes?.fill(0);
         return;
       }
@@ -427,7 +477,14 @@ export async function collectWindowsPat(
         if (getThread() !== thread) throw nativeFailure();
         return operation();
       } catch (error) {
-        finish(error instanceof HostBoundaryError ? error : nativeFailure());
+        const normalized =
+          error instanceof HostBoundaryError ? error : nativeFailure();
+        if (
+          normalized.code !== "CANCELLED" &&
+          normalized.code !== "DEADLINE_EXCEEDED"
+        )
+          callbackFailed(normalized, "callback");
+        finish(normalized);
         return 0;
       } finally {
         callbackDepth--;
@@ -467,7 +524,16 @@ export async function collectWindowsPat(
                 if (!nil(accept)) enable(accept, textLength(edit) > 0 ? 1 : 0);
               }
             }
-            return defaultProc(hwnd, code, wp, lp);
+            try {
+              const result = defaultProc(hwnd, code, wp, lp);
+              if (code === WM.ncdestroy)
+                destructionDefaultCompleted.add(key(hwnd));
+              return result;
+            } catch {
+              callbackFailed(nativeFailure(), "default-procedure");
+              finish(nativeFailure());
+              return 0;
+            }
           }),
         koffi.pointer(wndproc),
       );
@@ -476,12 +542,24 @@ export async function collectWindowsPat(
           safeCallback(() => {
             if (code === WM.ncdestroy) {
               destroyed.add(key(hwnd));
-              if (
-                childCallback === undefined ||
-                !removeSubclass(hwnd, childCallback, Number(id))
-              )
-                throw nativeFailure();
-              return defaultSubclass(hwnd, code, wp, lp);
+              try {
+                if (
+                  childCallback === undefined ||
+                  !removeSubclass(hwnd, childCallback, Number(id))
+                )
+                  callbackFailed(nativeFailure(), "subclass-removal");
+                else subclassRemoved.add(key(hwnd));
+              } catch {
+                callbackFailed(nativeFailure(), "subclass-removal");
+              }
+              try {
+                const result = defaultSubclass(hwnd, code, wp, lp);
+                destructionDefaultCompleted.add(key(hwnd));
+                return result;
+              } catch {
+                callbackFailed(nativeFailure(), "default-procedure");
+                return 0;
+              }
             }
             if (key(hwnd) === key(edit)) {
               if (

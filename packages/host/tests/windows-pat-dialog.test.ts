@@ -1,5 +1,6 @@
 import { performance } from "node:perf_hooks";
 import { expect, it, vi } from "vitest";
+import { PatEditBoundary } from "../src/pat-edit.js";
 import {
   collectWindowsPat,
   NativePatDialogError,
@@ -63,6 +64,8 @@ vi.mock("koffi", () => ({
   unregister: (id: bigint) => {
     if (!state.current || state.current.windows.size)
       throw new Error("Callback released before HWND destruction");
+    if (state.current.failUnregisterCallback)
+      throw new Error("private unregister failure");
     state.current.callbacks.delete(id);
   },
   address: (bytes: Buffer) => {
@@ -102,6 +105,15 @@ class FakeWin32 {
   failUnlock = false;
   failDestroy = false;
   failSubclass = false;
+  failRemoval = false;
+  failRemovalId?: number;
+  failDefaultChild?: number;
+  failDefaultRoot = false;
+  failUnregisterClass = false;
+  failUnregisterCallback = false;
+  failCallback = false;
+  inDestruction = false;
+  reentrantClose = false;
   reentrantPaste = false;
   onClipboard?: () => void;
   accepted = false;
@@ -116,16 +128,22 @@ class FakeWin32 {
     const callback =
       window?.callback ?? (hwnd === this.root ? this.rootCallback : undefined);
     if (callback === undefined) return 0;
-    return (
-      this.callbacks.get(callback)?.(
-        hwnd,
-        code,
-        wp,
-        lp,
-        BigInt(window?.id ?? 0),
-        0n,
-      ) ?? 0
-    );
+    const previous = this.inDestruction;
+    this.inDestruction = code === 0x82;
+    try {
+      return (
+        this.callbacks.get(callback)?.(
+          hwnd,
+          code,
+          wp,
+          lp,
+          BigInt(window?.id ?? 0),
+          0n,
+        ) ?? 0
+      );
+    } finally {
+      this.inDestruction = previous;
+    }
   }
   call(name: string, args: unknown[]): unknown {
     this.calls.push(name);
@@ -136,6 +154,8 @@ class FakeWin32 {
     const window = this.windows.get(hwnd);
     switch (name) {
       case "GetCurrentThreadId":
+        if (this.inDestruction && this.failCallback)
+          throw new Error("private callback failure");
         return 7;
       case "GetModuleHandleW":
         return 1n;
@@ -177,10 +197,12 @@ class FakeWin32 {
         window.callback = h(args[1]);
         return 1;
       case "RemoveWindowSubclass":
-        return 1;
+        return this.failRemoval || this.failRemovalId === window?.id ? 0 : 1;
       case "UnregisterClassW":
-        return 1;
+        return this.failUnregisterClass ? 0 : 1;
       case "DefWindowProcW":
+        if (Number(args[1]) === 0x82 && this.failDefaultRoot)
+          throw new Error("private default failure");
         return 1;
       case "IsWindow":
         return window ? 1 : 0;
@@ -258,6 +280,8 @@ class FakeWin32 {
         return 0;
       }
       case "DefSubclassProc":
+        if (Number(args[1]) === 0x82 && this.failDefaultChild === window?.id)
+          throw new Error("private default failure");
         return 0;
       case "OpenClipboard":
         return 1;
@@ -302,6 +326,7 @@ class FakeWin32 {
       }
       case "DestroyWindow":
         if (this.failDestroy) return 0;
+        if (this.reentrantClose) this.invoke(this.root, 0x10);
         for (const [handle, value] of [...this.windows]) {
           if (handle === this.root) continue;
           this.invoke(handle, 0x82);
@@ -319,6 +344,16 @@ class FakeWin32 {
 }
 const windows = it.skipIf(
   process.platform !== "win32" || process.arch !== "x64",
+);
+windows(
+  "synthetic subclass removal failures after acceptance never return the accepted PAT",
+  async () => {
+    const native = new FakeWin32();
+    native.failRemoval = true;
+    await expect(synthetic(native)).rejects.toMatchObject({
+      cleanupComplete: false,
+    });
+  },
 );
 async function synthetic(
   script: FakeWin32,
@@ -422,5 +457,90 @@ windows(
       bytes.fill(0);
       native.clipboard.fill(0);
     }
+  },
+);
+
+for (const kind of ["removal", "child-default"] as const)
+  for (const id of [10, 11, 12, 1, 2])
+    windows(
+      `synthetic accepted bytes are zeroed when ${kind} fails on control ${id}`,
+      async () => {
+        const native = new FakeWin32();
+        if (kind === "removal") native.failRemovalId = id;
+        else native.failDefaultChild = id;
+        const buffers: Buffer[] = [];
+        const original = PatEditBoundary.prototype.submit;
+        const submit = vi
+          .spyOn(PatEditBoundary.prototype, "submit")
+          .mockImplementation(function (this: PatEditBoundary) {
+            const bytes = original.call(this);
+            if (bytes) buffers.push(bytes);
+            return bytes;
+          });
+        try {
+          await expect(synthetic(native)).rejects.toMatchObject({
+            cleanupComplete: false,
+            cleanupCause:
+              kind === "removal" ? "subclass-removal" : "default-procedure",
+          });
+          expect(buffers).toHaveLength(1);
+          expect(buffers[0]?.every((byte) => byte === 0)).toBe(true);
+        } finally {
+          submit.mockRestore();
+          for (const bytes of buffers) bytes.fill(0);
+        }
+      },
+    );
+
+for (const fault of [
+  "failDefaultRoot",
+  "failUnregisterClass",
+  "failUnregisterCallback",
+  "failCallback",
+] as const)
+  windows(
+    `synthetic teardown ${fault} is sticky after acceptance`,
+    async () => {
+      const native = new FakeWin32();
+      native[fault] = true;
+      const buffers: Buffer[] = [];
+      const original = PatEditBoundary.prototype.submit;
+      const submit = vi
+        .spyOn(PatEditBoundary.prototype, "submit")
+        .mockImplementation(function (this: PatEditBoundary) {
+          const bytes = original.call(this);
+          if (bytes) buffers.push(bytes);
+          return bytes;
+        });
+      try {
+        const error: unknown = await synthetic(native).catch(
+          (value: unknown) => value,
+        );
+        expect(error).toBeInstanceOf(NativePatDialogError);
+        expect(error).toMatchObject({
+          cleanupComplete: false,
+          cleanupCause: expect.any(String),
+        });
+        expect(JSON.stringify(error)).not.toContain("private");
+        expect(buffers).toHaveLength(1);
+        expect(buffers[0]?.every((byte) => byte === 0)).toBe(true);
+      } finally {
+        submit.mockRestore();
+        for (const bytes of buffers) bytes.fill(0);
+      }
+    },
+  );
+
+windows(
+  "synthetic reentrant close preserves cancellation plus teardown cause after acceptance",
+  async () => {
+    const native = new FakeWin32();
+    native.reentrantClose = true;
+    native.failRemovalId = 11;
+    await expect(synthetic(native)).rejects.toMatchObject({
+      primaryCode: "CANCELLED",
+      cleanupComplete: false,
+      cleanupCause: "subclass-removal",
+    });
   },
 );

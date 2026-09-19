@@ -401,6 +401,12 @@ The bounded PeekMessage pump yields to Node IPC/cancellation rather than blockin
 the event loop in GetMessage. Native callback errors, reentrant paste, timeout
 and cleanup faults cannot return accepted token bytes. This is an app-owned
 normal-desktop dialog, not secure desktop, Windows login or credential-provider UI.
+Callback failures remain sticky during closing, including callbacks invoked by
+DestroyWindow after acceptance. Receipt of WM_NCDESTROY, successful subclass
+removal, successful default-procedure return and callback/class unregistration
+are separate observations. Final checks run after destruction callbacks unwind;
+any failure clears accepted bytes and reports sanitized primary/cleanup codes,
+never an exception through the native callback boundary or inferred scrub success.
 
 All default UI tests use an explicit mocked-Koffi safety check before invoking
 the adapter. Real Job/pipe no-UI probes import no dialog or clipboard module.
