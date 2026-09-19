@@ -152,6 +152,21 @@ shared source-neutral converter, never promotion of offline asserted JSON.
 Remaining actual native UI/vault/ABI/full helper latency/exact-release and
 CDN-origin approval gates are not replaced by synthetic test success.
 
+Capture cleanup no longer polls `close()` indefinitely. An unreconciled
+publication or still-running original callback produces one nonzero,
+contract-valid interrupted envelope with sanitized operational and cleanup
+causes. Programmatic `runCaptureCommand` throws
+`NativeCaptureCommandCleanupRequired`, whose `result` is that envelope and
+whose idempotent `close()` retains the exact runtime/project/installation
+owner for an explicit current-authorized retry. New commands are denied while
+such an owner remains retained; there is no automatic network/vault retry.
+The native entry prints the envelope once. Process exit only releases OS
+resources: it is **not** publication recovery, secret-scrub or job-completion
+proof. Private uncertain data remains; the in-memory retry owner is usable
+only while its process survives. Cross-process adoption/recovery is not added
+by this correction. Stored queued/claimed captures without a live admitted
+executor are reported interrupted, never falsely accepted conversion/export.
+
 Setup/update reject `--json` and require explicit `--interactive`; optional
 `--expires-at <ISO timestamp>` is only a user-declared claim. There is no token
 argument, environment/file/stdin route or JSON credential input. The fixed

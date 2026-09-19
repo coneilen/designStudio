@@ -104,6 +104,25 @@ close retains the live boundary and exact metadata for authorized reconciliation
 This is disposal, not stage adoption, effect settlement, recovery completion or
 deletion authority; the default `close()` behavior on an open boundary is unchanged.
 
+For an **already-visible current-instance** publication, the exact original
+authorization-object/project/actor/job/request/staging metadata may retain an
+`OwnedPendingPublication` using `retainPendingPublication`. It is an immutable,
+instance-registered identity, not JSON or a root-write grant. Unpublished, busy,
+unknown, copied or changed entries cannot acquire this identity.
+`reconcileOwnedPublication(identity, cleanupContext)` additionally requires
+`authorizeOwnedPublicationRecovery` to admit that exact identity under current,
+purpose-bound authority. The native capture composition uses a private
+authorization-to-ledger WeakMap; a general root-write context is insufficient.
+The expired original context is never revived or rebound.
+
+Recovery rechecks the original native file/inode, path, bytes/hash and flush
+barrier (or exact portable link pair). It cannot select another destination,
+create a new stage/publication, settle effects or commit a storage/job receipt.
+Denial and barrier failures retain the pending identity for an explicit retry;
+revocation after an observed unlink retains that fact so recovery revalidates
+the remaining single-link destination rather than recreating the pair.
+Ordinary publish/close and historical recovery behavior are otherwise unchanged.
+
 Published paths round-trip without assuming the input and artifact roots match:
 `read({artifactRootId: "artifacts", path: published.path}, context)`.
 The root ID is retained by the caller alongside the contract artifact; it is

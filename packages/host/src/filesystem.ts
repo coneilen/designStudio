@@ -59,6 +59,20 @@ export interface ProjectFileSystemOptions {
     stagingId: string,
     context: OperationContext,
   ) => Promise<boolean>;
+  authorizeOwnedPublicationRecovery?: (
+    pending: OwnedPendingPublication,
+    context: OperationContext,
+  ) => Promise<void>;
+}
+/** Instance-owned identity, not a serializable cleanup grant. */
+export interface OwnedPendingPublication {
+  readonly projectId: string;
+  readonly actorId: string;
+  readonly artifactRootId: string;
+  readonly requestId: string;
+  readonly jobId?: string;
+  readonly stagingId: string;
+  readonly artifact: Readonly<Artifact>;
 }
 export interface ManagedInventory {
   stagedIds: string[];
@@ -77,8 +91,12 @@ interface Pending {
   actorId: string;
   requestId: string;
   sessionId: string;
+  authorization: OperationContext["authorization"];
+  jobId?: string;
+  recovery?: OwnedPendingPublication;
   busy: boolean;
   publishedDestination?: string;
+  pairUnlinked?: boolean;
   nativeState?: NativeFileIdentity;
 }
 interface NativeReceipt {
@@ -179,6 +197,7 @@ async function boundedEntries(
 export class ProjectFileSystem implements FileSystemBoundary {
   private readonly roots = new Map<string, Root>();
   private readonly pending = new Map<string, Pending>();
+  private readonly recoveries = new WeakMap<OwnedPendingPublication, Pending>();
   private readonly nativeReceipts = new Map<string, NativeReceipt>();
   private readonly nativePublisher = new WindowsNtfsPublisher();
   private tail: Promise<void> = Promise.resolve();
@@ -517,6 +536,8 @@ export class ProjectFileSystem implements FileSystemBoundary {
           projectId: context.projectId,
           actorId: context.authorization.actorId,
           sessionId: context.authorization.sessionId,
+          authorization: context.authorization,
+          ...(context.jobId ? { jobId: context.jobId } : {}),
           requestId: context.requestId,
           busy: false,
         });
@@ -577,6 +598,76 @@ export class ProjectFileSystem implements FileSystemBoundary {
     input: StagedArtifact,
     context: OperationContext,
   ): Promise<Outcome<Artifact>> {
+    return this.publishOwned(input, context);
+  }
+  retainPendingPublication(
+    input: StagedArtifact,
+    context: OperationContext,
+  ): OwnedPendingPublication {
+    const pending = this.pending.get(input.stagingId);
+    if (
+      this.closed ||
+      !pending ||
+      pending.busy ||
+      !(pending.nativeState || pending.publishedDestination) ||
+      pending.authorization !== context.authorization ||
+      pending.projectId !== context.projectId ||
+      pending.actorId !== context.authorization.actorId ||
+      pending.sessionId !== context.authorization.sessionId ||
+      pending.requestId !== context.requestId ||
+      pending.jobId !== context.jobId ||
+      !validateContract("Artifact", input.artifact).success ||
+      Object.keys(pending.staged.artifact).some(
+        (key) =>
+          Reflect.get(input.artifact, key) !==
+          Reflect.get(pending.staged.artifact, key),
+      )
+    )
+      throw new HostBoundaryError(
+        "FORBIDDEN",
+        "No exact original owned visible publication can be retained.",
+      );
+    if (!pending.recovery) {
+      const capability: OwnedPendingPublication = Object.freeze({
+        projectId: pending.projectId,
+        actorId: pending.actorId,
+        artifactRootId: pending.root.id,
+        requestId: pending.requestId,
+        ...(pending.jobId ? { jobId: pending.jobId } : {}),
+        stagingId: pending.staged.stagingId,
+        artifact: Object.freeze({ ...pending.staged.artifact }),
+      });
+      pending.recovery = capability;
+      this.recoveries.set(capability, pending);
+    }
+    return pending.recovery;
+  }
+  reconcileOwnedPublication(
+    pending: OwnedPendingPublication,
+    context: OperationContext,
+  ): Promise<Outcome<Artifact>> {
+    const known = this.recoveries.get(pending);
+    if (!known)
+      return boundary(context, async () => {
+        throw new HostBoundaryError(
+          "FORBIDDEN",
+          "Cleanup requires this instance's retained publication identity.",
+        );
+      });
+    if (known.busy)
+      return boundary(context, async () => {
+        throw new HostBoundaryError(
+          "CONFLICT",
+          "Owned publication cleanup is already in progress.",
+        );
+      });
+    return this.publishOwned(known.staged, context, pending);
+  }
+  private publishOwned(
+    input: StagedArtifact,
+    context: OperationContext,
+    recovery?: OwnedPendingPublication,
+  ): Promise<Outcome<Artifact>> {
     return boundary(context, async (context) => {
       if (
         !validateContract("JsonValue", input).success ||
@@ -589,7 +680,39 @@ export class ProjectFileSystem implements FileSystemBoundary {
         );
       const staged = structuredClone(input);
       return this.serial(async () => {
-        const { pending, guard } = this.own(staged.stagingId, context);
+        let owned: { pending: Pending; guard: OperationGuard };
+        if (recovery) {
+          const pending = this.recoveries.get(recovery);
+          if (
+            !pending ||
+            this.pending.get(staged.stagingId) !== pending ||
+            pending.recovery !== recovery ||
+            pending.busy ||
+            !(pending.nativeState || pending.publishedDestination) ||
+            pending.projectId !== context.projectId ||
+            pending.actorId !== context.authorization.actorId ||
+            pending.jobId !== context.jobId ||
+            pending.requestId !== context.requestId ||
+            !this.options.authorizeOwnedPublicationRecovery
+          )
+            throw new HostBoundaryError(
+              "FORBIDDEN",
+              "Pending publication cleanup admission denied.",
+            );
+          const { guard } = this.guard(pending.root.id, context, "write");
+          pending.busy = true;
+          try {
+            await this.options.authorizeOwnedPublicationRecovery(
+              recovery,
+              context,
+            );
+            guard.check();
+          } finally {
+            pending.busy = false;
+          }
+          owned = { pending, guard };
+        } else owned = this.own(staged.stagingId, context);
+        const { pending, guard } = owned;
         if (
           !validateContract("Artifact", staged.artifact).success ||
           Object.keys(pending.staged.artifact).some(
@@ -629,18 +752,37 @@ export class ProjectFileSystem implements FileSystemBoundary {
               guard,
             );
             await this.recordNativeReceipt(pending, proof);
+            guard.check();
             this.pending.delete(staged.stagingId);
             return structuredClone(pending.staged.artifact);
           }
           if (pending.publishedDestination) {
             await this.resolve(pending.root, staged.artifact.path);
-            await this.finishPublishedPair(
-              pending.path,
-              pending.publishedDestination,
-              pending.staged.artifact,
-              guard,
-              pending.identity,
-            );
+            if (pending.pairUnlinked) {
+              const bytes = await this.readBytes(
+                pending.publishedDestination,
+                guard,
+                pending.identity,
+              );
+              if (
+                bytes.byteLength !== pending.staged.artifact.byteLength ||
+                sha256(bytes) !== pending.staged.artifact.sha256
+              )
+                throw new HostBoundaryError(
+                  "ARTIFACT_INTEGRITY",
+                  "Completed unlink destination bytes changed.",
+                );
+            } else {
+              await this.finishPublishedPair(
+                pending.path,
+                pending.publishedDestination,
+                pending.staged.artifact,
+                guard,
+                pending.identity,
+              );
+              pending.pairUnlinked = true;
+            }
+            guard.check();
             this.pending.delete(staged.stagingId);
             return structuredClone(pending.staged.artifact);
           }

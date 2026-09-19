@@ -3,12 +3,17 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { ApplicationError } from "@design-studio/application";
 import {
+  NativeCaptureCleanupRequired,
   type NativeCaptureInput,
   type NativeCaptureRuntime,
   NativeCaptureStartupCleanupRequired,
   openNativeCapture,
 } from "@design-studio/application/capture";
-import { type ErrorCode, validateContract } from "@design-studio/contracts";
+import {
+  type ErrorCode,
+  type NativeCaptureEnvelope,
+  validateContract,
+} from "@design-studio/contracts";
 import {
   type CaptureInstallationLease,
   type CaptureProject,
@@ -187,6 +192,57 @@ function safeCode(error: unknown): ErrorCode {
     return error.code as ErrorCode;
   return "INTERNAL_ERROR";
 }
+const retainedCommands = new Set<NativeCaptureCommandCleanupRequired>();
+const cleanupMessage = (operation: ErrorCode, cleanup: ErrorCode) =>
+  `Operation ${operation}; cleanup ${cleanup}. Owned resources are retained; callback closure, secret cleanup and publication recovery are unconfirmed. Retry only this cleanup owner under current authority. Process exit is OS release, not recovery proof.`;
+export class NativeCaptureCommandCleanupRequired extends Error {
+  readonly code = "INTERRUPTED";
+  private closing: Promise<void> | undefined;
+  private closed = false;
+  constructor(
+    private readonly envelope: NativeCaptureEnvelope,
+    readonly operationCode: ErrorCode,
+    private currentCleanupCode: ErrorCode,
+    private readonly release: () => Promise<void>,
+  ) {
+    super(
+      "Native command cleanup is unconfirmed; this owner retains its resources.",
+    );
+    retainedCommands.add(this);
+  }
+  get cleanupCode(): ErrorCode {
+    return this.currentCleanupCode;
+  }
+  get result(): NativeCaptureEnvelope {
+    const result = structuredClone(this.envelope);
+    if (result.error)
+      result.error.message = cleanupMessage(
+        this.operationCode,
+        this.currentCleanupCode,
+      );
+    return result;
+  }
+  close(): Promise<void> {
+    if (this.closed) return Promise.resolve();
+    if (this.closing) return this.closing;
+    this.closing = this.release()
+      .then(() => {
+        this.closed = true;
+        retainedCommands.delete(this);
+      })
+      .catch((error: unknown) => {
+        this.currentCleanupCode =
+          error instanceof NativeCaptureCleanupRequired
+            ? error.cleanupCode
+            : safeCode(error);
+        throw this;
+      })
+      .finally(() => {
+        this.closing = undefined;
+      });
+    return this.closing;
+  }
+}
 export async function runCaptureCommand(args: readonly string[]) {
   const request = parseCaptureArguments(args);
   if (request.command === "help")
@@ -204,6 +260,7 @@ export async function runCaptureCommand(args: readonly string[]) {
       limitation:
         "Native entry needs an independently approved capture release. Setup/update display an app-owned masked Figma PAT dialog; status reads one owned vault entry; remove deletes only the explicitly confirmed entry. Capture allows at most four calls in 30 seconds. The default empty download-origin policy yields a partial result before CDN contact. Inspection is private metadata only; explicit artifact output stays in the owned private project. Conversion is an unapproved draft, never render-readiness.",
     };
+  if (retainedCommands.size) throw new ApplicationError("ACTION_REQUIRED");
   let installation: CaptureInstallationLease | undefined;
   let guard: { close(): void } | undefined;
   let project: CaptureProject | undefined;
@@ -219,6 +276,7 @@ export async function runCaptureCommand(args: readonly string[]) {
   process.on("SIGTERM", cancel);
   let result: unknown;
   let primary: ErrorCode | undefined;
+  let cleanupFailure: NativeCaptureCommandCleanupRequired | undefined;
   try {
     installation = await verifyCaptureInstallation();
     guard = registerCaptureInstallationGuards(installation);
@@ -281,42 +339,95 @@ export async function runCaptureCommand(args: readonly string[]) {
     )
       startupCleanup = error.close;
   } finally {
-    let warned = false;
-    for (;;) {
-      try {
-        if (dialog && !(await dialog.close()).closed) {
-          if (!warned)
-            process.stderr.write(
-              "PAT helper cleanup is incomplete. This process retains the private project until owned helper exit is observed; no credential result is being delivered.\n",
-            );
-          warned = true;
-          primary ??= "INTERRUPTED";
-          await sleep(250);
-          continue;
-        }
+    if (request.capture && request.project) {
+      const release = async () => {
         if (startupCleanup) {
           await startupCleanup();
           startupCleanup = undefined;
         }
         await runtime?.close();
-        credentials?.close();
         await project?.close();
         guard?.close();
         await installation?.close();
-        break;
-      } catch {
-        primary ??= "INTERRUPTED";
-        if (!warned)
-          process.stderr.write(
-            "Native cleanup failed; ownership is retained for cleanup retry. No successful credential operation is reported.\n",
-          );
-        warned = true;
-        await sleep(250);
+      };
+      try {
+        await release();
+      } catch (error) {
+        const prior = validateContract("NativeCaptureEnvelope", result);
+        const operationCode =
+          primary ??
+          (error instanceof NativeCaptureCleanupRequired
+            ? error.operationCode
+            : prior.success
+              ? prior.value.error?.code
+              : undefined) ??
+          "INTERRUPTED";
+        const cleanupCode =
+          error instanceof NativeCaptureCleanupRequired
+            ? error.cleanupCode
+            : safeCode(error);
+        const envelope: NativeCaptureEnvelope = {
+          schemaVersion: "1.0",
+          operation: request.capture.operation,
+          projectId: request.project,
+          requestId: request.capture.requestId,
+          status: "interrupted",
+          error: {
+            code: "INTERRUPTED",
+            message: cleanupMessage(operationCode, cleanupCode),
+            retryable: false,
+            diagnosticIds: [],
+          },
+        };
+        cleanupFailure = new NativeCaptureCommandCleanupRequired(
+          envelope,
+          operationCode,
+          cleanupCode,
+          release,
+        );
+      } finally {
+        process.removeListener("SIGINT", cancel);
+        process.removeListener("SIGTERM", cancel);
       }
+    } else {
+      let warned = false;
+      for (;;) {
+        try {
+          if (dialog && !(await dialog.close()).closed) {
+            if (!warned)
+              process.stderr.write(
+                "PAT helper cleanup is incomplete. This process retains the private project until owned helper exit is observed; no credential result is being delivered.\n",
+              );
+            warned = true;
+            primary ??= "INTERRUPTED";
+            await sleep(250);
+            continue;
+          }
+          if (startupCleanup) {
+            await startupCleanup();
+            startupCleanup = undefined;
+          }
+          await runtime?.close();
+          credentials?.close();
+          await project?.close();
+          guard?.close();
+          await installation?.close();
+          break;
+        } catch {
+          primary ??= "INTERRUPTED";
+          if (!warned)
+            process.stderr.write(
+              "Native cleanup failed; ownership is retained for cleanup retry. No successful credential operation is reported.\n",
+            );
+          warned = true;
+          await sleep(250);
+        }
+      }
+      process.removeListener("SIGINT", cancel);
+      process.removeListener("SIGTERM", cancel);
     }
-    process.removeListener("SIGINT", cancel);
-    process.removeListener("SIGTERM", cancel);
   }
+  if (cleanupFailure) throw cleanupFailure;
   if (primary && request.capture && request.project) {
     const checked = validateContract("NativeCaptureEnvelope", {
       schemaVersion: "1.0",
@@ -367,7 +478,15 @@ async function main() {
             result.status === "partial"
           ? 4
           : 1;
-  } catch {
+  } catch (error) {
+    if (error instanceof NativeCaptureCommandCleanupRequired) {
+      process.stdout.write(`${JSON.stringify(error.result)}\n`);
+      process.stderr.write(
+        "Native cleanup ownership remains retained. No automatic retry is running; process exit does not prove publication recovery or secret cleanup.\n",
+      );
+      process.exitCode = 1;
+      return;
+    }
     process.stdout.write(
       '{"status":"failed","error":{"code":"INVALID_INPUT","message":"Invalid native capture command."}}\n',
     );

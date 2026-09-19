@@ -109,6 +109,28 @@ Closing a quiescent boundary is not completed recovery or permission to retry,
 adopt or delete retained source. Visible uncertain publication still refuses
 closure and retains its exact reconciliation metadata.
 
+The runtime retains an exact private ledger for uncertain job, intake,
+conversion and export publications. After joining JobService/original work,
+close performs one current-authorized cleanup pass **before** releasing the
+store/filesystem. Only the retained, already-visible publication can resume;
+cleanup contexts have no provider/credential/egress authority and never renew
+the original work deadline or commit a job/legacy receipt. A resolved flush
+does not retroactively make the failed command successful.
+`NativeCaptureCleanupRequired` carries sanitized original/cleanup codes,
+nonsecret pending identities and a close-only retry owner. A five-second
+acknowledgement bound can return that owner while the original cleanup promise
+remains tracked; subsequent retries join it rather than starting another pass.
+No resource is reported closed merely because the acknowledgement timed out.
+
+Inspection/replay under the actual exclusive native writer loan does not infer
+a live executor from a saved queued/running state or an unexpired lease.
+This synchronous facade denies concurrent execution and joins its own service.
+Other nonterminal execution records are conservatively quarantined through
+the existing F07 recovery policy/repository, preserving original deadlines,
+unknown/reserved effects and stage identities. No vault read, network replay,
+new completion receipt or conversion/export acceptance is implied. An orphaned
+capture returns interrupted/action-required, not accepted.
+
 Each command snapshots input before awaits. Native authority fixes current
 actor/project/credential and scopes, retains the scheduler's exact work signal,
 and caps the original 30-second capture deadline by authorization/declared

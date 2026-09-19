@@ -1,11 +1,13 @@
 import type {
   ArtifactReference,
+  AuthorizationContext,
   ErrorCode,
   FigmaCaptureManifest,
   FigmaCaptureRequest,
   NativeCaptureEnvelope,
   OperationContext,
   ResourceSnapshot,
+  StagedArtifact,
 } from "@design-studio/contracts";
 import { parseContract, validateContract } from "@design-studio/contracts";
 import {
@@ -26,6 +28,7 @@ import {
 } from "@design-studio/figma-import";
 import {
   authorizeOperation,
+  type OwnedPendingPublication,
   ProjectFileSystem,
   snapshotOperationContext,
   WINDOWS_PUBLICATION_PROFILE,
@@ -60,6 +63,21 @@ export class NativeCaptureStartupCleanupRequired extends ApplicationError {
     super("INTERRUPTED");
   }
 }
+export class NativeCaptureCleanupRequired extends ApplicationError {
+  constructor(
+    readonly operationCode: ErrorCode,
+    readonly cleanupCode: ErrorCode,
+    readonly close: () => Promise<void>,
+    readonly pending: readonly {
+      kind: "job" | "intake" | "conversion" | "export";
+      stagingId: string;
+      jobId: string;
+      requestId: string;
+    }[],
+  ) {
+    super("INTERRUPTED");
+  }
+}
 const ref = (artifact: ArtifactReference): ArtifactReference => ({
   id: artifact.id,
   sha256: artifact.sha256,
@@ -80,17 +98,48 @@ export async function assembleNativeCapture(
   let active = false;
   let closing = false;
   let closed = false;
+  let primaryFailure: ErrorCode | undefined;
+  const publications = new Map<
+    OwnedPendingPublication,
+    {
+      kind: "job" | "intake" | "conversion" | "export";
+      context: OperationContext;
+    }
+  >();
+  const cleanupProofs = new WeakMap<
+    AuthorizationContext,
+    OwnedPendingPublication
+  >();
+  let closeFlight: Promise<void> | undefined;
   const outside = async (): Promise<never> => {
     throw new ApplicationError("ACTION_REQUIRED");
   };
   const recovery = new RecoveryDecisions(policy, project.projectId);
-  const close = async () => {
+  const closeOwned = async () => {
     if (closed) return;
     closing = true;
     if (active) throw new ApplicationError("INTERRUPTED");
     if (service) {
       unwrap(await service.stop());
       service = undefined;
+    }
+    for (const [pending, original] of publications) {
+      await policy.check();
+      const context = await policy.issue({
+        jobId: pending.jobId ?? original.context.jobId ?? "capture_cleanup",
+        requestId: pending.requestId,
+        signal: new AbortController().signal,
+        output: pending.artifactRootId === policy.outputRoot,
+      });
+      cleanupProofs.set(context.authorization, pending);
+      try {
+        if (!files) throw new ApplicationError("INTERRUPTED");
+        unwrap(await files.reconcileOwnedPublication(pending, context));
+        publications.delete(pending);
+        await policy.check();
+      } finally {
+        cleanupProofs.delete(context.authorization);
+      }
     }
     if (store) {
       store.close();
@@ -103,6 +152,49 @@ export async function assembleNativeCapture(
     policy.close();
     work.close();
     closed = true;
+  };
+  const retained = (code: ErrorCode) =>
+    new NativeCaptureCleanupRequired(
+      primaryFailure ?? "INTERRUPTED",
+      code,
+      close,
+      Object.freeze(
+        [...publications].map(([pending, owned]) =>
+          Object.freeze({
+            kind: owned.kind,
+            stagingId: pending.stagingId,
+            jobId: pending.jobId ?? "capture_cleanup",
+            requestId: pending.requestId,
+          }),
+        ),
+      ),
+    );
+  const close = (): Promise<void> => {
+    if (closed) return Promise.resolve();
+    if (!closeFlight) {
+      const attempt = closeOwned().catch((error: unknown) => {
+        throw retained(safeError(error).code);
+      });
+      closeFlight = attempt.finally(() => {
+        closeFlight = undefined;
+      });
+    }
+    const original = closeFlight;
+    return new Promise<void>((resolve, reject) => {
+      // This only bounds acknowledgement. The original pass stays owned in
+      // closeFlight, and no retry starts a second pass before it actually settles.
+      const timer = setTimeout(() => reject(retained("INTERRUPTED")), 5000);
+      original.then(
+        () => {
+          clearTimeout(timer);
+          resolve();
+        },
+        (error: unknown) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      );
+    });
   };
   try {
     await work.current();
@@ -128,8 +220,68 @@ export async function assembleNativeCapture(
       ],
       authorizeRemoval: async (artifact, context) =>
         store?.hasRemovalReservation(artifact, context) ?? false,
+      authorizeOwnedPublicationRecovery: async (pending, context) => {
+        const owned = publications.get(pending);
+        if (
+          !owned ||
+          cleanupProofs.get(context.authorization) !== pending ||
+          pending.projectId !== project.projectId ||
+          pending.actorId !== work.actorId ||
+          context.jobId !== pending.jobId ||
+          context.requestId !== pending.requestId ||
+          owned.context.projectId !== pending.projectId ||
+          owned.context.authorization.actorId !== pending.actorId ||
+          owned.context.jobId !== pending.jobId ||
+          owned.context.requestId !== pending.requestId ||
+          ![project.artifactRootId, policy.outputRoot].includes(
+            pending.artifactRootId,
+          )
+        )
+          throw new ApplicationError("FORBIDDEN");
+        await policy.check();
+        authorizeOperation(
+          context,
+          {
+            projectId: project.projectId,
+            actorId: work.actorId,
+            resourceKind: "artifact",
+            resourceId: pending.artifactRootId,
+            operation: "write",
+          },
+          policy.verify,
+        );
+        if (
+          cleanupProofs.get(context.authorization) !== pending ||
+          publications.get(pending) !== owned
+        )
+          throw new ApplicationError("FORBIDDEN");
+      },
     });
     const fs = files;
+    const publish = async (
+      staged: StagedArtifact,
+      context: OperationContext,
+    ) => {
+      const descriptor = structuredClone(staged);
+      const original = snapshotOperationContext(context);
+      const outcome = await fs.publish(descriptor, original);
+      if (
+        outcome.status !== "complete" &&
+        outcome.error.code === "OUTPUT_UNCERTAIN"
+      ) {
+        const pending = fs.retainPendingPublication(descriptor, original);
+        const kind =
+          pending.artifactRootId === policy.outputRoot
+            ? "export"
+            : original.jobId?.startsWith("seed_")
+              ? "intake"
+              : original.jobId?.startsWith("convert_")
+                ? "conversion"
+                : "job";
+        publications.set(pending, { kind, context: original });
+      }
+      return outcome;
+    };
     await work.current();
     store = await LocalStore.open({
       projectId: project.projectId,
@@ -137,7 +289,12 @@ export async function assembleNativeCapture(
       permissionScope: work.permissionScope,
       databasePath: project.paths.database,
       nativeBinding: work.sqliteBinding,
-      fileSystem: fs,
+      fileSystem: {
+        read: fs.read.bind(fs),
+        stage: fs.stage.bind(fs),
+        discard: fs.discard.bind(fs),
+        publish,
+      },
       snapshotOperationContext,
       canonicalBytes,
       attestLocalDatabase: work.attestDatabase.bind(work),
@@ -307,8 +464,12 @@ export async function assembleNativeCapture(
       } while (cursor);
       return ids;
     };
-    const committed = async (requestId: string, ctx: OperationContext) => {
-      const record = unwrap(await db.jobs.get(identity(requestId), ctx));
+    const committed = async (
+      requestId: string,
+      ctx: OperationContext,
+      expectedRequest?: FigmaCaptureRequest,
+    ) => {
+      let record = unwrap(await db.jobs.get(identity(requestId), ctx));
       checkRecord(record, requestId);
       const request = await json("FigmaCaptureRequest", record.job.input, ctx);
       const selected = selectionPolicy(request.selectionUrl);
@@ -321,6 +482,41 @@ export async function assembleNativeCapture(
         canonicalDigest(request) !== record.job.input.sha256
       )
         throw new ApplicationError("ARTIFACT_INTEGRITY");
+      if (expectedRequest && !same(request, expectedRequest))
+        throw new ApplicationError("CONFLICT");
+      if (
+        ["queued", "running", "retry-wait", "cancel-requested"].includes(
+          record.job.status,
+        )
+      ) {
+        // This facade holds the native project writer lock. A stored lease is not
+        // a live executor; concurrent execute is denied and original work is joined.
+        if (service) throw new ApplicationError("INTERRUPTED");
+        const cleanup = await policy.issue({
+          jobId: record.job.id,
+          requestId: record.requestId,
+          signal: ctx.signal,
+        });
+        recovery.register(record, cleanup);
+        record = unwrap(
+          await db.jobs.reconcile(
+            record.job.id,
+            record.rowVersion,
+            {
+              kind: "interrupt",
+              error: {
+                code: "INTERRUPTED",
+                message:
+                  "No live native executor owns this capture. Original deadline, effects and stages are retained; explicit recovery is required.",
+                retryable: false,
+                diagnosticIds: [],
+              },
+            },
+            cleanup,
+          ),
+        );
+        await policy.check();
+      }
       const receipt = unwrap(await db.jobs.getJobReceipt(record.job.id, ctx));
       await policy.check();
       if (record.job.status !== "completed" || !receipt)
@@ -418,6 +614,7 @@ export async function assembleNativeCapture(
     };
     const runtime: NativeCaptureRuntime = Object.freeze({
       async execute(input: NativeCaptureInput, signal: AbortSignal) {
+        if (publications.size) throw new ApplicationError("INTERRUPTED");
         if (this !== runtime || active || closed || closing || service)
           throw new ApplicationError("FORBIDDEN");
         const owned = structuredClone(input);
@@ -474,9 +671,7 @@ export async function assembleNativeCapture(
               credential: project.reference,
             });
             if (existing.length) {
-              const prior = await committed(owned.requestId, ctx);
-              if (!same(prior.request, normalized.request))
-                throw new ApplicationError("CONFLICT");
+              await committed(owned.requestId, ctx, normalized.request);
             } else {
               await work.readyCredential(policy.clock.now());
               const history = await discover(ctx);
@@ -606,14 +801,13 @@ export async function assembleNativeCapture(
           const loaded = await committed(owned.requestId, ctx);
           if (!loaded.result || !loaded.manifest || !loaded.artifacts) {
             const state = loaded.record.job.status;
+            primaryFailure = loaded.record.job.error?.code ?? "ACTION_REQUIRED";
             const status =
-              state === "queued" || state === "running"
-                ? "accepted"
-                : state === "cancelled"
-                  ? "cancelled"
-                  : state === "interrupted"
-                    ? "interrupted"
-                    : "unavailable";
+              state === "cancelled"
+                ? "cancelled"
+                : state === "interrupted"
+                  ? "interrupted"
+                  : "unavailable";
             return envelope(
               owned.operation,
               owned.requestId,
@@ -625,9 +819,7 @@ export async function assembleNativeCapture(
                 artifacts: [],
                 missing: ["capture-not-committed"],
               },
-              status === "accepted"
-                ? undefined
-                : (loaded.record.job.error?.code ?? "ACTION_REQUIRED"),
+              loaded.record.job.error?.code ?? "ACTION_REQUIRED",
             );
           }
           const { result, manifest, artifacts } = loaded;
@@ -676,7 +868,7 @@ export async function assembleNativeCapture(
                   ctx,
                 ),
               );
-              unwrap(await fs.publish(staged, ctx));
+              unwrap(await publish(staged, ctx));
               await policy.check();
             } finally {
               source.bytes.fill(0);
@@ -717,6 +909,7 @@ export async function assembleNativeCapture(
           );
         } catch (error) {
           const code = signal.aborted ? "CANCELLED" : safeError(error).code;
+          primaryFailure = code;
           return envelope(
             owned.operation,
             owned.requestId,
