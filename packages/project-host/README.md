@@ -82,8 +82,50 @@ installation release. Startup cleanup failures retain the installation borrow
 and return a close-only `CaptureStartupCleanupRequired` for retry. The private
 composition imports the already-built host implementation inside the declared
 workspace dependency; no public host admin constructor/loader override is added.
-Tests use only exact owned TEMP roots, inert candidate bytes and synthetic native
-vault methods. These tests do not establish live vault or dialog behavior.
+Tests use only exact owned TEMP roots and synthetic native vault methods. Most
+candidate fixtures are inert; the explicitly named no-UI process probe uses the
+approved pinned Node bytes with a synthetic lifecycle peer. Neither establishes
+live vault or dialog behavior.
+
+## Fixed owned PAT dialog role
+
+The capture role inventory names `packages\cli\dist\capture-main.js` and
+`packages\project-host\dist\pat-dialog-helper.js`. The helper/controller live in
+this package to keep capture-project admission in the same runtime registry
+instance; they do not import a second physical project registry as proof.
+`startCapturePatDialog` accepts only an actual live CaptureProject and acquires
+its private helper-owner count synchronously before async admission/spawn.
+Project close cannot succeed while that owner or a credential owner is active.
+
+The parent launches only the pinned Node and exact fixed helper path, with
+stdin/stdout/stderr ignored and one inherited overlapped fd3. It accepts no
+caller executable, module, environment, action callback, root or transport.
+The helper's small prejoin code consumes bounded INIT and joins a one-process
+Job before expensive installation verification or UI imports. Its fixed
+installed path derives the bootstrap root; native verification and resolution
+guards are established before the dynamically imported UI implementation can
+receive START. Parent verifies expected PID membership before START, holds its
+installation/project leases, and does not trust a callback or JSON grant.
+
+The private host Job bridge is shared with renderer-host through an internal
+compatibility re-export. Its only profiles are renderer (64 processes, unchanged)
+and PAT dialog (one process), with the original kill-on-close/non-breakaway
+flags and native membership checks. This is not a generic public launcher.
+
+The binary codec permits only eight fixed message kinds, a 32-byte per-run nonce,
+sequence 0/1, at most eight frames per direction, a two-frame bounded queue,
+at most 256 control bytes and at most 4096 accepted bytes. Partial/read/write
+buffers are owned and zeroed; outgoing frames remain borrowed until the actual
+write callback settles. JSON/string token framing is not used. Normal cleanup
+requires CLOSED/scrub evidence, child `close` and empty Job membership; forced
+kill or an unconfirmed scrub cannot produce a credential result. Retained
+cleanup is explicit and keeps the project helper count until observed quiescence.
+
+Five-second startup/close bounds and five-minute input time are distinct from
+admin time and never silently refreshed. The no-UI process probe exercises
+real Job membership, private bytes and observed child exit with a synthetic
+peer, not the real UI or full installed-helper startup cost. Real native UI
+verification/display latency remains an explicit later user-approved test gate.
 
 Narrow Windows **fresh fixture-catalog projects only** provisioning for F08.
 This is not arbitrary directory adoption, an ACL repair service, an HTTP setup

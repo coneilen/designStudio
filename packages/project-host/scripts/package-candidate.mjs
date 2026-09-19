@@ -464,7 +464,13 @@ export async function packageCandidate({
   }
   await lstat(
     capture
-      ? path.join(workspace, "packages", "host", "dist", "pat-dialog-helper.js")
+      ? path.join(
+          workspace,
+          "packages",
+          "project-host",
+          "dist",
+          "pat-dialog-helper.js",
+        )
       : path.join(
           workspace,
           "packages",

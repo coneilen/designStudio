@@ -18,7 +18,14 @@ import {
 import { type InstallationEntry, loadNative } from "../src/native.js";
 import { ownedTest, weakenTestAcl } from "./support.js";
 
-export async function captureCandidate(root: string) {
+interface CaptureFixtureBytes {
+  node?: Buffer;
+  helper?: Buffer;
+}
+export async function captureCandidate(
+  root: string,
+  fixture: CaptureFixtureBytes = {},
+) {
   const source = path.join(root, "capture-source");
   await mkdir(source);
   const write = async (area: string, records: Record<string, Buffer>) => {
@@ -38,12 +45,13 @@ export async function captureCandidate(root: string) {
   const synthetic = Buffer.from("synthetic inert role bytes; NEVER execute");
   const manifest = await write("payload", {
     "packages/cli/dist/capture-main.js": synthetic,
-    "packages/host/dist/pat-dialog-helper.js": synthetic,
+    "packages/project-host/dist/pat-dialog-helper.js":
+      fixture.helper ?? synthetic,
     "node_modules/@design-studio/project-host/dist/index.js": synthetic,
     "capture-policy.json": capturePolicyBytes(),
   });
   const bootstrap = await write("bootstrap", {
-    "runtime/node.exe": synthetic,
+    "runtime/node.exe": fixture.node ?? synthetic,
     "launch.mjs": synthetic,
     "install.mjs": synthetic,
     "node_modules/@design-studio/project-host/dist/installation.js": synthetic,
@@ -65,6 +73,7 @@ export async function withCaptureInstallation(
     installation: Awaited<ReturnType<typeof verifyCaptureInstalledRoot>>,
     root: string,
   ) => Promise<void>,
+  fixture: CaptureFixtureBytes = {},
 ) {
   await ownedTest(async (root) => {
     const native = await loadNative();
@@ -83,7 +92,7 @@ export async function withCaptureInstallation(
       | undefined;
     const errors: unknown[] = [];
     try {
-      const candidate = await captureCandidate(root);
+      const candidate = await captureCandidate(root, fixture);
       const launch = await installCandidate(
         candidate.source,
         candidate.manifest,

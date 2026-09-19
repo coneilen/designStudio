@@ -14,6 +14,11 @@ export {
   verifyFixtureInstallation,
 } from "./installation.js";
 export {
+  type PatDialogClose,
+  type PatDialogRun,
+  startCapturePatDialog,
+} from "./pat-dialog-controller.js";
+export {
   type CurrentPrincipal,
   type FixturePaths,
   type FixtureProjectBinding,

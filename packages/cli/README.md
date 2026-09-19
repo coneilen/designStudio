@@ -35,7 +35,7 @@ No comparison engine, live provider or browser enrollment is implemented.
 
 ## Internal framed-input protocol: synthetic evidence only
 
-**Secure PAT entry is not shipped.** `readMaskedSecret` explicitly returns
+**The terminal protocol is not a production PAT entry.** `readMaskedSecret` explicitly returns
 `ACTION_REQUIRED`: no concrete native dedicated-terminal/profile/confirmation
 adapter is admitted. The old ordinary-TTY newline reader was unsafe because
 stream chunks are not input boundaries; split multiline pastes could return a
@@ -97,19 +97,71 @@ after successful post-exit cleanup. Deadline expiry is not quiescence evidence.
 JavaScript strings, terminal/native copies and upstream allocation cannot be
 guaranteed erased; this is not a hostile same-user input sandbox.
 
-Before any usable setup command, a separate native-entry design must implement
-real input ownership, safe physical confirmation, supported paste-marker/control
-handling, bounded native stream delivery, terminal exit observation and resource
-cleanup. Bracketed-paste support or a mode-status reply alone is insufficient.
-A Windows native masked dialog is an alternative requiring its own review if a
-dedicated console cannot provide a usable, proven lifecycle. Synthetic owner
-tests and permanent `ACTION_REQUIRED` are **not** completion of user PAT setup.
-No console/dialog is spawned or displayed here.
+This terminal protocol would still need a proven dedicated-console adapter for
+real use: physical confirmation, paste-marker/control handling, bounded delivery
+and actual terminal exit observation. Bracketed-paste support or a mode-status
+reply alone is insufficient. The separately reviewed native capture role below
+instead implements an app-owned Windows masked dialog with its own lifecycle.
+Synthetic terminal-owner tests and permanent `ACTION_REQUIRED` are **not**
+completion of user PAT setup.
+No console/dialog is spawned or displayed by this terminal primitive.
 
 After that reviewed entry exists, its trusted owner must recheck native
 principal/project/user approval and issue an at-most-30-second admin capability,
 without renewing expired proof. No real PAT, vault access or agent-observed
 secret prompt is part of these tests.
+
+## Native capture credential commands
+
+The separate `capture` bootstrap role now has a concrete app-owned Windows x64
+dialog/helper/controller implementation. It is not routed through the fixture
+CLI, browser/API server, or the unsupported terminal-input primitive. It requires
+an independently reviewed and installed `figma-capture-v1` release, and every
+command other than `--help` fails closed in an ordinary worktree or fixture
+installation.
+
+Using that release's pinned Node/bootstrap after separate user approval:
+
+```text
+launch.mjs capture project create --new [--json]
+launch.mjs capture credential status --project <capture-ID> --confirm-reference <figma_pat-ID> [--json]
+launch.mjs capture credential remove --project <capture-ID> --confirm-reference <figma_pat-ID> [--json]
+launch.mjs capture credential setup --project <capture-ID> --confirm-reference <figma_pat-ID> --interactive
+launch.mjs capture credential update --project <capture-ID> --confirm-reference <figma_pat-ID> --interactive
+```
+
+Setup/update reject `--json` and require explicit `--interactive`; optional
+`--expires-at <ISO timestamp>` is only a user-declared claim. There is no token
+argument, environment/file/stdin route or JSON credential input. The fixed
+app-owned dialog says Figma PAT, not Windows password, uses a single masked
+EDIT control and no account/provider/SSO/save-checkbox controls. No CredUI or
+Windows authentication operation is used.
+
+Paste validation examines the complete bounded Unicode clipboard copy only on
+the dialog's paste action (Ctrl+V or Shift+Insert), before the edit control can
+normalize or truncate it. The edit context menu and copy/cut/undo are disabled.
+Invalid multiline/non-ASCII/control/NUL/oversize input clears the candidate.
+No clipboard polling, history lookup or clipboard alteration is performed.
+The helper returns bytes only through its private binary channel after normal
+owned-window cleanup; the parent withholds them until actual child close and
+empty owned Job membership. It then rechecks current project/principal/action
+authority before native vault use. No secret is printed or handed to an agent.
+
+Input lifetime is at most five minutes, separate from the 30-second admin work
+context. Startup and close observation initially retain the planned five-second
+bounds; there is no automatic increase. Cancellation/failed cleanup retains
+ownership with fixed visible recovery diagnostics. Cleanup retry never retries
+a vault mutation. An interrupted command may already have changed its exact
+owned entry; use a new explicitly authorized status action rather than assuming
+rollback or repeating setup.
+
+**Evidence limit:** code, synthetic Win32/clipboard/process tests and an owned
+pinned-Node/Job no-UI probe are not a real dialog or vault feasibility proof.
+No real UI display, clipboard read or vault action was run during this slice.
+Synthetic display validation, exact capture release/candidate approval, fresh
+private project creation and real entry enrollment remain separate user gates.
+The existing installed fixture release/project is unchanged. No network capture
+or Figma permission/seat/quota proof is enabled.
 
 ## Supported invocation model
 

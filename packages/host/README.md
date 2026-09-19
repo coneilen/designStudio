@@ -383,6 +383,31 @@ behavior, permissions and crash recovery require separate approved evidence.
 
 ## Evidence and commands
 
+### Private native PAT input modules
+
+The private `pat-input`, `pat-edit`, `pat-channel`, `windows-pat-dialog` and
+`owned-job` modules support the capture profile; none is a new public host
+credential/launcher endpoint. The single-line Windows EDIT uses ES_PASSWORD,
+bounded ASCII typing and complete UTF-16 paste validation before insertion.
+EM_SETLIMITTEXT is defense in depth, not permission to accept truncated text.
+Only WM_PASTE/Ctrl+V handling opens the clipboard; the clipboard's global
+allocation is never freed, zeroed or modified by the app. Only bounded owned
+copies are scrubbed. Current clipboard synthesis and Windows control-internal
+copies are not claimed erasable.
+
+Koffi callbacks are registered, kept alive on the owning thread and released
+only after observed owned HWND destruction and successful native cleanup.
+The bounded PeekMessage pump yields to Node IPC/cancellation rather than blocking
+the event loop in GetMessage. Native callback errors, reentrant paste, timeout
+and cleanup faults cannot return accepted token bytes. This is an app-owned
+normal-desktop dialog, not secure desktop, Windows login or credential-provider UI.
+
+All default UI tests use an explicit mocked-Koffi safety check before invoking
+the adapter. Real Job/pipe no-UI probes import no dialog or clipboard module.
+No real UI, clipboard or vault proof is claimed. Later user-approved synthetic
+display testing must verify actual masking, gesture/paste routes, ABI/callback
+lifetime and window/process teardown before any real token enrollment.
+
 From the root: build before typecheck; tests are co-located under `tests/`.
 Focused tests first failed for missing modules, then passed with implementations.
 A concurrent first-stage regression separately failed before serialization

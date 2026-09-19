@@ -334,7 +334,7 @@ function capturePaths(root: string): CaptureInstallationPaths {
       root,
       "payload",
       "packages",
-      "host",
+      "project-host",
       "dist",
       "pat-dialog-helper.js",
     ),
@@ -352,7 +352,7 @@ function required(meta: Metadata): void {
       ]
     : [
         "packages/cli/dist/capture-main.js",
-        "packages/host/dist/pat-dialog-helper.js",
+        "packages/project-host/dist/pat-dialog-helper.js",
         "node_modules/@design-studio/project-host/dist/index.js",
         "capture-policy.json",
       ])

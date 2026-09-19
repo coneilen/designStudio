@@ -99,6 +99,9 @@ importers:
       '@design-studio/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@design-studio/project-host':
+        specifier: workspace:*
+        version: link:../project-host
 
   packages/contracts:
     dependencies:
