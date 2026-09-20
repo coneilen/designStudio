@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { HostBoundaryError } from "@design-studio/host";
+import { CAPTURE_POLICY_SHA256, CAPTURE_PROFILE } from "./capture-profile.js";
 import {
   type InstallationTrace,
   traceInstallation,
@@ -43,11 +44,34 @@ export interface FixtureInstallationLease {
   checkCurrent(): Promise<void>;
   close(): Promise<void>;
 }
-interface ReleasePolicy {
+export interface CaptureInstallationPaths {
+  readonly node: string;
+  readonly bootstrapEntry: string;
+  readonly cliEntry: string;
+  readonly dialogEntry: string;
+  readonly sqliteBinding: string;
+}
+export interface CaptureInstallationLease {
+  readonly paths: CaptureInstallationPaths;
+  readonly identity: string;
+  readonly profile: typeof CAPTURE_PROFILE;
+  recheck(): Promise<void>;
+  checkCurrent(): Promise<void>;
+  close(): Promise<void>;
+}
+type InstallationLease = FixtureInstallationLease | CaptureInstallationLease;
+interface FixtureReleasePolicy {
   version: 1;
   manifestSha256: string;
   catalogSha256: string;
 }
+interface CaptureReleasePolicy {
+  version: 2;
+  kind: typeof CAPTURE_PROFILE;
+  manifestSha256: string;
+  capturePolicySha256: string;
+}
+type ReleasePolicy = FixtureReleasePolicy | CaptureReleasePolicy;
 interface Metadata {
   policy: ReleasePolicy;
   manifest: Buffer;
@@ -69,8 +93,14 @@ interface Verified {
   readonly identities: readonly Identity[];
 }
 const active = new WeakMap<
-  FixtureInstallationLease,
-  { files: readonly string[]; root: string; live: boolean; guards: number }
+  InstallationLease,
+  {
+    files: readonly string[];
+    root: string;
+    live: boolean;
+    guards: number;
+    profile: "fixture" | typeof CAPTURE_PROFILE;
+  }
 >();
 let bootstrapOrigin: string | undefined;
 const same = (a: Identity, b: Identity) =>
@@ -130,16 +160,28 @@ async function metadata(root: string): Promise<Metadata> {
   );
   const policy: ReleasePolicy = JSON.parse(policyBytes.toString("utf8"));
   if (
-    policy?.version !== 1 ||
+    (policy?.version !== 1 && policy?.version !== 2) ||
     !/^[a-f0-9]{64}$/.test(policy.manifestSha256) ||
-    !/^[a-f0-9]{64}$/.test(policy.catalogSha256) ||
+    (policy.version === 1
+      ? !/^[a-f0-9]{64}$/.test(policy.catalogSha256)
+      : policy.kind !== CAPTURE_PROFILE ||
+        policy.capturePolicySha256 !== CAPTURE_POLICY_SHA256) ||
     !policyBytes.equals(
       Buffer.from(
-        JSON.stringify({
-          version: 1,
-          manifestSha256: policy.manifestSha256,
-          catalogSha256: policy.catalogSha256,
-        }),
+        JSON.stringify(
+          policy.version === 1
+            ? {
+                version: 1,
+                manifestSha256: policy.manifestSha256,
+                catalogSha256: policy.catalogSha256,
+              }
+            : {
+                version: 2,
+                kind: CAPTURE_PROFILE,
+                manifestSha256: policy.manifestSha256,
+                capturePolicySha256: policy.capturePolicySha256,
+              },
+        ),
       ),
     )
   )
@@ -277,22 +319,61 @@ function paths(root: string): FixtureInstallationPaths {
     sqliteBinding: path.join(root, "payload", "native", "better_sqlite3.node"),
   });
 }
+function capturePaths(root: string): CaptureInstallationPaths {
+  return Object.freeze({
+    node: path.join(root, "bootstrap", "runtime", "node.exe"),
+    bootstrapEntry: path.join(root, "bootstrap", "launch.mjs"),
+    cliEntry: path.join(
+      root,
+      "payload",
+      "packages",
+      "cli",
+      "dist",
+      "capture-main.js",
+    ),
+    dialogEntry: path.join(
+      root,
+      "payload",
+      "packages",
+      "project-host",
+      "dist",
+      "pat-dialog-helper.js",
+    ),
+    sqliteBinding: path.join(root, "payload", "native", "better_sqlite3.node"),
+  });
+}
 function required(meta: Metadata): void {
   const files = new Map(meta.files.map((file) => [file.path, file]));
-  for (const name of [
-    "packages/cli/dist/main.js",
-    "packages/application/dist/render-worker.js",
-    "node_modules/@design-studio/project-host/dist/index.js",
-    "native/better_sqlite3.node",
-    "browser/chromium_headless_shell-1243/chrome-headless-shell-win64/chrome-headless-shell.exe",
-  ])
+  for (const name of meta.policy.version === 1
+    ? [
+        "packages/cli/dist/main.js",
+        "packages/application/dist/render-worker.js",
+        "node_modules/@design-studio/project-host/dist/index.js",
+        "native/better_sqlite3.node",
+        "browser/chromium_headless_shell-1243/chrome-headless-shell-win64/chrome-headless-shell.exe",
+      ]
+    : [
+        "packages/cli/dist/capture-main.js",
+        "packages/project-host/dist/pat-dialog-helper.js",
+        "native/better_sqlite3.node",
+        "node_modules/@design-studio/figma-capture/dist/index.js",
+        "node_modules/@design-studio/figma-import/dist/index.js",
+        "node_modules/@design-studio/project-host/dist/index.js",
+        "capture-policy.json",
+      ])
     if (!files.has(name))
       refuse(`Release is missing required installed role ${name}.`);
   if (
+    meta.policy.version === 1 &&
     files.get("fixtures/foundation/manifest.json")?.sha256 !==
-    meta.policy.catalogSha256
+      meta.policy.catalogSha256
   )
     refuse("Release fixture catalog differs from trusted bootstrap policy.");
+  if (
+    meta.policy.version === 2 &&
+    files.get("capture-policy.json")?.sha256 !== CAPTURE_POLICY_SHA256
+  )
+    refuse("Release capture policy differs from the closed native profile.");
   const bootstrapFiles = new Set(meta.bootstrapFiles.map((file) => file.path));
   for (const name of [
     "runtime/node.exe",
@@ -308,6 +389,7 @@ async function namespace(
   native: Native,
   sid: string,
   create: boolean,
+  profile: "fixture" | typeof CAPTURE_PROFILE = "fixture",
 ): Promise<{ root: string; leases: Lease[] }> {
   const folder = native.localAppData();
   const parsed = path.win32.parse(folder);
@@ -328,7 +410,10 @@ async function namespace(
       root = path.join(root, part);
       leases.push(native.inspect(root, true));
     }
-    for (const part of ["DesignStudio", "installations"]) {
+    for (const part of [
+      "DesignStudio",
+      profile === "fixture" ? "installations" : "capture-releases",
+    ]) {
       root = path.join(root, part);
       if (create) {
         try {
@@ -395,7 +480,12 @@ export async function installCandidate(
   const held: Lease[] = [...source.leases];
   const entries: InstallationEntry[] = [];
   return withLeases(held, async () => {
-    const parent = await namespace(native, sid, true);
+    const parent = await namespace(
+      native,
+      sid,
+      true,
+      meta.policy.version === 1 ? "fixture" : CAPTURE_PROFILE,
+    );
     held.push(...parent.leases);
     const reservation = path.join(
       parent.root,
@@ -477,7 +567,7 @@ export async function installCandidate(
   });
 }
 
-export async function verifyFixtureInstallation(): Promise<FixtureInstallationLease> {
+async function verifiedBootstrapRoot(): Promise<string> {
   if (process.platform !== "win32" || process.arch !== "x64")
     throw new HostBoundaryError(
       "UNSUPPORTED_HOST",
@@ -503,19 +593,44 @@ export async function verifyFixtureInstallation(): Promise<FixtureInstallationLe
     refuse(
       "ACTION_REQUIRED: no user-approved offline release has established this bootstrap. Never approve current-worktree hashes implicitly.",
     );
-  return verifyInstalledRoot(bootstrapOrigin);
+  return bootstrapOrigin;
+}
+export async function verifyFixtureInstallation(): Promise<FixtureInstallationLease> {
+  return verifyInstalledRoot(await verifiedBootstrapRoot());
+}
+export async function verifyCaptureInstallation(): Promise<CaptureInstallationLease> {
+  return verifyCaptureInstalledRoot(await verifiedBootstrapRoot());
 }
 
 /** Internal verification engine; the public API establishes the trusted bootstrap origin first. */
 export async function verifyInstalledRoot(
   root: string,
 ): Promise<FixtureInstallationLease> {
+  const lease = await verifyProfileRoot(root, "fixture");
+  if ("profile" in lease)
+    refuse("Capture profile cannot authorize fixture roles.");
+  return lease;
+}
+export async function verifyCaptureInstalledRoot(
+  root: string,
+): Promise<CaptureInstallationLease> {
+  const lease = await verifyProfileRoot(root, CAPTURE_PROFILE);
+  if (!("profile" in lease))
+    refuse("Fixture profile cannot authorize capture roles.");
+  return lease;
+}
+async function verifyProfileRoot(
+  root: string,
+  profile: "fixture" | typeof CAPTURE_PROFILE,
+): Promise<InstallationLease> {
   root = path.resolve(root);
   const meta = await metadata(root);
   required(meta);
+  if ((meta.policy.version === 1 ? "fixture" : CAPTURE_PROFILE) !== profile)
+    refuse("Installed release profile does not authorize the requested role.");
   const native = await loadNative();
   const sid = native.principal();
-  const parent = await namespace(native, sid, false);
+  const parent = await namespace(native, sid, false, profile);
   const reservation = path.join(
     parent.root,
     Buffer.from(meta.identity, "hex").toString("base64url"),
@@ -566,7 +681,7 @@ export async function verifyInstalledRoot(
     const held = verified;
     let closed = false;
     let closing = false;
-    const state = { files: held.files, root, live: true, guards: 0 };
+    const state = { files: held.files, root, live: true, guards: 0, profile };
     const checkpoint = async (hashBytes: boolean): Promise<void> => {
       const trace = traceInstallation(hashBytes);
       let success = false;
@@ -632,8 +747,7 @@ export async function verifyInstalledRoot(
         trace?.end(success);
       }
     };
-    const lease: FixtureInstallationLease = Object.freeze({
-      paths: paths(root),
+    const lifecycle = {
       identity: meta.identity,
       recheck: () => checkpoint(true),
       checkCurrent: () => checkpoint(false),
@@ -648,7 +762,12 @@ export async function verifyInstalledRoot(
         release([...parent.leases, ...held.leases]);
         closed = true;
       },
-    });
+    };
+    const lease: InstallationLease = Object.freeze(
+      profile === "fixture"
+        ? { ...lifecycle, paths: paths(root) }
+        : { ...lifecycle, paths: capturePaths(root), profile: CAPTURE_PROFILE },
+    );
     active.set(lease, state);
     return lease;
   } catch (error) {
@@ -662,6 +781,44 @@ export async function verifyInstalledRoot(
 export function registerFixtureInstallationGuards(
   lease: FixtureInstallationLease,
 ): { close(): void } {
+  if (active.get(lease)?.profile !== "fixture")
+    refuse(
+      "Fixture guards require this process's live native-verified fixture installation lease.",
+    );
+  return registerGuards(lease);
+}
+export function registerCaptureInstallationGuards(
+  lease: CaptureInstallationLease,
+): { close(): void } {
+  assertCaptureInstallation(lease);
+  return registerGuards(lease);
+}
+/** Internal lifetime admission; JSON or fixture leases never establish capture authority. */
+export function assertCaptureInstallation(
+  lease: CaptureInstallationLease,
+): void {
+  const state = active.get(lease);
+  if (!state?.live || state.profile !== CAPTURE_PROFILE)
+    refuse(
+      "Capture operation requires this process's live verified capture installation.",
+    );
+}
+export function retainCaptureInstallation(
+  lease: CaptureInstallationLease,
+): () => void {
+  assertCaptureInstallation(lease);
+  const state = active.get(lease);
+  if (!state) refuse("Capture installation missing.");
+  state.guards++;
+  let closed = false;
+  return () => {
+    if (!closed) {
+      state.guards--;
+      closed = true;
+    }
+  };
+}
+function registerGuards(lease: InstallationLease): { close(): void } {
   const state = active.get(lease);
   if (!state?.live)
     refuse(

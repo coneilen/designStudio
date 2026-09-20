@@ -93,6 +93,41 @@ Repeated close is safe. A close rejected for interrupted publication leaves
 the boundary usable for the existing owned-retry recovery path.
 F03 owns cross-instance maintenance, database references and crash recovery.
 
+`closePreservingStages()` uses the same serialized lifecycle and busy/uncertain
+publication refusals, but leaves every pending stage file and directory
+physically unchanged. After quiescence it closes admission and releases only
+in-memory metadata, for native capture attempts whose existing job journal must
+survive interruption. Later preserve-close or ordinary close is a no-op: it
+cannot silently delete those retained files or recreate staging directories.
+Reads/stages/publish/discard remain refused. A failed uncertain-publication
+close retains the live boundary and exact metadata for authorized reconciliation.
+This is disposal, not stage adoption, effect settlement, recovery completion or
+deletion authority; the default `close()` behavior on an open boundary is unchanged.
+
+For an **already-visible current-instance** publication, the exact original
+authorization-object/project/actor/job/request/staging metadata may retain an
+`OwnedPendingPublication` using `retainPendingPublication`. It is an immutable,
+instance-registered identity, not JSON or a root-write grant. Unpublished, busy,
+unknown, copied or changed entries cannot acquire this identity.
+`reconcileOwnedPublication(identity, cleanupContext)` additionally requires
+`authorizeOwnedPublicationRecovery` to admit that exact identity under current,
+purpose-bound authority. The native capture composition uses a private
+authorization-to-ledger WeakMap; a general root-write context is insufficient.
+The expired original context is never revived or rebound.
+
+Recovery rechecks the original native file/inode, path, bytes/hash and flush
+barrier (or exact portable link pair). It cannot select another destination,
+create a new stage/publication, settle effects or commit a storage/job receipt.
+Denial and barrier failures retain the pending identity for an explicit retry;
+revocation after an observed unlink retains that fact so recovery revalidates
+the remaining single-link destination rather than recreating the pair.
+Ordinary publish/close and historical recovery behavior are otherwise unchanged.
+Owned native-resume and already-unlinked comparison buffers are zeroed on both
+match and integrity failure. A read that fails before transferring its buffer
+(including authority expiry/revocation or handle-close failure) also zeroes that
+unreturned allocation. These are temporary read copies, not persisted artifact
+bytes or caller-owned buffers; recovery authority and receipts are unchanged.
+
 Published paths round-trip without assuming the input and artifact roots match:
 `read({artifactRootId: "artifacts", path: published.path}, context)`.
 The root ID is retained by the caller alongside the contract artifact; it is
@@ -279,16 +314,61 @@ unavailable, never plaintext fallback. `NapiCredentialBackend({entries})` is
 a real, lazy Windows Credential Manager/macOS Keychain read path using pinned
 `@napi-rs/keyring` 2.0.0 and its exact optional platform packages. Each entry
 maps one contract credential reference to configured service/account; the adapter
-uses only `AsyncEntry.getSecret(signal)`, never enumeration, password strings,
+uses only `AsyncEntry.getSecret()`, never enumeration, password strings,
 provisioning, deletion, CLI tools or plaintext fallback. Its capability label
 is `native-binding`, not evidence of a successful live vault lookup.
+Cancellation is checked before/after native work. The native call is deliberately
+not passed an AbortSignal: N-API abort-wrapper rejection does not prove the
+underlying native read has settled. Late returned bytes are zeroed and rejected.
+
+Both native byte-read adapters validate an `unknown` result at one shared
+internal boundary. Only `null` and `undefined` normalize to internal absence.
+An actual `Uint8Array`/Buffer at or below `PAT_MAX_BYTES` (4096) retains its
+identity, including empty bytes (which are present, not absence). Oversized
+owned typed views are zeroed and rejected before admin status can report them
+present. Intrinsic byteLength/buffer access and fill avoid shadow properties or
+caller coercion; only the supplied view is scrubbed, not neighboring bytes.
+Shared memory is still refused without claiming ownership or zeroing it.
+The measured native numeric-array form is copied
+only after a length cap of `PAT_MAX_BYTES` (4096), plain-array/own-key checks
+and dense enumerable writable own-data integer-byte validation. No getters,
+inherited elements, iterators or coercion are used; proxies, holes, extras,
+nonwritable/malformed data and oversized arrays fail closed. The new array-copy
+cap matches the typed-byte bound and existing PAT profile.
+Mutable bounded native-array slots are overwritten with zero; failed copies
+are zeroed and never returned. No erasure claim is made for immutable, shared
+or oversized unsupported provider storage. Empty valid arrays remain present
+empty bytes, not absence. Strings/array-like objects and native rejection remain
+sanitized failures. Admin reads return `undefined` for absence; the consumer
+reader still throws `RESOURCE_UNRESOLVED`, never a successful missing secret.
 
 `nativeVaultCapability()` loads the module without constructing an entry.
 The Windows x64 prebuilt module loaded on Node 24.21.0 with install scripts
 disabled and no compiler; missing binding/unsupported host remains explicit.
 Injected-native tests exercise the byte API, missing entry, error and abort
-paths. **No actual user's vault was read or modified.** Windows live access,
-locked/permission prompts and all macOS native execution remain unverified.
+paths. A separately authorized Windows dummy-key preflight and same-key
+type-only diagnostic observed actual `null` from pinned 2.0.0 asynchronous
+`getSecret`, despite its `.d.ts` declaring `Uint8Array | undefined`. The shipped
+loader directly exports the native class; its synchronous declaration also
+documents `null` and numeric arrays. A subsequently authorized same-key dummy
+write succeeded, but the actual async payload was a dense numeric array, not
+the declared `Uint8Array`. That test stopped rather than coercing an unknown
+value. Explicit ownership-record-based cleanup then deleted that exact test
+entry and confirmed raw null absence; byte equality was not proven because the
+original random value had already been wiped. This boundary correction
+therefore validates runtime values rather
+than trusting that asynchronous declaration. The diagnostic used one newly
+generated test actor/project/reference mapping, not an existing user credential
+or native-project authority claim. No enumeration or other credential access
+was performed. After both boundary corrections, a separately authorized final
+same-key Windows check passed fresh absence, synthetic byte write, in-memory
+read equality, exact-entry deletion and confirmed absence through the actual
+pinned default adapter. Original native calls settled and owned buffers were
+zeroed; no test entry remains. This is current-user backend byte-lifecycle
+evidence, not full installed enrollment, PAT validity, a same-user sandbox or
+forensic erasure of OS/native copies. Locked/permission behavior and all macOS
+native execution remain separate proof gates. Earlier failures and safe proof
+artifacts are retained privately, not committed with test key names or values.
 The package is MIT; retain its notices and native dependency notices when
 distributing. No dependency build-policy exception is needed for the tested
 prebuilt path.
@@ -296,21 +376,172 @@ prebuilt path.
 Only trusted callback code
 may receive secret bytes; returned plain data is checked for known-secret
 leakage (including nested keys, byte arrays and encodings), finite output bounds,
-and callback failures conceal sensitive details even for typed errors. Borrowed bytes are
-zeroed on success, failure and timeout. JavaScript cannot erase immutable strings,
+and callback failures conceal sensitive details even for typed errors. Original
+read/consumer promises are awaited, not raced away on cancellation or deadline.
+Late success is rejected after live authority revalidation. Borrowed bytes and
+scoped redaction remain owned until the original work settles, then are cleared
+on success or failure. `pendingUses` reports retained ownership; `interruptedUses`
+counts those with a cancelled/deadline watch. An arbitrary native call or trusted
+consumer that never settles can retain ownership indefinitely: an operation
+deadline is not proof of completed cleanup. Callers must not release project or
+installation resources while `use` remains pending.
+JavaScript cannot erase immutable strings,
 native copies or a malicious consumer's copies; this is lifetime hygiene, not
 a cryptographic erasure or arbitrary callback sandbox guarantee.
 
 `Redactor` masks registered UTF-8/encoded credentials, authorization headers and
-URL credentials/query/fragment metadata. Avoid logging untrusted objects or
+URL credentials/query/fragment metadata. `addSecret` returns an idempotent
+release function; overlapping registrations are reference-counted, so one
+operation cannot remove another's redaction. Avoid logging untrusted objects or
 design content in the first place; it is not an all-secrets detector.
+`containsSecretValue` applies the existing callback-result check to parsed
+private capture data, including encoded strings and numeric byte-array aliases;
+it does not weaken the credential callback return guard.
 `decideEgress` defaults deny and records provider, data classes and evidence IDs
 separately from configured policy. Every class and exact provider must be
 allowed, with a trusted `model-egress` grant and nonzero external-call budget.
 An allowed decision is not a transmission receipt, token/spend reservation or
 permission for an arbitrary adapter to send content. No transmission occurs here.
 
+### Internal credential-administration primitives (not an enrollment command)
+
+`credential-admin.ts` and `credential-admin-vault.ts` are deliberately **not**
+exported from the public package. No CLI/HTTP route, installed capture profile,
+native project enrollment or real-user authority issuer is wired yet. Constructing
+these primitives or supplying a callback is not production trust evidence.
+The next reviewed composition must provide the verified native current-principal
+and project leases, existing live `Authority`, one boundary instance per owned
+reference, and a durable private `CredentialAdminJournal`; there is no default
+permit, in-memory production journal or plaintext fallback.
+
+The internal issuer admits exactly `setup`, `status`, `update` or `remove`
+following trusted local user confirmation of that action/reference. This is
+separate from the public `Operation`/Job vocabulary, which remains unchanged.
+Capabilities are frozen runtime identities in a private WeakMap, scoped to
+actor/project/provider/reference/action, consumed once, and rechecked across
+awaits. JSON, structural clones, stale authority and cross-principal use fail.
+Prompt interaction must finish before issuing the short-lived work capability;
+do not extend expired authority after a five-minute user interaction.
+
+The byte adapter targets only `figma_rest` / Windows Credential Manager with
+an app-created UUID reference. Its service is `DesignStudio.FigmaPAT.v1.` plus
+the SHA-256 of actor/project/reference; its account is an opaque actor digest.
+No caller service/account/target, credential enumeration, other provider/user
+lookup or password-string API exists. `setSecret`, `getSecret` and
+`deleteCredential` settle without native AbortSignal wrappers.
+The loader injection is an internal deterministic test seam, not a public
+production override.
+
+Setup checks its exact new entry for collision and refuses overwrite; update
+requires an existing owned entry and separately confirmed action, and remove
+requires its exact confirmed target. Status **is vault access**, not a free
+capability probe: the binding lacks metadata-only presence, so it performs one
+authorized read and immediately clears the bytes. Output includes only reference,
+presence and explicitly user-declared expiry/scopes, never a token prefix,
+fingerprint, account profile or verified permission claim.
+
+Before write/delete, await durable nonsecret intent. Ambiguous/failed/late native
+mutation or verification returns `OUTPUT_UNCERTAIN`, retains pending/uncertain
+journal state and never rolls back automatically. Failed journal cleanup is
+explicit. Other mutations require separately authorized status reconciliation;
+an exact pending removal may instead be retried only through a new explicitly
+confirmed remove capability and fresh authorized exact-entry read. This is not
+an automatic retry or permission to update an uncertain setup/update entry.
+Native composition reserves journal capacity before lookup and can retain
+pending-remove across ambiguous deletion/status observations to protect its
+terminal absence record.
+Uncertain expiry claims are not promoted by a presence-only read. The original
+promise and owned token bytes remain live until native work settles; `pending`
+does not become false merely because cancellation was requested. Caller-supplied
+owned token bytes are copied within a 4096-byte printable-ASCII bound, cleared on
+admission/rejection, and the private copy is cleared after work quiesces.
+
+This is an OS-current-user boundary, not a sandbox against software running as
+that same user. Tests use synthetic native adapters and journals; no real vault
+entry has been read, created, replaced or deleted for this slice. Live native
+behavior, permissions and crash recovery require separate approved evidence.
+
 ## Evidence and commands
+
+### Private native PAT input modules
+
+The private `pat-input`, `pat-edit`, `pat-channel`, `windows-pat-dialog` and
+`owned-job` modules support the capture profile; none is a new public host
+credential/launcher endpoint. The single-line Windows EDIT uses ES_PASSWORD,
+bounded ASCII typing and complete UTF-16 paste validation before insertion.
+EM_SETLIMITTEXT is defense in depth, not permission to accept truncated text.
+Only WM_PASTE/Ctrl+V handling opens the clipboard; the clipboard's global
+allocation is never freed, zeroed or modified by the app. Only bounded owned
+copies are scrubbed. Current clipboard synthesis and Windows control-internal
+copies are not claimed erasable.
+
+Koffi callbacks are registered, kept alive on the owning thread and released
+only after observed owned HWND destruction and successful native cleanup.
+The bounded PeekMessage pump yields to Node IPC/cancellation rather than blocking
+the event loop in GetMessage. Native callback errors, reentrant paste, timeout
+and cleanup faults cannot return accepted token bytes. This is an app-owned
+normal-desktop dialog, not secure desktop, Windows login or credential-provider UI.
+Callback failures remain sticky during closing, including callbacks invoked by
+DestroyWindow after acceptance. Receipt of WM_NCDESTROY, successful subclass
+removal, successful default-procedure return and callback/class unregistration
+are separate observations. Final checks run after destruction callbacks unwind;
+any failure clears accepted bytes and reports sanitized primary/cleanup codes,
+never an exception through the native callback boundary or inferred scrub success.
+
+All default UI tests use an explicit mocked-Koffi safety check before invoking
+the adapter. Real Job/pipe no-UI probes import no dialog or clipboard module.
+The pinned hidden-helper probe also checks actual Windows x64 STARTUPINFO:
+`STARTF_USESHOWWINDOW` is set and `wShowWindow` is `SW_HIDE`. A separately
+approved hidden initialization diagnostic passed real class/control creation,
+five subclasses and cleanup, stopping before any ShowWindow/focus/input call.
+It observed flags `0x101` and show state `0`; this is not display proof.
+
+The original one-call display conflicted with the documented
+[first-ShowWindow startup override](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-showwindow).
+The PAT-only sequence now consumes `SW_SHOWDEFAULT`, rechecks lifetime/owned
+HWND/closing state, and explicitly requests `SW_SHOWNORMAL`. The final
+IsWindow/IsWindowVisible assertions still precede focus and READY. The helper
+console remains hidden; Job membership, fixed argv, before-START behavior,
+five-second startup and five-minute input limits are unchanged. This is two
+documented display steps, not a timer/retry loop or relaxed visibility check.
+The corrected mock models inherited first-show state (and subsequent explicit
+default requests), rather than always making the window visible. The regression
+first reproduced `INTERRUPTED` with successful cleanup, then passed the corrected
+sequence; genuinely invisible windows and cancellation still fail closed.
+
+Private `PatChannel.readInput(timeout, signal?)` separates a clean input-wait
+expiry/cancellation (`null`) from transport failure. It retains the nonce and
+queued complete frames for the terminal exchange, but a partial header/body,
+bad nonce or existing failure still destroys the channel and remains sticky.
+It does not assert EOF or cleanup. The original 300,000ms read cap is unchanged;
+ordinary `read` timeouts and terminal `finalizeReceive` stay fail-closed.
+The helper's private input session uses the unchanged absolute input deadline,
+then at most the existing five-second terminal grace, rather than destroying
+its own receipt channel at the instant input expires. No public trace, new IPC
+kind or credential callback is introduced. Protocol tests mock the UI collector
+explicitly before invoking this actual helper-session code.
+
+The first supervised dummy-only attempt failed before READY. That failure is
+retained as evidence rather than relabeled as successful display.
+
+A later supervised corrected-startup attempt reached READY but ended with
+`INTERRUPTED`/unconfirmed scrub near the input deadline; user behavior was not
+observed. Source analysis found both endpoints' same-deadline reads could destroy
+the receipt channel during teardown. Deterministic real-channel/fake-clock tests
+reproduce that race and the correction, including late bytes and failed cleanup.
+They do **not** establish which timer won in that real attempt or prove actual
+Win32 timeout handling.
+
+A later separately authorized supervised check of the corrected native helper
+reached READY. The user confirmed masked dummy text, multiline dummy-paste
+rejection and Cancel. Machine evidence independently recorded ERROR 1, CLOSED 3,
+confirmed scrub, normal child exit and an empty Job without forced termination;
+the exact owned TEMP namespace was cleaned. The copied helper/controller/input/
+UI bytes were reviewed code, with only the approved KnownFolder test substitution
+before inventories and metadata-only parent observation. User observations and
+machine lifecycle records are kept separately. This is evidence for the exercised
+dummy cancellation path, not every ABI/error/timeout path, real PAT enrollment,
+secure desktop or an approved production installation.
 
 From the root: build before typecheck; tests are co-located under `tests/`.
 Focused tests first failed for missing modules, then passed with implementations.

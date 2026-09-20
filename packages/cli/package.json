@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "@design-studio/application": "workspace:*",
-    "@design-studio/contracts": "workspace:*"
+    "@design-studio/contracts": "workspace:*",
+    "@design-studio/project-host": "workspace:*"
   }
 }

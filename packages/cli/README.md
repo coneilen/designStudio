@@ -33,6 +33,180 @@ input, 3 comparison policy failure, 4 inconclusive comparison, and 5
 conflict/required action. A queried Job is not necessarily completed work.
 No comparison engine, live provider or browser enrollment is implemented.
 
+## Internal framed-input protocol: synthetic evidence only
+
+**The terminal protocol is not a production PAT entry.** `readMaskedSecret` explicitly returns
+`ACTION_REQUIRED`: no concrete native dedicated-terminal/profile/confirmation
+adapter is admitted. The old ordinary-TTY newline reader was unsafe because
+stream chunks are not input boundaries; split multiline pastes could return a
+credential prefix and leave trailing secret bytes for another reader. It is
+removed, not protected with a debounce or a guessed quiet period.
+
+The replacement is internal, not a public CLI export or command. Existing
+parsing still rejects Figma credential commands, token arguments and file/stdin
+alternatives. `createDedicatedSecretInputOwner` registers one opaque owner in a
+private WeakMap and rejects reused/shared/encoded/buffered/non-TTY streams. Its
+return value has owner-only inspection, confirmation and post-exit cleanup
+controls. Input/output references are explicitly snapshotted; the required cleanup
+callable is captured once and bound to the original adapter instance, including
+prototype methods and private receiver state. Missing/noncallable cleanup is
+rejected before input ownership. Replacing caller fields later cannot replace
+the captured resources or cleanup function. Cleanup is explicitly invoked and
+awaited, never supplied as an optional Promise handler that could silently skip
+an absent method. Native adapters must retain their resource handles privately;
+their original receiver state remains live for cleanup retries.
+This establishes **protocol ownership, not native trust or terminal
+support**. Current tests supply synthetic streams; no caller Boolean, structural
+owner clone, environment variable or TTY check attests a supported profile.
+
+`readMaskedSecretFromTerminal(owner, options)` incrementally consumes exactly
+one `ESC[200~` / `ESC[201~` bracketed paste frame, independent of chunk boundaries.
+Plain typing and CR/LF never submit. Candidate bytes are limited to 1..4096
+printable ASCII bytes; multiline/control/nested-marker/overflow input clears the
+entire candidate. An open rejected frame is drained through its known end marker,
+with constant-size marker state and at most 8192 parsed/drained bytes total.
+The original interaction deadline is at most five minutes, not reset by data.
+After a byte/time bound, parsing stops and only the zeroing discard sink remains.
+
+A complete frame produces an opaque, one-use confirmation receipt. It does not
+return bytes. Confirmation is a **separate owner control-plane action**, never
+dispatched from terminal characters; a literal end marker plus any pasted key
+cannot authenticate physical user confirmation. Receipts cannot be forged by
+copying their fields. Even after explicit confirmation, candidate bytes remain
+withheld until the owner observes dedicated terminal exit and cleanup succeeds.
+Any further input before exit invalidates the candidate, including a late second
+paste. There is no success-shaped return of a silently truncated first line.
+
+Cancel/EOF/deadline/input failure clears the candidate and rejects with
+`SecretInputFailure`: fixed primary code, `cleanupRequired`, opaque `owner`, and
+fixed `recoveryGuidance`. The same guidance is displayed without echoing input.
+It directs closure/discard of the **dedicated secret-input console**, never
+silent return to a normal calling shell in raw mode. An EOF or stream close alone
+is not asserted to prove native terminal exit. The native owner must separately
+observe its owned console/process lifecycle before calling `afterTerminalExit`;
+the internal primitive additionally requires a closed/destroyed empty input
+stream. No production issuer of that native observation exists in this chunk.
+
+Until exit is observed, exactly one bounded-memory data sink discards and zeroes
+subsequent chunks without buffering or further parsing beyond the budget.
+Ownership, raw mode and cleanup remain explicit, even after the input promise
+rejects. The owner cannot report `closed` while the input is live/queued. Cleanup
+failure reports primary and cleanup codes separately, with no raw exception or
+secret result; only that owner can retry release. All listeners/timers are removed
+after successful post-exit cleanup. Deadline expiry is not quiescence evidence.
+JavaScript strings, terminal/native copies and upstream allocation cannot be
+guaranteed erased; this is not a hostile same-user input sandbox.
+
+This terminal protocol would still need a proven dedicated-console adapter for
+real use: physical confirmation, paste-marker/control handling, bounded delivery
+and actual terminal exit observation. Bracketed-paste support or a mode-status
+reply alone is insufficient. The separately reviewed native capture role below
+instead implements an app-owned Windows masked dialog with its own lifecycle.
+Synthetic terminal-owner tests and permanent `ACTION_REQUIRED` are **not**
+completion of user PAT setup.
+No console/dialog is spawned or displayed by this terminal primitive.
+
+After that reviewed entry exists, its trusted owner must recheck native
+principal/project/user approval and issue an at-most-30-second admin capability,
+without renewing expired proof. No real PAT, vault access or agent-observed
+secret prompt is part of these tests.
+
+## Native capture credential commands
+
+The separate `capture` bootstrap role now has a concrete app-owned Windows x64
+dialog/helper/controller implementation. It is not routed through the fixture
+CLI, browser/API server, or the unsupported terminal-input primitive. It requires
+an independently reviewed and installed `figma-capture-v1` release, and every
+command other than `--help` fails closed in an ordinary worktree or fixture
+installation.
+
+Using that release's pinned Node/bootstrap after separate user approval:
+
+```text
+launch.mjs capture project create --new [--json]
+launch.mjs capture credential status --project <capture-ID> --confirm-reference <figma_pat-ID> [--json]
+launch.mjs capture credential remove --project <capture-ID> --confirm-reference <figma_pat-ID> [--json]
+launch.mjs capture credential setup --project <capture-ID> --confirm-reference <figma_pat-ID> --interactive
+launch.mjs capture credential update --project <capture-ID> --confirm-reference <figma_pat-ID> --interactive
+launch.mjs capture figma capture --project <capture-ID> --url <single-frame URL> --request-id <logical ID>
+launch.mjs capture figma inspect --project <capture-ID> --request-id <logical ID>
+launch.mjs capture figma convert --project <capture-ID> --request-id <logical ID>
+launch.mjs capture figma artifact --project <capture-ID> --request-id <logical ID> --role <role> --output <private filename>
+```
+
+Figma commands emit one closed `NativeCaptureEnvelope`, never raw source.
+Exit 0 means accepted/complete (not render readiness), exit 4 means partial,
+and a failed/cancelled/interrupted result is nonzero. A completed partial job
+is not relabeled full success. The same logical ID cannot change selection;
+replay makes no new network call. Persisted 429 cooldown and unknown spent
+effects prevent automatic retries with another ID. Inspection is metadata only;
+explicit artifact export stays in the owned private project, with no arbitrary
+root, overwrite, raw stdout, source upload or learned CDN allowlist.
+
+Capture has at most four requests/30 seconds across vault/DNS/TLS/HTTP/decode/
+stage/commit. Node/installed closure verification precedes that work deadline.
+Default empty image origins stop after metadata/nodes/render-map with a partial
+result and safe origin remediation. No URL establishes authentication or rights.
+Draft conversion is source-bound to the private committed job and uses the
+shared source-neutral converter, never promotion of offline asserted JSON.
+Remaining actual native UI/vault/ABI/full helper latency/exact-release and
+CDN-origin approval gates are not replaced by synthetic test success.
+
+Capture cleanup no longer polls `close()` indefinitely. An unreconciled
+publication or still-running original callback produces one nonzero,
+contract-valid interrupted envelope with sanitized operational and cleanup
+causes. Programmatic `runCaptureCommand` throws
+`NativeCaptureCommandCleanupRequired`, whose `result` is that envelope and
+whose idempotent `close()` retains the exact runtime/project/installation
+owner for an explicit current-authorized retry. New commands are denied while
+such an owner remains retained; there is no automatic network/vault retry.
+The native entry prints the envelope once. Process exit only releases OS
+resources: it is **not** publication recovery, secret-scrub or job-completion
+proof. Private uncertain data remains; the in-memory retry owner is usable
+only while its process survives. Cross-process adoption/recovery is not added
+by this correction. Stored queued/claimed captures without a live admitted
+executor are reported interrupted, never falsely accepted conversion/export.
+
+Setup/update reject `--json` and require explicit `--interactive`; optional
+`--expires-at <ISO timestamp>` is only a user-declared claim. There is no token
+argument, environment/file/stdin route or JSON credential input. The fixed
+app-owned dialog says Figma PAT, not Windows password, uses a single masked
+EDIT control and no account/provider/SSO/save-checkbox controls. No CredUI or
+Windows authentication operation is used.
+
+Paste validation examines the complete bounded Unicode clipboard copy only on
+the dialog's paste action (Ctrl+V or Shift+Insert), before the edit control can
+normalize or truncate it. The edit context menu and copy/cut/undo are disabled.
+Invalid multiline/non-ASCII/control/NUL/oversize input clears the candidate.
+No clipboard polling, history lookup or clipboard alteration is performed.
+The helper returns bytes only through its private binary channel after normal
+owned-window cleanup; the parent withholds them until actual child close and
+empty owned Job membership. It then rechecks current project/principal/action
+authority before native vault use. No secret is printed or handed to an agent.
+
+Input lifetime is at most five minutes, separate from the 30-second admin work
+context. Startup and close observation initially retain the planned five-second
+bounds; there is no automatic increase. Cancellation/failed cleanup retains
+ownership with fixed visible recovery diagnostics. Cleanup retry never retries
+a vault mutation. An interrupted command may already have changed its exact
+owned entry; use a new explicitly authorized status action rather than assuming
+rollback or repeating setup.
+
+**Evidence:** a separately authorized dummy-only native check reached READY.
+The user confirmed masking, multiline-paste rejection and Cancel; independent
+machine evidence showed ERROR 1/CLOSED 3, confirmed scrub, normal child exit,
+empty Job and exact TEMP cleanup. Earlier pre-READY and unconfirmed-timeout
+attempts remain recorded failures. An isolated actual Windows byte-backend
+check subsequently passed synthetic write/read equality/delete/absence through
+the corrected pinned adapter, with no leftover entry. No real PAT was used.
+
+These scoped checks are not full installed enrollment or proof of every native
+path. Exact production capture release/candidate approval, fresh real private
+project creation, real entry enrollment and live call authorization remain
+separate user gates. Private evidence and generated test key names stay outside Git.
+The existing installed fixture release/project is unchanged. Native capture
+code does not establish actual Figma permission, seat or quota availability.
+
 ## Supported invocation model
 
 An ordinary checkout can run `--help --json`, `--version --json`, `doctor --json`

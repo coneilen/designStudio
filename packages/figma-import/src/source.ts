@@ -41,6 +41,7 @@ export function parseSource(
   bytes: Uint8Array,
   nodeId: string,
   budget: ReturnType<typeof limits>,
+  selectionMode: "single" | "selected-view" = "single",
 ) {
   budget.checkpoint();
   let text: string;
@@ -57,7 +58,12 @@ export function parseSource(
   );
   budget.checkpoint();
   const nodes = object(envelope.nodes, "/nodes");
-  if (Object.keys(nodes).length !== 1 || !Object.hasOwn(nodes, nodeId))
+  const inventory = Object.keys(nodes);
+  if (
+    (selectionMode === "single" && inventory.length !== 1) ||
+    inventory.length > budget.maxNodes ||
+    !Object.hasOwn(nodes, nodeId)
+  )
     fail(
       "INVALID_INPUT",
       "The package must contain exactly the explicitly selected subtree.",

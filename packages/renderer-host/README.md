@@ -5,6 +5,13 @@ Windows x64 owned renderer-worker lifetime containment for F04/F06. This is
 installer, network sandbox, scheduler or artifact publication service.
 `@design-studio/host`'s `BoundedProcessRunner` still rejects descendants.
 
+The Windows Job binding is shared privately through host's `owned-job` module;
+`src/windows-job.ts` remains the compatibility re-export. Renderer callers keep
+the original default 64-process profile, containment flags, membership handshake
+and native error behavior. The separate capture helper selects the closed
+one-process `pat-dialog` profile; no arbitrary process-limit or launcher API was
+added to the public host package.
+
 ## Trusted configuration and public API
 
 ```ts
