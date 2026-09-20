@@ -1,0 +1,32 @@
+{
+  "name": "@design-studio/figma-capture",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Bounded selected-frame Figma REST capture with private immutable artifacts and truthful completion.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": "24.21.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@design-studio/assets": "workspace:*",
+    "@design-studio/contracts": "workspace:*",
+    "@design-studio/design-ir": "workspace:*",
+    "@design-studio/figma-import": "workspace:*",
+    "@design-studio/host": "workspace:*",
+    "@design-studio/jobs": "workspace:*",
+    "@design-studio/storage": "workspace:*"
+  }
+}

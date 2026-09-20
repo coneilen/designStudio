@@ -3234,6 +3234,570 @@ export const foundationSchema = {
         }
       }
     },
+    "FigmaCaptureRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "captureId",
+        "projectId",
+        "policyId",
+        "policySha256",
+        "selectionUrl",
+        "credential"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "$ref": "#/definitions/SchemaVersion"
+        },
+        "captureId": {
+          "$ref": "#/definitions/StableId"
+        },
+        "projectId": {
+          "$ref": "#/definitions/StableId"
+        },
+        "policyId": {
+          "$ref": "#/definitions/StableId"
+        },
+        "selectionUrl": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "policySha256": {
+          "$ref": "#/definitions/Sha256"
+        },
+        "credential": {
+          "$ref": "#/definitions/CredentialReference"
+        }
+      }
+    },
+    "FigmaCaptureManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "format",
+        "captureId",
+        "projectId",
+        "policyId",
+        "policySha256",
+        "request",
+        "selection",
+        "startedAt",
+        "endedAt",
+        "completeness",
+        "referenceStatus",
+        "readiness",
+        "observations",
+        "artifacts",
+        "missing",
+        "limitations",
+        "usage"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "$ref": "#/definitions/SchemaVersion"
+        },
+        "format": {
+          "const": "figma-rest-capture-v1"
+        },
+        "policySha256": {
+          "$ref": "#/definitions/Sha256"
+        },
+        "captureId": {
+          "$ref": "#/definitions/StableId"
+        },
+        "projectId": {
+          "$ref": "#/definitions/StableId"
+        },
+        "policyId": {
+          "$ref": "#/definitions/StableId"
+        },
+        "request": {
+          "$ref": "#/definitions/ArtifactReference"
+        },
+        "selection": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "fileKey",
+            "nodeId"
+          ],
+          "properties": {
+            "fileKey": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9]+$",
+              "maxLength": 160
+            },
+            "nodeId": {
+              "type": "string",
+              "pattern": "^[0-9]+:[0-9]+$",
+              "maxLength": 160
+            }
+          }
+        },
+        "startedAt": {
+          "$ref": "#/definitions/Timestamp"
+        },
+        "endedAt": {
+          "$ref": "#/definitions/Timestamp"
+        },
+        "sourceVersion": {
+          "$ref": "#/definitions/Version"
+        },
+        "source": {
+          "$ref": "#/definitions/ArtifactReference"
+        },
+        "completeness": {
+          "enum": [
+            "complete",
+            "partial",
+            "unavailable"
+          ]
+        },
+        "referenceStatus": {
+          "enum": [
+            "complete",
+            "partial",
+            "unavailable"
+          ]
+        },
+        "readiness": {
+          "const": "not-evaluated"
+        },
+        "observations": {
+          "type": "array",
+          "maxItems": 4,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "call",
+              "operation",
+              "outcome",
+              "receivedBytes",
+              "nodeIds"
+            ],
+            "properties": {
+              "call": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 4
+              },
+              "operation": {
+                "enum": [
+                  "metadata",
+                  "nodes",
+                  "reference-render",
+                  "reference-download"
+                ]
+              },
+              "outcome": {
+                "enum": [
+                  "complete",
+                  "denied",
+                  "rate-limited",
+                  "null-result",
+                  "partial",
+                  "unavailable",
+                  "downscaled"
+                ]
+              },
+              "statusCode": {
+                "type": "integer",
+                "minimum": 100,
+                "maximum": 599
+              },
+              "receivedBytes": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 26214400
+              },
+              "nodeIds": {
+                "type": "array",
+                "maxItems": 20000,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                }
+              },
+              "requestedVersion": {
+                "$ref": "#/definitions/Version"
+              },
+              "returnedVersion": {
+                "$ref": "#/definitions/Version"
+              }
+            }
+          }
+        },
+        "artifacts": {
+          "type": "array",
+          "maxItems": 5,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "role",
+              "artifact"
+            ],
+            "properties": {
+              "role": {
+                "enum": [
+                  "metadata",
+                  "nodes",
+                  "render-map",
+                  "reference",
+                  "source"
+                ]
+              },
+              "artifact": {
+                "$ref": "#/definitions/Artifact"
+              }
+            }
+          }
+        },
+        "reference": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "artifact",
+            "bounds",
+            "scale",
+            "pixelWidth",
+            "pixelHeight",
+            "colorSpace"
+          ],
+          "properties": {
+            "artifact": {
+              "$ref": "#/definitions/ArtifactReference"
+            },
+            "bounds": {
+              "$ref": "#/definitions/Bounds"
+            },
+            "scale": {
+              "const": 1
+            },
+            "pixelWidth": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 6553600
+            },
+            "pixelHeight": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 6553600
+            },
+            "colorSpace": {
+              "enum": [
+                "srgb",
+                "unknown"
+              ]
+            }
+          }
+        },
+        "missing": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        },
+        "limitations": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        },
+        "remediationOrigin": {
+          "type": "string",
+          "pattern": "^https://[A-Za-z0-9.-]+$",
+          "maxLength": 260
+        },
+        "nextEligibleAt": {
+          "$ref": "#/definitions/Timestamp"
+        },
+        "retry": {
+          "enum": [
+            "explicit-action-required",
+            "retry-after-unknown"
+          ]
+        },
+        "usage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "externalCalls",
+            "dnsQueries",
+            "networkReceivedBytes",
+            "networkBodyBytes",
+            "persistedBytes"
+          ],
+          "properties": {
+            "externalCalls": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4
+            },
+            "dnsQueries": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4
+            },
+            "networkReceivedBytes": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 26214400
+            },
+            "networkBodyBytes": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 26214400
+            },
+            "persistedBytes": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 26214400,
+              "description": "Cumulative staged bytes through this manifest; the final capture result additionally accounts for its own bytes."
+            }
+          }
+        }
+      }
+    },
+    "FigmaCaptureResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "captureId",
+        "projectId",
+        "manifest",
+        "completeness",
+        "referenceStatus",
+        "readiness",
+        "persistedBytes"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "$ref": "#/definitions/SchemaVersion"
+        },
+        "captureId": {
+          "$ref": "#/definitions/StableId"
+        },
+        "projectId": {
+          "$ref": "#/definitions/StableId"
+        },
+        "manifest": {
+          "$ref": "#/definitions/ArtifactReference"
+        },
+        "persistedBytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 26214400
+        },
+        "errorCode": {
+          "$ref": "#/definitions/ErrorCode"
+        },
+        "source": {
+          "$ref": "#/definitions/ArtifactReference"
+        },
+        "completeness": {
+          "enum": [
+            "complete",
+            "partial",
+            "unavailable"
+          ]
+        },
+        "referenceStatus": {
+          "enum": [
+            "complete",
+            "partial",
+            "unavailable"
+          ]
+        },
+        "readiness": {
+          "const": "not-evaluated"
+        },
+        "nextEligibleAt": {
+          "$ref": "#/definitions/Timestamp"
+        }
+      }
+    },
+    "NativeCaptureEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "operation",
+        "projectId",
+        "requestId",
+        "status"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "$ref": "#/definitions/SchemaVersion"
+        },
+        "operation": {
+          "enum": [
+            "capture",
+            "inspect",
+            "convert",
+            "artifact"
+          ]
+        },
+        "projectId": {
+          "$ref": "#/definitions/StableId"
+        },
+        "requestId": {
+          "$ref": "#/definitions/StableId"
+        },
+        "status": {
+          "enum": [
+            "accepted",
+            "complete",
+            "partial",
+            "failed",
+            "unavailable",
+            "cancelled",
+            "interrupted"
+          ]
+        },
+        "error": {
+          "$ref": "#/definitions/ContractError"
+        },
+        "value": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "jobId",
+            "jobStatus",
+            "artifacts",
+            "readiness",
+            "missing"
+          ],
+          "properties": {
+            "jobId": {
+              "$ref": "#/definitions/StableId"
+            },
+            "jobStatus": {
+              "$ref": "#/definitions/JobStatus"
+            },
+            "capture": {
+              "$ref": "#/definitions/FigmaCaptureResult"
+            },
+            "readiness": {
+              "enum": [
+                "not-evaluated",
+                "needs-review",
+                "blocked"
+              ]
+            },
+            "missing": {
+              "type": "array",
+              "maxItems": 64,
+              "items": {
+                "type": "string",
+                "maxLength": 160
+              }
+            },
+            "remediationOrigin": {
+              "type": "string",
+              "pattern": "^https://[A-Za-z0-9.-]+$",
+              "maxLength": 260
+            },
+            "outputRelative": {
+              "$ref": "#/definitions/RelativePath"
+            },
+            "artifacts": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "role",
+                  "artifact"
+                ],
+                "properties": {
+                  "role": {
+                    "enum": [
+                      "metadata",
+                      "nodes",
+                      "render-map",
+                      "reference",
+                      "source",
+                      "manifest",
+                      "result",
+                      "design",
+                      "resources",
+                      "source-map",
+                      "conversion-evidence",
+                      "provenance",
+                      "report"
+                    ]
+                  },
+                  "artifact": {
+                    "$ref": "#/definitions/Artifact"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "accepted",
+                  "complete",
+                  "partial"
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "required": [
+              "value"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "partial",
+                  "failed",
+                  "unavailable",
+                  "cancelled",
+                  "interrupted"
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "required": [
+              "error"
+            ]
+          }
+        }
+      ]
+    },
     "FigmaIntakeManifest": {
       "type": "object",
       "additionalProperties": false,
@@ -3463,7 +4027,10 @@ export const foundationSchema = {
           "$ref": "#/definitions/SchemaVersion"
         },
         "adapter": {
-          "const": "figma-offline-fixed-v1"
+          "enum": [
+            "figma-offline-fixed-v1",
+            "figma-structure-fixed-v1"
+          ]
         },
         "source": {
           "$ref": "#/definitions/ArtifactReference"

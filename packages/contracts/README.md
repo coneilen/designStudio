@@ -1,6 +1,35 @@
 # @design-studio/contracts
 
-Version 1.2.0; artifact schema version 1.0; JSON Schema draft-07.
+Version 1.4.0; artifact schema version 1.0; JSON Schema draft-07.
+
+## Native capture integration (package 1.4.0)
+
+`NativeCaptureEnvelope` is the closed, native-only result for capture, inspect,
+draft conversion and explicit private artifact output. It separates job state
+from capture completeness and render readiness. A completed partial-inspection
+job is not a successful full capture. `figma-structure-fixed-v1` identifies the
+source-neutral shared conversion rules; it does not assert authentication.
+No HTTP credential or capture route, public Operation, provider version or
+artifact schema version changed. All 47 generated outputs and application
+OpenAPI are synchronized.
+
+## Additive selected-frame capture contracts (package 1.3.0)
+
+`FigmaCaptureRequest`, `FigmaCaptureManifest`, and `FigmaCaptureResult` are closed
+artifacts for the bounded REST capture core. Requests bind exact policy identity
+and SHA-256 plus an opaque credential reference, never a token or caller endpoint.
+Manifests pin private original artifacts, requested/returned versions, request
+outcomes, missing evidence, independent-origin remediation and separately measured
+network/persistence usage. Results return artifact references with explicit
+completeness/reference status and `readiness: not-evaluated`.
+
+SourceSnapshot/figma-rest identity, provider contract version 1.0, artifact schema
+version 1.0 and public Operation vocabulary are unchanged. Missing source versions
+do not become invented REST identities; offline intake remains asserted/unknown.
+Generic vendor JSON may still contain numeric schemaVersion as vendor data.
+Old readers are not claimed to understand these new capture artifact names.
+The package/CLI version report is 1.4.0; generated catalogs, public schemas and
+the application's bundled OpenAPI must be regenerated together.
 See [DESIGN_IR.md](../../DESIGN_IR.md) for normative interpretation, defaults,
 readiness/authority separation, supported profile, fixture provenance and
 downstream ownership.

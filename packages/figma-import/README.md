@@ -1,6 +1,6 @@
 # @design-studio/figma-import
 
-Pure offline converter, version 0.1.0, profile `figma-offline-fixed-v1`.
+Pure converter, version 0.2.0; offline profile `figma-offline-fixed-v1` is unchanged.
 This is **not a live Figma importer, authorized intake host, renderer, or installed
 CLI feature**. It has no network, filesystem, credential, plugin, project-creation,
 job, or process capability. No real Albums Pivot source has been captured.
@@ -15,6 +15,12 @@ job, or process capability. No real Albums Pivot source has been captured.
   `Uint8Array` structure bytes, an untrusted `FigmaIntakeManifest`, logical
   project/design/intake/actor IDs, and a caller-declared local `observedAt`.
   Optional resources are canonical byte-pinned **declarations**, not grants.
+- `convertFigmaStructure(input, limits?): FigmaStructureConversion` shares the
+  same semantic implementation, but returns **no SourceSnapshot/SourceIdentity**.
+  Its explicit selected view can retain bounded extra API siblings in the
+  original nodes envelope without converting them. Original hash and JSON
+  pointers refer to the unmodified envelope, not rewritten selected-node JSON.
+  The `figma-structure-fixed-v1` projection is source-neutral, not a REST proof.
 - `verifyFigmaConversion(input, candidate, limits?): void` independently
   recomputes the output using separately retained original inputs and the pinned
   converter. Rejects changed projections, designs, reports, maps or original
@@ -62,7 +68,7 @@ declares it; no source font is replaced by ABeeZee or a host font.
 
 ## Authority and evidence
 
-All outputs use `SourceIdentity.transport: "figma-offline"` with asserted URL
+All `convertFigmaSnapshot` outputs use `SourceIdentity.transport: "figma-offline"` with asserted URL
 binding, `consistency.guarantee: "unknown"`, no fabricated provider requests, and
 `completeness: "partial"`. A declared source version is recorded only as a
 declaration. Timestamps are caller-declared local byte observations, not a
@@ -90,6 +96,11 @@ conversion relative to supplied source, **not authenticated Figma provenance**.
 Consumers must run source replay verification before trusting these projections,
 then independently enforce source/resource authority. Accepting a candidate's
 self-consistent projection alone is insufficient.
+The separate native application wrapper loads its own committed, current-project
+capture receipt and exact original artifacts before invoking the neutral API.
+It binds the returned source map to the physical committed REST SourceSnapshot;
+callers cannot supply JSON, hashes or callbacks to issue that binding. Native
+capture completeness still grants no fonts, image-fill rights or render readiness.
 Source artifact IDs cannot alias the generated projection artifact; evidence
 dispatch requires both the artifact ID and digest, rejecting unknown identities.
 

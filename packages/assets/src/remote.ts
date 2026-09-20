@@ -34,6 +34,16 @@ export function publicAddress(address: string): boolean {
     return false;
   return true;
 }
+export function sameAddress(left: string, right: string): boolean {
+  return (
+    !!isIP(left) &&
+    !!isIP(right) &&
+    !left.includes("%") &&
+    !right.includes("%") &&
+    ipaddr.parse(left).toNormalizedString() ===
+      ipaddr.parse(right).toNormalizedString()
+  );
+}
 
 export function checkContext(context: OperationContext): void {
   const { signal: _signal, clock: _clock, ...request } = context;
@@ -169,8 +179,7 @@ export async function fetchRemote(
       checkpoint();
       if (
         !publicAddress(response.peerAddress) ||
-        ipaddr.parse(response.peerAddress).toNormalizedString() !==
-          ipaddr.parse(address).toNormalizedString()
+        !sameAddress(response.peerAddress, address)
       )
         fail(
           "REMOTE_PEER",

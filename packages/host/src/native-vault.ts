@@ -1,10 +1,11 @@
 import type { CredentialReference } from "@design-studio/contracts";
 import { validateContract } from "@design-studio/contracts";
 import { HostBoundaryError } from "./guards.js";
+import { normalizeNativeSecret } from "./native-secret.js";
 import type { NativeCredentialBackend } from "./security.js";
 
 export interface NativeEntryReader {
-  getSecret(signal?: AbortSignal): Promise<Uint8Array | undefined>;
+  getSecret(signal?: AbortSignal): Promise<unknown>;
 }
 export interface NativeVaultModule {
   AsyncEntry: new (service: string, account: string) => NativeEntryReader;
@@ -149,8 +150,9 @@ export class NapiCredentialBackend implements NativeCredentialBackend {
         configured.service,
         configured.account,
       );
-      bytes = await entry.getSecret(signal);
-    } catch (error) {
+      // N-API abort rejection is not proof the native operation has settled.
+      bytes = normalizeNativeSecret(await entry.getSecret());
+    } catch {
       if (signal.aborted)
         throw new HostBoundaryError(
           "CANCELLED",
@@ -160,7 +162,6 @@ export class NapiCredentialBackend implements NativeCredentialBackend {
         "PROVIDER_UNAVAILABLE",
         "Native vault read failed (locked, inaccessible or native error); sensitive details withheld.",
         true,
-        { cause: error },
       );
     }
     if (signal.aborted) {

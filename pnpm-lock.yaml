@@ -50,6 +50,12 @@ importers:
       '@design-studio/design-ir':
         specifier: workspace:*
         version: link:../design-ir
+      '@design-studio/figma-capture':
+        specifier: workspace:*
+        version: link:../figma-capture
+      '@design-studio/figma-import':
+        specifier: workspace:*
+        version: link:../figma-import
       '@design-studio/host':
         specifier: workspace:*
         version: link:../host
@@ -99,6 +105,9 @@ importers:
       '@design-studio/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@design-studio/project-host':
+        specifier: workspace:*
+        version: link:../project-host
 
   packages/contracts:
     dependencies:
@@ -118,6 +127,30 @@ importers:
       '@design-studio/contracts':
         specifier: workspace:*
         version: link:../contracts
+
+  packages/figma-capture:
+    dependencies:
+      '@design-studio/assets':
+        specifier: workspace:*
+        version: link:../assets
+      '@design-studio/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@design-studio/design-ir':
+        specifier: workspace:*
+        version: link:../design-ir
+      '@design-studio/figma-import':
+        specifier: workspace:*
+        version: link:../figma-import
+      '@design-studio/host':
+        specifier: workspace:*
+        version: link:../host
+      '@design-studio/jobs':
+        specifier: workspace:*
+        version: link:../jobs
+      '@design-studio/storage':
+        specifier: workspace:*
+        version: link:../storage
 
   packages/figma-import:
     dependencies:
@@ -159,6 +192,9 @@ importers:
 
   packages/project-host:
     dependencies:
+      '@design-studio/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@design-studio/host':
         specifier: workspace:*
         version: link:../host

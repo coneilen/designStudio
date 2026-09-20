@@ -31,6 +31,7 @@ export interface Native {
     destination?: string,
   ): void;
   inspect(filename: string, directory: boolean, sid?: string): Lease;
+  exclusive(filename: string, sid: string): Lease;
   pinRead(filename: string, directory: boolean, sid?: string): ReadLease;
   pinInstallation(
     filename: string,
@@ -790,6 +791,31 @@ async function load(): Promise<Native> {
           () => close(handle),
         );
       });
+    },
+    exclusive(filename, sid) {
+      const handle = open(filename, 0x80020080, 0, null, 3, 0x02200000);
+      let identity: Identity;
+      try {
+        identity = inspectHandle(handle, filename, false, sid);
+      } catch (error) {
+        return preserving(
+          () => {
+            throw error;
+          },
+          () => close(handle),
+        );
+      }
+      let closed = false;
+      return {
+        handle,
+        identity,
+        close() {
+          if (!closed) {
+            close(handle);
+            closed = true;
+          }
+        },
+      };
     },
     inspect(filename, directory, sid) {
       const handle = open(filename, 0x20080, 3, null, 3, 0x02200000);

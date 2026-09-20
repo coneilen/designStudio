@@ -23,6 +23,7 @@
     "package:candidate": "node scripts/package-candidate.mjs"
   },
   "dependencies": {
+    "@design-studio/contracts": "workspace:*",
     "@design-studio/host": "workspace:*"
   },
   "devDependencies": {

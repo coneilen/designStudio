@@ -301,24 +301,6 @@ export type SourceSnapshot = {
 };
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "Operation".
- */
-export type Operation =
-  | "inspect"
-  | "resolve"
-  | "render"
-  | "handoff"
-  | "editable-export"
-  | "implement"
-  | "capture"
-  | "compare"
-  | "read"
-  | "write"
-  | "execute"
-  | "credential-use"
-  | "model-egress";
-/**
- * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "ErrorCode".
  */
 export type ErrorCode =
@@ -392,6 +374,84 @@ export type ErrorCode =
   | "POLICY_FAILED"
   | "VALIDATION_INCONCLUSIVE"
   | "INTERNAL_ERROR";
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "NativeCaptureEnvelope".
+ */
+export type NativeCaptureEnvelope = {
+  [k: string]: unknown;
+} & {
+  schemaVersion: SchemaVersion;
+  operation: "capture" | "inspect" | "convert" | "artifact";
+  projectId: StableId;
+  requestId: StableId;
+  status: "accepted" | "complete" | "partial" | "failed" | "unavailable" | "cancelled" | "interrupted";
+  error?: ContractError;
+  value?: {
+    jobId: StableId;
+    jobStatus: JobStatus;
+    capture?: FigmaCaptureResult;
+    readiness: "not-evaluated" | "needs-review" | "blocked";
+    /**
+     * @maxItems 64
+     */
+    missing: string[];
+    remediationOrigin?: string;
+    outputRelative?: RelativePath;
+    /**
+     * @maxItems 32
+     */
+    artifacts: {
+      role:
+        | "metadata"
+        | "nodes"
+        | "render-map"
+        | "reference"
+        | "source"
+        | "manifest"
+        | "result"
+        | "design"
+        | "resources"
+        | "source-map"
+        | "conversion-evidence"
+        | "provenance"
+        | "report";
+      artifact: Artifact;
+    }[];
+  };
+};
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "JobStatus".
+ */
+export type JobStatus =
+  | "queued"
+  | "running"
+  | "waiting-for-user"
+  | "retry-wait"
+  | "cancel-requested"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "interrupted";
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "Operation".
+ */
+export type Operation =
+  | "inspect"
+  | "resolve"
+  | "render"
+  | "handoff"
+  | "editable-export"
+  | "implement"
+  | "capture"
+  | "compare"
+  | "read"
+  | "write"
+  | "execute"
+  | "credential-use"
+  | "model-egress";
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "SemanticOperation".
@@ -514,20 +574,6 @@ export type HandoffManifest = {
     })[];
   };
 };
-/**
- * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "JobStatus".
- */
-export type JobStatus =
-  | "queued"
-  | "running"
-  | "waiting-for-user"
-  | "retry-wait"
-  | "cancel-requested"
-  | "completed"
-  | "failed"
-  | "cancelled"
-  | "interrupted";
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "Job".
@@ -750,6 +796,10 @@ export interface ContractCatalog {
   FigmaBinding: FigmaBinding;
   SourceIdentity: SourceIdentity;
   SourceSnapshot: SourceSnapshot;
+  FigmaCaptureRequest: FigmaCaptureRequest;
+  FigmaCaptureManifest: FigmaCaptureManifest;
+  FigmaCaptureResult: FigmaCaptureResult;
+  NativeCaptureEnvelope: NativeCaptureEnvelope;
   FigmaIntakeManifest: FigmaIntakeManifest;
   FigmaSourceMap: FigmaSourceMap;
   FigmaConversionEvidence: FigmaConversionEvidence;
@@ -1632,6 +1682,328 @@ export interface ProvenanceSnapshot {
 }
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "FigmaCaptureRequest".
+ */
+export interface FigmaCaptureRequest {
+  schemaVersion: SchemaVersion;
+  captureId: StableId;
+  projectId: StableId;
+  policyId: StableId;
+  selectionUrl: string;
+  policySha256: Sha256;
+  credential: CredentialReference;
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "CredentialReference".
+ */
+export interface CredentialReference {
+  id: StableId;
+  providerId: StableId;
+  store: "windows-credential-manager" | "macos-keychain" | "configured-secure-store" | "test-fake";
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "FigmaCaptureManifest".
+ */
+export interface FigmaCaptureManifest {
+  schemaVersion: SchemaVersion;
+  format: "figma-rest-capture-v1";
+  policySha256: Sha256;
+  captureId: StableId;
+  projectId: StableId;
+  policyId: StableId;
+  request: ArtifactReference;
+  selection: {
+    fileKey: string;
+    nodeId: string;
+  };
+  startedAt: Timestamp;
+  endedAt: Timestamp;
+  sourceVersion?: Version;
+  source?: ArtifactReference;
+  completeness: "complete" | "partial" | "unavailable";
+  referenceStatus: "complete" | "partial" | "unavailable";
+  readiness: "not-evaluated";
+  /**
+   * @maxItems 4
+   */
+  observations:
+    | []
+    | [
+        {
+          call: number;
+          operation: "metadata" | "nodes" | "reference-render" | "reference-download";
+          outcome: "complete" | "denied" | "rate-limited" | "null-result" | "partial" | "unavailable" | "downscaled";
+          statusCode?: number;
+          receivedBytes: number;
+          /**
+           * @maxItems 20000
+           */
+          nodeIds: string[];
+          requestedVersion?: Version;
+          returnedVersion?: Version;
+        },
+      ]
+    | [
+        {
+          call: number;
+          operation: "metadata" | "nodes" | "reference-render" | "reference-download";
+          outcome: "complete" | "denied" | "rate-limited" | "null-result" | "partial" | "unavailable" | "downscaled";
+          statusCode?: number;
+          receivedBytes: number;
+          /**
+           * @maxItems 20000
+           */
+          nodeIds: string[];
+          requestedVersion?: Version;
+          returnedVersion?: Version;
+        },
+        {
+          call: number;
+          operation: "metadata" | "nodes" | "reference-render" | "reference-download";
+          outcome: "complete" | "denied" | "rate-limited" | "null-result" | "partial" | "unavailable" | "downscaled";
+          statusCode?: number;
+          receivedBytes: number;
+          /**
+           * @maxItems 20000
+           */
+          nodeIds: string[];
+          requestedVersion?: Version;
+          returnedVersion?: Version;
+        },
+      ]
+    | [
+        {
+          call: number;
+          operation: "metadata" | "nodes" | "reference-render" | "reference-download";
+          outcome: "complete" | "denied" | "rate-limited" | "null-result" | "partial" | "unavailable" | "downscaled";
+          statusCode?: number;
+          receivedBytes: number;
+          /**
+           * @maxItems 20000
+           */
+          nodeIds: string[];
+          requestedVersion?: Version;
+          returnedVersion?: Version;
+        },
+        {
+          call: number;
+          operation: "metadata" | "nodes" | "reference-render" | "reference-download";
+          outcome: "complete" | "denied" | "rate-limited" | "null-result" | "partial" | "unavailable" | "downscaled";
+          statusCode?: number;
+          receivedBytes: number;
+          /**
+           * @maxItems 20000
+           */
+          nodeIds: string[];
+          requestedVersion?: Version;
+          returnedVersion?: Version;
+        },
+        {
+          call: number;
+          operation: "metadata" | "nodes" | "reference-render" | "reference-download";
+          outcome: "complete" | "denied" | "rate-limited" | "null-result" | "partial" | "unavailable" | "downscaled";
+          statusCode?: number;
+          receivedBytes: number;
+          /**
+           * @maxItems 20000
+           */
+          nodeIds: string[];
+          requestedVersion?: Version;
+          returnedVersion?: Version;
+        },
+      ]
+    | [
+        {
+          call: number;
+          operation: "metadata" | "nodes" | "reference-render" | "reference-download";
+          outcome: "complete" | "denied" | "rate-limited" | "null-result" | "partial" | "unavailable" | "downscaled";
+          statusCode?: number;
+          receivedBytes: number;
+          /**
+           * @maxItems 20000
+           */
+          nodeIds: string[];
+          requestedVersion?: Version;
+          returnedVersion?: Version;
+        },
+        {
+          call: number;
+          operation: "metadata" | "nodes" | "reference-render" | "reference-download";
+          outcome: "complete" | "denied" | "rate-limited" | "null-result" | "partial" | "unavailable" | "downscaled";
+          statusCode?: number;
+          receivedBytes: number;
+          /**
+           * @maxItems 20000
+           */
+          nodeIds: string[];
+          requestedVersion?: Version;
+          returnedVersion?: Version;
+        },
+        {
+          call: number;
+          operation: "metadata" | "nodes" | "reference-render" | "reference-download";
+          outcome: "complete" | "denied" | "rate-limited" | "null-result" | "partial" | "unavailable" | "downscaled";
+          statusCode?: number;
+          receivedBytes: number;
+          /**
+           * @maxItems 20000
+           */
+          nodeIds: string[];
+          requestedVersion?: Version;
+          returnedVersion?: Version;
+        },
+        {
+          call: number;
+          operation: "metadata" | "nodes" | "reference-render" | "reference-download";
+          outcome: "complete" | "denied" | "rate-limited" | "null-result" | "partial" | "unavailable" | "downscaled";
+          statusCode?: number;
+          receivedBytes: number;
+          /**
+           * @maxItems 20000
+           */
+          nodeIds: string[];
+          requestedVersion?: Version;
+          returnedVersion?: Version;
+        },
+      ];
+  /**
+   * @maxItems 5
+   */
+  artifacts:
+    | []
+    | [
+        {
+          role: "metadata" | "nodes" | "render-map" | "reference" | "source";
+          artifact: Artifact;
+        },
+      ]
+    | [
+        {
+          role: "metadata" | "nodes" | "render-map" | "reference" | "source";
+          artifact: Artifact;
+        },
+        {
+          role: "metadata" | "nodes" | "render-map" | "reference" | "source";
+          artifact: Artifact;
+        },
+      ]
+    | [
+        {
+          role: "metadata" | "nodes" | "render-map" | "reference" | "source";
+          artifact: Artifact;
+        },
+        {
+          role: "metadata" | "nodes" | "render-map" | "reference" | "source";
+          artifact: Artifact;
+        },
+        {
+          role: "metadata" | "nodes" | "render-map" | "reference" | "source";
+          artifact: Artifact;
+        },
+      ]
+    | [
+        {
+          role: "metadata" | "nodes" | "render-map" | "reference" | "source";
+          artifact: Artifact;
+        },
+        {
+          role: "metadata" | "nodes" | "render-map" | "reference" | "source";
+          artifact: Artifact;
+        },
+        {
+          role: "metadata" | "nodes" | "render-map" | "reference" | "source";
+          artifact: Artifact;
+        },
+        {
+          role: "metadata" | "nodes" | "render-map" | "reference" | "source";
+          artifact: Artifact;
+        },
+      ]
+    | [
+        {
+          role: "metadata" | "nodes" | "render-map" | "reference" | "source";
+          artifact: Artifact;
+        },
+        {
+          role: "metadata" | "nodes" | "render-map" | "reference" | "source";
+          artifact: Artifact;
+        },
+        {
+          role: "metadata" | "nodes" | "render-map" | "reference" | "source";
+          artifact: Artifact;
+        },
+        {
+          role: "metadata" | "nodes" | "render-map" | "reference" | "source";
+          artifact: Artifact;
+        },
+        {
+          role: "metadata" | "nodes" | "render-map" | "reference" | "source";
+          artifact: Artifact;
+        },
+      ];
+  reference?: {
+    artifact: ArtifactReference;
+    bounds: Bounds;
+    scale: 1;
+    pixelWidth: number;
+    pixelHeight: number;
+    colorSpace: "srgb" | "unknown";
+  };
+  /**
+   * @maxItems 64
+   */
+  missing: string[];
+  /**
+   * @maxItems 64
+   */
+  limitations: string[];
+  remediationOrigin?: string;
+  nextEligibleAt?: Timestamp;
+  retry?: "explicit-action-required" | "retry-after-unknown";
+  usage: {
+    externalCalls: number;
+    dnsQueries: number;
+    networkReceivedBytes: number;
+    networkBodyBytes: number;
+    /**
+     * Cumulative staged bytes through this manifest; the final capture result additionally accounts for its own bytes.
+     */
+    persistedBytes: number;
+  };
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "FigmaCaptureResult".
+ */
+export interface FigmaCaptureResult {
+  schemaVersion: SchemaVersion;
+  captureId: StableId;
+  projectId: StableId;
+  manifest: ArtifactReference;
+  persistedBytes: number;
+  errorCode?: ErrorCode;
+  source?: ArtifactReference;
+  completeness: "complete" | "partial" | "unavailable";
+  referenceStatus: "complete" | "partial" | "unavailable";
+  readiness: "not-evaluated";
+  nextEligibleAt?: Timestamp;
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "ContractError".
+ */
+export interface ContractError {
+  code: ErrorCode;
+  message: string;
+  retryable: boolean;
+  retryAfter?: Timestamp;
+  jobId?: StableId;
+  diagnosticIds: StableId[];
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "FigmaIntakeManifest".
  */
 export interface FigmaIntakeManifest {
@@ -1698,7 +2070,7 @@ export interface FigmaSourceMap {
  */
 export interface FigmaConversionEvidence {
   schemaVersion: SchemaVersion;
-  adapter: "figma-offline-fixed-v1";
+  adapter: "figma-offline-fixed-v1" | "figma-structure-fixed-v1";
   source: ArtifactReference;
   /**
    * @maxItems 200000
@@ -2035,18 +2407,6 @@ export interface ReadinessReceipt {
   controls: RequiredControl[];
   viewport: Bounds;
   error?: ContractError;
-}
-/**
- * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "ContractError".
- */
-export interface ContractError {
-  code: ErrorCode;
-  message: string;
-  retryable: boolean;
-  retryAfter?: Timestamp;
-  jobId?: StableId;
-  diagnosticIds: StableId[];
 }
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
@@ -2528,15 +2888,6 @@ export interface ProcessRequest {
 export interface FileRequest {
   artifactRootId: StableId;
   path: RelativePath;
-}
-/**
- * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "CredentialReference".
- */
-export interface CredentialReference {
-  id: StableId;
-  providerId: StableId;
-  store: "windows-credential-manager" | "macos-keychain" | "configured-secure-store" | "test-fake";
 }
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
