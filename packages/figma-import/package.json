@@ -1,6 +1,6 @@
 {
   "name": "@design-studio/figma-import",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Pure, bounded offline Figma nodes-envelope conversion with explicit evidence and losses.",
   "type": "module",

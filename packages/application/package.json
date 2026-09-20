@@ -19,6 +19,10 @@
     "./installed": {
       "types": "./dist/installed.d.ts",
       "import": "./dist/installed.js"
+    },
+    "./capture": {
+      "types": "./dist/capture-runtime.d.ts",
+      "import": "./dist/capture-runtime.js"
     }
   },
   "files": [
@@ -43,6 +47,8 @@
     "@design-studio/assets": "workspace:*",
     "@design-studio/renderer": "workspace:*",
     "@design-studio/renderer-host": "workspace:*",
-    "@design-studio/jobs": "workspace:*"
+    "@design-studio/jobs": "workspace:*",
+    "@design-studio/figma-capture": "workspace:*",
+    "@design-studio/figma-import": "workspace:*"
   }
 }

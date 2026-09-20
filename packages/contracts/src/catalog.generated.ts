@@ -73,6 +73,10 @@ export interface ContractTypes {
   FigmaBinding: Types.FigmaBinding;
   SourceIdentity: Types.SourceIdentity;
   SourceSnapshot: Types.SourceSnapshot;
+  FigmaCaptureRequest: Types.FigmaCaptureRequest;
+  FigmaCaptureManifest: Types.FigmaCaptureManifest;
+  FigmaCaptureResult: Types.FigmaCaptureResult;
+  NativeCaptureEnvelope: Types.NativeCaptureEnvelope;
   FigmaIntakeManifest: Types.FigmaIntakeManifest;
   FigmaSourceMap: Types.FigmaSourceMap;
   FigmaConversionEvidence: Types.FigmaConversionEvidence;
@@ -223,6 +227,10 @@ export const contractNames: readonly ContractName[] = [
   "FigmaBinding",
   "SourceIdentity",
   "SourceSnapshot",
+  "FigmaCaptureRequest",
+  "FigmaCaptureManifest",
+  "FigmaCaptureResult",
+  "NativeCaptureEnvelope",
   "FigmaIntakeManifest",
   "FigmaSourceMap",
   "FigmaConversionEvidence",

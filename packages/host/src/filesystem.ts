@@ -59,6 +59,20 @@ export interface ProjectFileSystemOptions {
     stagingId: string,
     context: OperationContext,
   ) => Promise<boolean>;
+  authorizeOwnedPublicationRecovery?: (
+    pending: OwnedPendingPublication,
+    context: OperationContext,
+  ) => Promise<void>;
+}
+/** Instance-owned identity, not a serializable cleanup grant. */
+export interface OwnedPendingPublication {
+  readonly projectId: string;
+  readonly actorId: string;
+  readonly artifactRootId: string;
+  readonly requestId: string;
+  readonly jobId?: string;
+  readonly stagingId: string;
+  readonly artifact: Readonly<Artifact>;
 }
 export interface ManagedInventory {
   stagedIds: string[];
@@ -77,8 +91,12 @@ interface Pending {
   actorId: string;
   requestId: string;
   sessionId: string;
+  authorization: OperationContext["authorization"];
+  jobId?: string;
+  recovery?: OwnedPendingPublication;
   busy: boolean;
   publishedDestination?: string;
+  pairUnlinked?: boolean;
   nativeState?: NativeFileIdentity;
 }
 interface NativeReceipt {
@@ -179,10 +197,12 @@ async function boundedEntries(
 export class ProjectFileSystem implements FileSystemBoundary {
   private readonly roots = new Map<string, Root>();
   private readonly pending = new Map<string, Pending>();
+  private readonly recoveries = new WeakMap<OwnedPendingPublication, Pending>();
   private readonly nativeReceipts = new Map<string, NativeReceipt>();
   private readonly nativePublisher = new WindowsNtfsPublisher();
   private tail: Promise<void> = Promise.resolve();
   private closed = false;
+  private preserved = false;
   private constructor(private readonly options: ProjectFileSystemOptions) {
     if (
       options.publicationProfile !== undefined &&
@@ -376,53 +396,59 @@ export class ProjectFileSystem implements FileSystemBoundary {
         absolute,
         constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
       );
+      let bytes: Uint8Array | undefined;
       try {
-        const before = await handle.stat();
-        if (
-          !before.isFile() ||
-          before.nlink !== allowedLinks ||
-          (expected && !sameFile(expected, before))
-        )
-          throw new HostBoundaryError(
-            "PATH_FORBIDDEN",
-            "File is not an exclusively linked regular file.",
-          );
-        guard.consume("input", before.size);
-        guard.consume("output", before.size);
-        const bytes = new Uint8Array(before.size);
-        let offset = 0;
-        while (offset < bytes.byteLength) {
-          guard.check();
-          const { bytesRead } = await handle.read(
-            bytes,
-            offset,
-            Math.min(65536, bytes.byteLength - offset),
-            offset,
-          );
-          if (!bytesRead)
+        try {
+          const before = await handle.stat();
+          if (
+            !before.isFile() ||
+            before.nlink !== allowedLinks ||
+            (expected && !sameFile(expected, before))
+          )
+            throw new HostBoundaryError(
+              "PATH_FORBIDDEN",
+              "File is not an exclusively linked regular file.",
+            );
+          guard.consume("input", before.size);
+          guard.consume("output", before.size);
+          bytes = new Uint8Array(before.size);
+          let offset = 0;
+          while (offset < bytes.byteLength) {
+            guard.check();
+            const { bytesRead } = await handle.read(
+              bytes,
+              offset,
+              Math.min(65536, bytes.byteLength - offset),
+              offset,
+            );
+            if (!bytesRead)
+              throw new HostBoundaryError(
+                "ARTIFACT_INTEGRITY",
+                "File size changed during read.",
+              );
+            offset += bytesRead;
+          }
+          const probe = await handle.read(new Uint8Array(1), 0, 1, offset);
+          const after = await handle.stat();
+          if (
+            probe.bytesRead ||
+            before.size !== after.size ||
+            before.mtimeMs !== after.mtimeMs ||
+            before.ctimeMs !== after.ctimeMs ||
+            !sameFile(before, await lstat(absolute))
+          )
             throw new HostBoundaryError(
               "ARTIFACT_INTEGRITY",
-              "File size changed during read.",
+              "File changed during read.",
             );
-          offset += bytesRead;
+          guard.check();
+          return bytes;
+        } finally {
+          await handle.close();
         }
-        const probe = await handle.read(new Uint8Array(1), 0, 1, offset);
-        const after = await handle.stat();
-        if (
-          probe.bytesRead ||
-          before.size !== after.size ||
-          before.mtimeMs !== after.mtimeMs ||
-          before.ctimeMs !== after.ctimeMs ||
-          !sameFile(before, await lstat(absolute))
-        )
-          throw new HostBoundaryError(
-            "ARTIFACT_INTEGRITY",
-            "File changed during read.",
-          );
-        guard.check();
-        return bytes;
-      } finally {
-        await handle.close();
+      } catch (error) {
+        bytes?.fill(0);
+        throw error;
       }
     });
   }
@@ -516,6 +542,8 @@ export class ProjectFileSystem implements FileSystemBoundary {
           projectId: context.projectId,
           actorId: context.authorization.actorId,
           sessionId: context.authorization.sessionId,
+          authorization: context.authorization,
+          ...(context.jobId ? { jobId: context.jobId } : {}),
           requestId: context.requestId,
           busy: false,
         });
@@ -576,6 +604,76 @@ export class ProjectFileSystem implements FileSystemBoundary {
     input: StagedArtifact,
     context: OperationContext,
   ): Promise<Outcome<Artifact>> {
+    return this.publishOwned(input, context);
+  }
+  retainPendingPublication(
+    input: StagedArtifact,
+    context: OperationContext,
+  ): OwnedPendingPublication {
+    const pending = this.pending.get(input.stagingId);
+    if (
+      this.closed ||
+      !pending ||
+      pending.busy ||
+      !(pending.nativeState || pending.publishedDestination) ||
+      pending.authorization !== context.authorization ||
+      pending.projectId !== context.projectId ||
+      pending.actorId !== context.authorization.actorId ||
+      pending.sessionId !== context.authorization.sessionId ||
+      pending.requestId !== context.requestId ||
+      pending.jobId !== context.jobId ||
+      !validateContract("Artifact", input.artifact).success ||
+      Object.keys(pending.staged.artifact).some(
+        (key) =>
+          Reflect.get(input.artifact, key) !==
+          Reflect.get(pending.staged.artifact, key),
+      )
+    )
+      throw new HostBoundaryError(
+        "FORBIDDEN",
+        "No exact original owned visible publication can be retained.",
+      );
+    if (!pending.recovery) {
+      const capability: OwnedPendingPublication = Object.freeze({
+        projectId: pending.projectId,
+        actorId: pending.actorId,
+        artifactRootId: pending.root.id,
+        requestId: pending.requestId,
+        ...(pending.jobId ? { jobId: pending.jobId } : {}),
+        stagingId: pending.staged.stagingId,
+        artifact: Object.freeze({ ...pending.staged.artifact }),
+      });
+      pending.recovery = capability;
+      this.recoveries.set(capability, pending);
+    }
+    return pending.recovery;
+  }
+  reconcileOwnedPublication(
+    pending: OwnedPendingPublication,
+    context: OperationContext,
+  ): Promise<Outcome<Artifact>> {
+    const known = this.recoveries.get(pending);
+    if (!known)
+      return boundary(context, async () => {
+        throw new HostBoundaryError(
+          "FORBIDDEN",
+          "Cleanup requires this instance's retained publication identity.",
+        );
+      });
+    if (known.busy)
+      return boundary(context, async () => {
+        throw new HostBoundaryError(
+          "CONFLICT",
+          "Owned publication cleanup is already in progress.",
+        );
+      });
+    return this.publishOwned(known.staged, context, pending);
+  }
+  private publishOwned(
+    input: StagedArtifact,
+    context: OperationContext,
+    recovery?: OwnedPendingPublication,
+  ): Promise<Outcome<Artifact>> {
     return boundary(context, async (context) => {
       if (
         !validateContract("JsonValue", input).success ||
@@ -588,7 +686,39 @@ export class ProjectFileSystem implements FileSystemBoundary {
         );
       const staged = structuredClone(input);
       return this.serial(async () => {
-        const { pending, guard } = this.own(staged.stagingId, context);
+        let owned: { pending: Pending; guard: OperationGuard };
+        if (recovery) {
+          const pending = this.recoveries.get(recovery);
+          if (
+            !pending ||
+            this.pending.get(staged.stagingId) !== pending ||
+            pending.recovery !== recovery ||
+            pending.busy ||
+            !(pending.nativeState || pending.publishedDestination) ||
+            pending.projectId !== context.projectId ||
+            pending.actorId !== context.authorization.actorId ||
+            pending.jobId !== context.jobId ||
+            pending.requestId !== context.requestId ||
+            !this.options.authorizeOwnedPublicationRecovery
+          )
+            throw new HostBoundaryError(
+              "FORBIDDEN",
+              "Pending publication cleanup admission denied.",
+            );
+          const { guard } = this.guard(pending.root.id, context, "write");
+          pending.busy = true;
+          try {
+            await this.options.authorizeOwnedPublicationRecovery(
+              recovery,
+              context,
+            );
+            guard.check();
+          } finally {
+            pending.busy = false;
+          }
+          owned = { pending, guard };
+        } else owned = this.own(staged.stagingId, context);
+        const { pending, guard } = owned;
         if (
           !validateContract("Artifact", staged.artifact).success ||
           Object.keys(pending.staged.artifact).some(
@@ -614,32 +744,59 @@ export class ProjectFileSystem implements FileSystemBoundary {
               guard,
               pending.identity,
             );
-            if (
-              bytes.byteLength !== pending.staged.artifact.byteLength ||
-              sha256(bytes) !== pending.staged.artifact.sha256
-            )
-              throw new HostBoundaryError(
-                "ARTIFACT_INTEGRITY",
-                "Interrupted native publication bytes changed.",
-              );
+            try {
+              if (
+                bytes.byteLength !== pending.staged.artifact.byteLength ||
+                sha256(bytes) !== pending.staged.artifact.sha256
+              )
+                throw new HostBoundaryError(
+                  "ARTIFACT_INTEGRITY",
+                  "Interrupted native publication bytes changed.",
+                );
+            } finally {
+              bytes.fill(0);
+            }
             const proof = await this.nativePublisher.resume(
               destination,
               pending.nativeState,
               guard,
             );
             await this.recordNativeReceipt(pending, proof);
+            guard.check();
             this.pending.delete(staged.stagingId);
             return structuredClone(pending.staged.artifact);
           }
           if (pending.publishedDestination) {
             await this.resolve(pending.root, staged.artifact.path);
-            await this.finishPublishedPair(
-              pending.path,
-              pending.publishedDestination,
-              pending.staged.artifact,
-              guard,
-              pending.identity,
-            );
+            if (pending.pairUnlinked) {
+              const bytes = await this.readBytes(
+                pending.publishedDestination,
+                guard,
+                pending.identity,
+              );
+              try {
+                if (
+                  bytes.byteLength !== pending.staged.artifact.byteLength ||
+                  sha256(bytes) !== pending.staged.artifact.sha256
+                )
+                  throw new HostBoundaryError(
+                    "ARTIFACT_INTEGRITY",
+                    "Completed unlink destination bytes changed.",
+                  );
+              } finally {
+                bytes.fill(0);
+              }
+            } else {
+              await this.finishPublishedPair(
+                pending.path,
+                pending.publishedDestination,
+                pending.staged.artifact,
+                guard,
+                pending.identity,
+              );
+              pending.pairUnlinked = true;
+            }
+            guard.check();
             this.pending.delete(staged.stagingId);
             return structuredClone(pending.staged.artifact);
           }
@@ -738,6 +895,18 @@ export class ProjectFileSystem implements FileSystemBoundary {
   }
   close(): Promise<void> {
     return this.serial(() => this.cleanup(), true);
+  }
+  /** Dispose this boundary without discarding privately journaled source attempts. */
+  closePreservingStages(): Promise<void> {
+    return this.serial(async () => {
+      if (this.preserved) return;
+      this.assertCloseable();
+      this.closed = true;
+      this.preserved = true;
+      this.pending.clear();
+      this.nativeReceipts.clear();
+      for (const root of this.roots.values()) delete root.staging;
+    }, true);
   }
   get publicationDurability(): string {
     return this.options.publicationProfile === WINDOWS_PUBLICATION_PROFILE
@@ -1111,7 +1280,7 @@ export class ProjectFileSystem implements FileSystemBoundary {
       return { removed: true };
     });
   }
-  private async cleanup(): Promise<void> {
+  private assertCloseable(): void {
     if ([...this.pending.values()].some((pending) => pending.busy))
       throw new HostBoundaryError(
         "CONFLICT",
@@ -1126,6 +1295,10 @@ export class ProjectFileSystem implements FileSystemBoundary {
         "OUTPUT_UNCERTAIN",
         "Visible interrupted publications must be reconciled before close; the boundary remains usable for retry.",
       );
+  }
+  private async cleanup(): Promise<void> {
+    if (this.preserved) return;
+    this.assertCloseable();
     this.closed = true;
     for (const [id, pending] of this.pending) {
       await this.checkStaging(pending.root);

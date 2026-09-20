@@ -16,6 +16,10 @@ it("supports noninteractive subcommand help without echoing unrecognized operand
 });
 it.each([
   ["figma", "import", "https://example.invalid"],
+  ["figma", "credential", "setup"],
+  ["figma", "credential", "status"],
+  ["figma", "credential", "update", "--token", "synthetic-only"],
+  ["figma", "credential", "remove"],
   ["doctor", "--json", "--json"],
   ["doctor", "--project", "foreign"],
   ["jobs", "wait", "job_1", "--timeout-ms", "0"],

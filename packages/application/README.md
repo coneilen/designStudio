@@ -5,7 +5,7 @@ F08 fresh synthetic-fixture foundation, based on coordinator-approved
 installation prerequisites. This is not a general-purpose design studio or an
 approved production installation.
 
-Implemented modules use authoritative contracts 1.1.0 (artifact/provider schema
+Implemented modules use authoritative contracts 1.4.0 (artifact/provider schema
 1.0): validated response/exit mapping, exact original catalog verification,
 current-policy session issuance, bounded authenticated HTTP dispatch, generated
 OpenAPI, staged F06 job-handler composition, and quiescence-sensitive shutdown.
@@ -85,8 +85,104 @@ newly owned test root. Its F08 CLI and renderer entries are real and unchanged.
 These test-only inventories
 must never be reused as approval for a real release.
 Browser enrollment/navigation is not supported; preissued-cookie HTTP tests
-exercise only Origin/CSRF guards. No Figma, handoff compiler, model, device,
+exercise only Origin/CSRF guards. The fixture profile exposes no Figma, handoff compiler, model, device,
 vault, app installation, arbitrary file import or live user-data workflow exists.
+
+## Separate native selected-frame capture
+
+`@design-studio/application/capture` exports `openNativeCapture(project)`, with
+no root, vault, transport, grant or authorization callback overrides. It accepts
+only a live native capture-profile project, not the fixture profile or a copied
+object. `execute({operation, requestId, ...}, signal)` supports capture (explicit
+single-frame URL), inspect, source-bound draft conversion and explicit artifact
+output to a single safe filename in that project's private outputs root.
+The runtime is an owned facade; cloning its methods into a foreign facade does
+not establish admission. The caller must await `close()` before closing the
+project/installation. Failed or cancelled execution is not quiescence proof:
+close joins the existing JobService and original callbacks, then closes store,
+filesystem and native work loan. A retained close/startup cleanup error must be
+retried by its owner; it never authorizes a replacement network attempt.
+Native capture uses `closePreservingStages`, not ordinary unpublished-file
+discard: unknown spent effects keep their private original stage bytes, stage
+directories and existing job journal identities across shutdown/reopen.
+Closing a quiescent boundary is not completed recovery or permission to retry,
+adopt or delete retained source. Visible uncertain publication still refuses
+closure and retains its exact reconciliation metadata.
+
+The runtime retains an exact private ledger for uncertain job, intake,
+conversion and export publications. After joining JobService/original work,
+close performs one current-authorized cleanup pass **before** releasing the
+store/filesystem. Only the retained, already-visible publication can resume;
+cleanup contexts have no provider/credential/egress authority and never renew
+the original work deadline or commit a job/legacy receipt. A resolved flush
+does not retroactively make the failed command successful.
+`NativeCaptureCleanupRequired` carries sanitized original/cleanup codes,
+nonsecret pending identities and a close-only retry owner. A five-second
+acknowledgement bound can return that owner while the original cleanup promise
+remains tracked; subsequent retries join it rather than starting another pass.
+No resource is reported closed merely because the acknowledgement timed out.
+
+Inspection/replay under the actual exclusive native writer loan does not infer
+a live executor from a saved queued/running state or an unexpired lease.
+This synchronous facade denies concurrent execution and joins its own service.
+Other nonterminal execution records are conservatively quarantined through
+the existing F07 recovery policy/repository, preserving original deadlines,
+unknown/reserved effects and stage identities. No vault read, network replay,
+new completion receipt or conversion/export acceptance is implied. An orphaned
+capture returns interrupted/action-required, not accepted.
+
+Each command snapshots input before awaits. Native authority fixes current
+actor/project/credential and scopes, retains the scheduler's exact work signal,
+and caps the original 30-second capture deadline by authorization/declared
+credential expiry. Installed-code/Node verification is startup, not a reset
+inside the work deadline. The composition alone opts its filesystem into the
+four-call capture budget; shared filesystem defaults remain unchanged.
+Only the requested job is schedulable. Existing owner discovery, SQLite jobs,
+effect reservations, stages and fenced receipt commit provide idempotency and
+persisted cooldown/unknown-effect refusal; there is no new database schema or
+automatic retry. Replay inspects existing evidence without reading the vault
+or repeating network calls, under fresh current native authority.
+
+Authenticated conversion takes no artifact/hash/proof argument. It reloads the
+actual private capture job, matching actor, logical request, installed policy,
+handler/version, settled effects, committed receipt, canonical request,
+manifest, source and exact raw artifacts. The neutral converter issues no
+identity. Original nodes-envelope bytes and selected pointers stay unchanged
+even when extra API siblings exist; only the selected subtree is converted.
+Source maps name the actual physical SourceSnapshot; projection evidence and
+output descriptors name physical byte hashes. The draft resource lock retains
+the companion snapshot's logical ID and canonical byte hash (not an impossible
+self-referential physical ID). The existing core consumes that companion
+snapshot directly; no new logical-store authority is inferred. Conversion uses existing
+standalone stage/commit receipts and remains blocked or needs-review, never
+render-ready, approved or an implementation handoff. Missing fonts, fills,
+rights, unsupported structures and reference limitations remain explicit.
+
+Synthetic integration tests exercise the actual native dispatcher/private
+project/database/jobs/capture code with synthetic vault bytes and a local TLS
+server through test-module mocks only. The copied SQLite role is inventoried
+and attested, but a test-only LocalStore spy loads the **hash-identical approved
+test binary** outside the disposable installation: Windows retains mapped DLLs
+until process exit. This is **not exact installed-role DLL-load proof**.
+There is no corresponding production override. Those integration tests exercise
+no real user entry or Figma request.
+
+Separate supervised evidence now covers one dummy-only native dialog cancellation
+path: READY, user-confirmed masking/multiline rejection/Cancel, ERROR 1/CLOSED 3,
+confirmed scrub, normal helper exit, empty Job and exact owned TEMP cleanup.
+Earlier failed native attempts are retained privately. A separate current-user
+Windows byte-backend check also passed fresh absence/write/read equality/delete/
+absence through the pinned default adapter after correcting measured native
+null/numeric-array return forms; no dummy entry remains.
+
+Neither check establishes full installed enrollment, real PAT validity, all
+native failure/timeout paths or repeatable production startup cost. Exact user
+release/dependency/DLL approval, fresh real project/enrollment, Figma permission/
+seat/quota, asset/font rights and independent CDN-origin policy remain explicit
+later gates. No real Figma capture, user capture installation or model upload has
+occurred. Default empty CDN origins produce truthful three-call partial capture
+before contacting the returned host. Private evidence and test key names are
+not repository fixtures.
 
 ## Boundary conventions
 

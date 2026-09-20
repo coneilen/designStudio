@@ -1,4 +1,5 @@
 import type {
+  Artifact,
   ArtifactReference,
   Bounds,
   DesignIR,
@@ -56,7 +57,12 @@ export interface FigmaConversion {
   provenance: ProvenanceSnapshot;
   report: DiagnosticReport;
 }
-const profile = "figma-offline-fixed-v1";
+export interface FigmaStructureInput
+  extends Omit<FigmaConversionInput, "manifest"> {
+  selection: { fileKey: string; nodeId: string };
+  structure: Artifact;
+}
+export type FigmaStructureConversion = Omit<FigmaConversion, "source">;
 const metadata = new Set([
   "locked",
   "exportSettings",
@@ -90,6 +96,47 @@ export function convertFigmaSnapshot(
   input: FigmaConversionInput,
   options: ConversionLimits = {},
 ): FigmaConversion {
+  const result = convertShared(input, options, "offline");
+  if (!result.source)
+    fail("EVIDENCE_MISSING", "Offline source declaration was not produced.");
+  return { ...result, source: result.source };
+}
+
+/** Pure source-neutral transform. It never authenticates or returns a SourceIdentity. */
+export function convertFigmaStructure(
+  input: FigmaStructureInput,
+  options: ConversionLimits = {},
+): FigmaStructureConversion {
+  if (
+    !/^[A-Za-z0-9]{1,160}$/.test(input.selection.fileKey) ||
+    !/^[0-9]+:[0-9]+$/.test(input.selection.nodeId) ||
+    input.selection.nodeId.length > 160
+  )
+    fail("INVALID_INPUT", "Invalid explicit structure selection.");
+  return convertShared(
+    {
+      ...input,
+      manifest: {
+        schemaVersion: "1.0",
+        format: "figma-rest-nodes-v1",
+        selectionUrl: `https://www.figma.com/design/${input.selection.fileKey}/selection?node-id=${input.selection.nodeId}`,
+        structure: input.structure,
+        assets: [],
+        fonts: [],
+      },
+    },
+    options,
+    "structure",
+  );
+}
+
+function convertShared(
+  input: FigmaConversionInput,
+  options: ConversionLimits,
+  mode: "offline" | "structure",
+): FigmaStructureConversion & { source?: SourceSnapshot } {
+  const profile =
+    mode === "offline" ? "figma-offline-fixed-v1" : "figma-structure-fixed-v1";
   const budget = limits(options);
   const manifest = structuredClone(
     shape("FigmaIntakeManifest", input.manifest),
@@ -133,7 +180,10 @@ export function convertFigmaSnapshot(
       "Source artifact collides with the derived conversion artifact.",
     );
   if (
-    raw.mediaType !== "application/json" ||
+    (raw.mediaType !== "application/json" &&
+      !(
+        mode === "structure" && raw.mediaType === "application/octet-stream"
+      )) ||
     raw.byteLength !== originalBytes.byteLength ||
     raw.sha256 !== hashBytes(originalBytes)
   )
@@ -141,7 +191,12 @@ export function convertFigmaSnapshot(
       "ARTIFACT_INTEGRITY",
       "Source bytes do not match the supplied structure descriptor.",
     );
-  const parsed = parseSource(originalBytes, selection.nodeId, budget);
+  const parsed = parseSource(
+    originalBytes,
+    selection.nodeId,
+    budget,
+    mode === "offline" ? "single" : "selected-view",
+  );
   const sourceRef = { id: raw.id, sha256: raw.sha256 };
   const diagnostics: Diagnostic[] = [];
   const diagnosticIndex = new Map<string, Diagnostic>();
@@ -534,7 +589,9 @@ export function convertFigmaSnapshot(
       loss(
         node,
         "type",
-        "Node kind is outside the fixed offline profile; raw descendants remain inspectable.",
+        mode === "offline"
+          ? "Node kind is outside the fixed offline profile; raw descendants remain inspectable."
+          : "Node kind is outside the fixed structure profile; raw descendants remain inspectable.",
       );
       result = opaque(
         "Unsupported node kind; no editable children were invented.",
@@ -602,7 +659,9 @@ export function convertFigmaSnapshot(
     missing.push(`unverified-font:${font.family}:${font.style}`);
   diagnostic(
     "VALIDATION_INCONCLUSIVE",
-    "Offline bytes and metadata do not verify Figma authorship, version consistency, reference pixels, or resource rights.",
+    mode === "offline"
+      ? "Offline bytes and metadata do not verify Figma authorship, version consistency, reference pixels, or resource rights."
+      : "Pure structure conversion does not authenticate capture, reference pixels, resource rights, or render readiness.",
     undefined,
     "",
     "warning",
@@ -630,40 +689,45 @@ export function convertFigmaSnapshot(
       "CONFLICT",
       "Declared capture version and source metadata disagree.",
     );
-  const source: SourceSnapshot = {
-    schemaVersion: "1.0",
-    id: `source_${canonicalDigest([input.intakeId, raw.sha256])}`,
-    projectId: input.projectId,
-    identity: {
-      transport: "figma-offline",
-      intakeId: input.intakeId,
-      contentDigest: raw.sha256,
-      binding: {
-        status: "asserted",
-        assertedUrl: manifest.selectionUrl,
-        actorId: input.actorId,
-      },
-      ...(manifest.declaredCapture?.transport
-        ? { declaredTransport: manifest.declaredCapture.transport }
-        : {}),
-      ...(declaredVersion ? { declaredSourceVersion: declaredVersion } : {}),
-    },
-    capturedAt: input.observedAt,
-    captureEndedAt: input.observedAt,
-    consistency: {
-      guarantee: "unknown",
-      limitations: [
-        "Timestamps are caller-declared local byte observations, not observed Figma capture times.",
-        "Only structure bytes were checked; manifest reference/resource descriptors are not decoded or authenticated.",
-        "A nodes response does not establish untruncated traversal, file-versus-branch identity or capture consistency.",
-      ],
-    },
-    completeness: "partial",
-    requests: [],
-    artifacts: [raw],
-    missing,
-    diagnosticIds: [],
-  };
+  const source: SourceSnapshot | undefined =
+    mode === "offline"
+      ? {
+          schemaVersion: "1.0",
+          id: `source_${canonicalDigest([input.intakeId, raw.sha256])}`,
+          projectId: input.projectId,
+          identity: {
+            transport: "figma-offline",
+            intakeId: input.intakeId,
+            contentDigest: raw.sha256,
+            binding: {
+              status: "asserted",
+              assertedUrl: manifest.selectionUrl,
+              actorId: input.actorId,
+            },
+            ...(manifest.declaredCapture?.transport
+              ? { declaredTransport: manifest.declaredCapture.transport }
+              : {}),
+            ...(declaredVersion
+              ? { declaredSourceVersion: declaredVersion }
+              : {}),
+          },
+          capturedAt: input.observedAt,
+          captureEndedAt: input.observedAt,
+          consistency: {
+            guarantee: "unknown",
+            limitations: [
+              "Timestamps are caller-declared local byte observations, not observed Figma capture times.",
+              "Only structure bytes were checked; manifest reference/resource descriptors are not decoded or authenticated.",
+              "A nodes response does not establish untruncated traversal, file-versus-branch identity or capture consistency.",
+            ],
+          },
+          completeness: "partial",
+          requests: [],
+          artifacts: [raw],
+          missing,
+          diagnosticIds: [],
+        }
+      : undefined;
   if (design) {
     shape("DesignIR", design);
     const resolution = resolveDesign(design, resources, {
@@ -707,8 +771,10 @@ export function convertFigmaSnapshot(
     losses,
     waiverEventIds: [],
   };
-  source.diagnosticIds = diagnostics.map((item) => item.id);
-  sourceMap.snapshot = { id: source.id, sha256: canonicalDigest(source) };
+  if (source) {
+    source.diagnosticIds = diagnostics.map((item) => item.id);
+    sourceMap.snapshot = { id: source.id, sha256: canonicalDigest(source) };
+  }
   budget.checkpoint();
   shape("FigmaConversionEvidence", evidence);
   const projectionValue = shape("JsonValue", evidence);
@@ -763,12 +829,12 @@ export function convertFigmaSnapshot(
     if (problems.length)
       fail("EVIDENCE_MISSING", "Converted provenance did not validate.");
   }
-  shape("SourceSnapshot", source);
+  if (source) shape("SourceSnapshot", source);
   shape("FigmaSourceMap", sourceMap);
   shape("ProvenanceSnapshot", provenance);
   shape("DiagnosticReport", report);
   const result = {
-    source,
+    ...(source ? { source } : {}),
     ...(design ? { design } : {}),
     resources,
     sourceMap,

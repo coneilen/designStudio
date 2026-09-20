@@ -1,5 +1,199 @@
 # @design-studio/project-host
 
+## Separate native credential capture profile
+
+`figma-capture-v1` is a closed Windows x64 profile distinct from the fixture
+release. Its exact canonical policy authorizes only `capture` / `pat-helper`
+roles and native project/credential/selected-frame commands. API access is fixed
+to `https://api.figma.com`, with four calls and an original 30-second work deadline;
+the independent image-origin list remains empty. Version-1 fixture metadata, catalog policy and `installations` namespace
+are unchanged. Capture releases use version-2 policy and `capture-releases`;
+wrong-profile roles fail before admission.
+
+Candidate tooling accepts
+`--profile figma-capture-v1 --workspace <build> --node-root <pinned runtime> --sqlite-binding <approved binding> --output <NEW candidate>`.
+It reuses physical dependency copying, inventory, pinned Node, bootstrap preflight,
+native installation publication and resolution guards. No fixture catalog/browser
+is repurposed. Packaging refuses until the actual capture CLI and PAT-helper
+compiled roles exist; provisioning alone is not a shipped input command.
+Installation still requires independent approval of BOTH exact payload and
+bootstrap digests. No capture candidate or installation is approved implicitly.
+Capture roles include the capture/import workspace packages and the pinned
+SQLite binding. This changed policy selects a new independently approved
+namespace; it does not upgrade or adopt the old credential-only project profile.
+
+`verifyCaptureInstallation` creates a process-owned live lease, not a structural
+JSON grant. `openCaptureProject(lease)` creates one new app-ID project under the
+native KnownFolder `DesignStudio\capture-projects` namespace; passing its logical
+ID later reopens only its exact principal/profile/native-identity registration.
+No path adoption, fixture binding, environment root or caller trust Boolean is
+accepted. Native file/ACL primitives and registry checks are shared with the
+fixture implementation. The current-user boundary is not a same-user attacker
+sandbox.
+
+Each project holds an exclusive data-read handle on its private credential lock
+file, preventing overlapping app processes. Its nonsecret journal has at most
+1024 canonical, chained, no-replace records of at most 8 KiB each, flushed by the
+native publication primitive. Records contain only exact owned reference,
+pending/ready/absent/uncertain state and declared expiry/scopes. Torn or gapped
+history refuses further work and requires explicit reconciliation; it is never
+silently adopted, rewritten or filled with plaintext credentials.
+
+### Capacity and durable cleanup reserve
+
+The total remains **1024 records**, with no rollover, pruning, second index or
+in-memory-only reservation. The closed capture policy names this limit and the
+eight-slot normal-operation reserve. Admission reads and validates durable
+history under the project's exclusive lock before any vault lookup:
+
+| Action/state | Admission and append behavior |
+|---|---|
+| Setup/update | Require eight free slots before any backend call; intent remains durable before mutation. |
+| Status | Require one free slot, not eight. Unchanged ready/absent observations do not append; failed reads append nothing and never mean absent. Pending setup/update can reconcile with one terminal record. |
+| New removal | Require two free slots: pending-remove plus confirmed absence. |
+| Pending-remove retry | Require one free terminal slot. Every retry is a new explicit confirmed action with current authority and exact-entry read. Duplicate intent and ambiguous-delete metadata retain pending-remove without appending. No automatic retry. |
+| Status of pending-remove | At fewer than eight free slots, observing present retains the removal intent. Observing absent appends the terminal absence record. At normal capacity, an authorized present observation may reconcile to ready. |
+| Confirmed terminal absence | A later acknowledgement/cleanup error remains an interrupted operation, but does not overwrite durable observed absence with uncertain state. |
+| Full/malformed history | Reject before backend access. No assumption that an old exhausted history can be repaired by deleting credentials or erasing evidence. |
+
+Why eight slots suffice: an admitted setup/update may append intent, a terminal
+record whose acknowledgement fails, and then uncertain state (three slots).
+Restart reconciliation uses one slot, leaving at least four. Removal intent
+uses one; any number of separately authorized ambiguous deletions/present-status
+observations consume zero additional slots; confirmed absence uses one. At least
+two slots remain in this worst case. A crash leaving only setup/update intent
+uses less space and is still reconcilable; the eight-slot rule never blocks its
+status recovery. The append policy also enforces admission for new intent writes,
+not only the facade's preflight.
+
+This is a durable **state history**, not a counter/audit of every attempted action:
+repeated identical status, pending-removal retry and equivalent uncertainty states
+are deliberately deduplicated. Present status during low-capacity pending removal
+does not claim that the pending intent has been cleared. The fixed reference and
+current native ownership/one-use action authority are revalidated on every call.
+
+`openCaptureCredentials(project)` admits only an actual live native capture
+binding. It composes the fixed-entry adapter and internal one-use action authority
+with current native principal checks, an exact-reference confirmation and a
+fresh at-most-30-second admin context. No admin operation is added to public
+Operation/Job vocabulary. Merely opening the facade does not construct or read
+a vault entry. `status` is an explicit exact-entry credential read; setup never
+overwrites, and update/remove need their separately confirmed target. All vault
+actions still require independent user authorization.
+
+Active credential owners prevent project closure, and project owners prevent
+installation release. Startup cleanup failures retain the installation borrow
+and return a close-only `CaptureStartupCleanupRequired` for retry. The private
+composition imports the already-built host implementation inside the declared
+workspace dependency; no public host admin constructor/loader override is added.
+Default tests use only exact owned TEMP roots and synthetic native vault methods. Most
+candidate fixtures are inert; the explicitly named no-UI process probe uses the
+approved pinned Node bytes with a synthetic lifecycle peer. Neither establishes
+live vault or dialog behavior.
+
+`acquireCaptureWork(project)` accepts only the process's actual registry-owned
+project. Its work loan excludes simultaneous credential/dialog work. Fixed-scope
+native authority is issued internally using the current principal, project,
+installed policy, original deadline and declared credential expiry. It accepts
+neither an authority callback nor caller grants. `credentials()` reads only the
+fixed app-owned entry through ScopedCredentialStore; no lookup occurs on import
+or construction. Original readers remain held through actual settlement, and
+late buffers are zeroed before close can release the native loan.
+
+## Fixed owned PAT dialog role
+
+The capture role inventory names `packages\cli\dist\capture-main.js` and
+`packages\project-host\dist\pat-dialog-helper.js`. The helper/controller live in
+this package to keep capture-project admission in the same runtime registry
+instance; they do not import a second physical project registry as proof.
+`startCapturePatDialog` accepts only an actual live CaptureProject and acquires
+its private helper-owner count synchronously before async admission/spawn.
+Project close cannot succeed while that owner or a credential owner is active.
+
+The parent launches only the pinned Node and exact fixed helper path, with
+stdin/stdout/stderr ignored and one inherited overlapped fd3. It accepts no
+caller executable, module, environment, action callback, root or transport.
+The helper's small prejoin code consumes bounded INIT and joins a one-process
+Job before expensive installation verification or UI imports. Its fixed
+installed path derives the bootstrap root; native verification and resolution
+guards are established before the dynamically imported UI implementation can
+receive START. Parent verifies expected PID membership before START, holds its
+installation/project leases, and does not trust a callback or JSON grant.
+
+The private host Job bridge is shared with renderer-host through an internal
+compatibility re-export. Its only profiles are renderer (64 processes, unchanged)
+and PAT dialog (one process), with the original kill-on-close/non-breakaway
+flags and native membership checks. This is not a generic public launcher.
+Tests which load that native Job bridge require Windows **x64**, including the
+controller tests whose spawned process is mocked. Windows arm64 is not claimed
+as a verified Job ABI. Pure mocked deadline/protocol tests remain portable.
+
+The binary codec permits only eight fixed message kinds, a 32-byte per-run nonce,
+sequence 0/1, at most eight frames per direction, a two-frame bounded queue,
+at most 256 control bytes and at most 4096 accepted bytes. Partial/read/write
+buffers are owned and zeroed; outgoing frames remain borrowed until the actual
+write callback settles. JSON/string token framing is not used. Normal cleanup
+requires CLOSED/scrub evidence, child `close` and empty Job membership; forced
+kill or an unconfirmed scrub cannot produce a credential result. Retained
+cleanup is explicit and keeps the project helper count until observed quiescence.
+
+CLOSED is provisional, not a terminal transcript proof. Before delivery the
+controller requires actual peer EOF with no queued extra frames, partial header/
+body or prior receive failure, then actual child close and empty Job membership.
+The terminal validation state survives local disposal; closing a stream cannot
+turn an invalid transcript into a valid one. Extra bytes after CLOSED fail even
+if the first receipt claimed successful cleanup. Staged credential bytes are
+zeroed on violation. Resource owners can be released after proven process/pipe
+quiescence without delivering a credential or reporting scrub-confirmed success
+for a bad protocol.
+
+Five-second startup/close bounds and five-minute input time are distinct from
+admin time and never silently refreshed. The no-UI process probe exercises
+real Job membership, private bytes and observed child exit with a synthetic
+peer, not the real UI or full installed-helper startup cost.
+
+Separately authorized supervised evidence on the corrected native role reached
+READY using a fresh owned TEMP capture closure/project. The user confirmed
+masked dummy text, multiline-paste rejection and Cancel; the binary transcript
+reported ERROR 1/CLOSED 3 with confirmed scrub, normal child exit and empty Job.
+No forced termination occurred, and identity-checked TEMP cleanup completed.
+Only the approved copied KnownFolder substitution preceded the test inventories;
+helper/controller/UI code and fixed argv/limits were unchanged. This is one
+observed dummy cancellation path, not all native paths or repeatable production
+latency. Human observations are separate from machine evidence.
+
+The fixed helper delegates only its already-authorized START to private
+`pat-dialog-input`; that module imports the real collector directly, with no
+production callback override. Input expiry aborts input without poisoning a
+clean binary channel. A control wait may then span only the remaining original
+deadline-plus-five-second terminal budget. The controller likewise transitions
+its input wait to one fixed terminal deadline on cancellation/error/acceptance;
+ERROR, CLOSED, peer EOF and process exit share that allowance, never a renewed
+five seconds per frame. Pre-deadline cancellation retains its cause, and accepted
+bytes cannot be delivered after the original input deadline.
+
+Scrub confirmation still requires genuine collector cleanup, valid terminal
+transcript/EOF, normal helper exit and empty Job. Failed cleanup, partial/foreign
+frames, missing EOF or abnormal/forced exit remain unconfirmed. A child that has
+not actually exited keeps its owner/close retry even after the wait bound.
+Fake-clock tests exercise both endpoint orders, START-delivery offset, near-
+deadline cancellation, late accepted-byte zeroing and hung teardown without
+native UI. The supervised READY-but-interrupted attempt remains failed evidence;
+no actual Win32 timeout or user behavior success is inferred from those tests.
+For otherwise valid cancel/deadline receipts, the first locally recorded stop
+cause takes precedence; a later helper deadline cannot relabel an earlier
+manual cancellation. Protocol, transport and cleanup failures still override
+ordinary cancellation and never become confirmed cleanup through this rule.
+
+An independently authorized isolated Windows keyring check also passed actual
+synthetic byte write/read equality/delete/absence through the corrected pinned
+adapter. The measured null/numeric-array declaration mismatches and earlier
+failed attempts are retained as private evidence; no test entry remains. That
+backend check used generated test scope, not a production native-project grant
+or full installed enrollment. Real PAT setup, real source capture, exact
+production release approval and deployment remain unperformed and gated. No
+generated test service/account names or private artifacts are repository data.
+
 Narrow Windows **fresh fixture-catalog projects only** provisioning for F08.
 This is not arbitrary directory adoption, an ACL repair service, an HTTP setup
 endpoint, a general filesystem sandbox, or a complete application.
