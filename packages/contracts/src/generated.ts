@@ -236,6 +236,16 @@ export type FigmaBinding =
  */
 export type SourceIdentity =
   | {
+      transport: "figma-offline";
+      intakeId: StableId;
+      contentDigest: Sha256;
+      binding: FigmaBinding & {
+        [k: string]: unknown;
+      };
+      declaredTransport?: "figma-rest" | "figma-plugin";
+      declaredSourceVersion?: Version;
+    }
+  | {
       transport: "figma-rest";
       fileKey: StableId;
       branchKey?: StableId;
@@ -255,6 +265,40 @@ export type SourceIdentity =
       fixtureId: StableId;
       contentDigest: Sha256;
     };
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "SourceSnapshot".
+ */
+export type SourceSnapshot = {
+  [k: string]: unknown;
+} & {
+  schemaVersion: SchemaVersion;
+  id: StableId;
+  projectId: StableId;
+  identity: SourceIdentity;
+  capturedAt: Timestamp;
+  captureEndedAt: Timestamp;
+  consistency: {
+    guarantee: "version-pinned" | "change-checked-session" | "synthetic-immutable" | "unstable" | "unknown";
+    beforeDigest?: Sha256;
+    afterDigest?: Sha256;
+    limitations: string[];
+  };
+  completeness: "complete" | "partial" | "unavailable";
+  requests: {
+    id: StableId;
+    operation:
+      "metadata" | "nodes" | "reference-render" | "image-fills" | "variables" | "library" | "plugin-export" | "fixture";
+    nodeIds: string[];
+    versionSupport: "pinned" | "not-supported" | "not-applicable";
+    requestedVersion?: Version;
+    returnedVersion?: Version;
+    outcome: "complete" | "null-result" | "denied" | "partial" | "downscaled" | "unavailable";
+  }[];
+  artifacts: Artifact[];
+  missing: string[];
+  diagnosticIds: StableId[];
+};
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "Operation".
@@ -706,6 +750,9 @@ export interface ContractCatalog {
   FigmaBinding: FigmaBinding;
   SourceIdentity: SourceIdentity;
   SourceSnapshot: SourceSnapshot;
+  FigmaIntakeManifest: FigmaIntakeManifest;
+  FigmaSourceMap: FigmaSourceMap;
+  FigmaConversionEvidence: FigmaConversionEvidence;
   SourceStatus: SourceStatus;
   Operation: Operation;
   Diagnostic: Diagnostic;
@@ -1585,35 +1632,92 @@ export interface ProvenanceSnapshot {
 }
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "SourceSnapshot".
+ * via the `definition` "FigmaIntakeManifest".
  */
-export interface SourceSnapshot {
+export interface FigmaIntakeManifest {
   schemaVersion: SchemaVersion;
-  id: StableId;
-  projectId: StableId;
-  identity: SourceIdentity;
-  capturedAt: Timestamp;
-  captureEndedAt: Timestamp;
-  consistency: {
-    guarantee: "version-pinned" | "change-checked-session" | "synthetic-immutable" | "unstable" | "unknown";
-    beforeDigest?: Sha256;
-    afterDigest?: Sha256;
-    limitations: string[];
+  format: "figma-rest-nodes-v1";
+  selectionUrl: string;
+  structure: Artifact;
+  reference?: {
+    artifact: Artifact;
+    sourceNodeId: string;
+    sourceBounds: Bounds;
+    scale: number;
+    pixelWidth: number;
+    pixelHeight: number;
+    colorSpace: "srgb" | "unknown";
   };
-  completeness: "complete" | "partial" | "unavailable";
-  requests: {
-    id: StableId;
-    operation:
-      "metadata" | "nodes" | "reference-render" | "image-fills" | "variables" | "library" | "plugin-export" | "fixture";
-    nodeIds: string[];
-    versionSupport: "pinned" | "not-supported" | "not-applicable";
-    requestedVersion?: Version;
-    returnedVersion?: Version;
-    outcome: "complete" | "null-result" | "denied" | "partial" | "downscaled" | "unavailable";
+  /**
+   * @maxItems 1024
+   */
+  assets: {
+    imageRef: string;
+    artifact: Artifact;
+    rightsEvidenceId?: StableId;
   }[];
-  artifacts: Artifact[];
-  missing: string[];
-  diagnosticIds: StableId[];
+  /**
+   * @maxItems 1024
+   */
+  fonts: {
+    family: string;
+    style: string;
+    artifact: Artifact;
+    rightsEvidenceId?: StableId;
+  }[];
+  declaredCapture?: {
+    transport?: "figma-rest" | "figma-plugin";
+    sourceVersion?: Version;
+    capturedAt?: Timestamp;
+    captureEndedAt?: Timestamp;
+  };
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "FigmaSourceMap".
+ */
+export interface FigmaSourceMap {
+  schemaVersion: SchemaVersion;
+  projectId: StableId;
+  designId: StableId;
+  snapshot: ArtifactReference;
+  /**
+   * @maxItems 20000
+   */
+  entries: {
+    adapter: string;
+    document: string;
+    branch?: StableId;
+    sourceNodeId: string;
+    nodeId: StableId;
+  }[];
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "FigmaConversionEvidence".
+ */
+export interface FigmaConversionEvidence {
+  schemaVersion: SchemaVersion;
+  adapter: "figma-offline-fixed-v1";
+  source: ArtifactReference;
+  /**
+   * @maxItems 200000
+   */
+  entries: {
+    sourceNodeId: string;
+    nodeId: StableId;
+    sourcePointer: JsonPointer;
+    outputPointer: JsonPointer;
+    rule: "identity" | "fixed-layout" | "solid-appearance" | "node-kind" | "text-style" | "styled-ranges";
+    value: JsonValue;
+  }[];
+  /**
+   * @maxItems 200000
+   */
+  ignoredProperties: {
+    pointer: JsonPointer;
+    reason: "nonvisual-metadata";
+  }[];
 }
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema

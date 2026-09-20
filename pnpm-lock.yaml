@@ -119,6 +119,15 @@ importers:
         specifier: workspace:*
         version: link:../contracts
 
+  packages/figma-import:
+    dependencies:
+      '@design-studio/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@design-studio/design-ir':
+        specifier: workspace:*
+        version: link:../design-ir
+
   packages/host:
     dependencies:
       '@design-studio/contracts':

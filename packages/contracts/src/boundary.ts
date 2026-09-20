@@ -177,6 +177,8 @@ export function validateContract(
   const invalidJson = inspectJson(input, 128);
   if (invalidJson) return { success: false, issues: [invalidJson] };
   if (
+    name !== "JsonValue" &&
+    name !== "JsonObject" &&
     input &&
     typeof input === "object" &&
     "schemaVersion" in input &&

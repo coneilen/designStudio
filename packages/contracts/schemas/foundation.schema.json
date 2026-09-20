@@ -1602,6 +1602,30 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["transport", "intakeId", "contentDigest", "binding"],
+          "properties": {
+            "transport": { "const": "figma-offline" },
+            "intakeId": { "$ref": "#/definitions/StableId" },
+            "contentDigest": { "$ref": "#/definitions/Sha256" },
+            "binding": {
+              "allOf": [
+                { "$ref": "#/definitions/FigmaBinding" },
+                {
+                  "not": {
+                    "type": "object",
+                    "required": ["status"],
+                    "properties": { "status": { "const": "verified" } }
+                  }
+                }
+              ]
+            },
+            "declaredTransport": { "enum": ["figma-rest", "figma-plugin"] },
+            "declaredSourceVersion": { "$ref": "#/definitions/Version" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["transport", "fileKey", "nodeId", "sourceVersion"],
           "properties": {
             "transport": { "const": "figma-rest" },
@@ -1645,6 +1669,29 @@
     },
     "SourceSnapshot": {
       "type": "object",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "identity": {
+                "type": "object",
+                "required": ["transport"],
+                "properties": { "transport": { "const": "figma-offline" } }
+              }
+            },
+            "required": ["identity"]
+          },
+          "then": {
+            "properties": {
+              "consistency": {
+                "type": "object",
+                "properties": { "guarantee": { "const": "unknown" } }
+              },
+              "requests": { "type": "array", "maxItems": 0 }
+            }
+          }
+        }
+      ],
       "additionalProperties": false,
       "required": [
         "schemaVersion",
@@ -1743,6 +1790,208 @@
         "diagnosticIds": {
           "type": "array",
           "items": { "$ref": "#/definitions/StableId" }
+        }
+      }
+    },
+    "FigmaIntakeManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "format",
+        "selectionUrl",
+        "structure",
+        "assets",
+        "fonts"
+      ],
+      "properties": {
+        "schemaVersion": { "$ref": "#/definitions/SchemaVersion" },
+        "format": { "const": "figma-rest-nodes-v1" },
+        "selectionUrl": { "type": "string", "minLength": 1, "maxLength": 2048 },
+        "structure": { "$ref": "#/definitions/Artifact" },
+        "reference": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "artifact",
+            "sourceNodeId",
+            "sourceBounds",
+            "scale",
+            "pixelWidth",
+            "pixelHeight",
+            "colorSpace"
+          ],
+          "properties": {
+            "artifact": { "$ref": "#/definitions/Artifact" },
+            "sourceNodeId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "sourceBounds": { "$ref": "#/definitions/Bounds" },
+            "scale": { "type": "number", "exclusiveMinimum": 0, "maximum": 4 },
+            "pixelWidth": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 64000000
+            },
+            "pixelHeight": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 64000000
+            },
+            "colorSpace": { "enum": ["srgb", "unknown"] }
+          }
+        },
+        "assets": {
+          "type": "array",
+          "maxItems": 1024,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["imageRef", "artifact"],
+            "properties": {
+              "imageRef": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              },
+              "artifact": { "$ref": "#/definitions/Artifact" },
+              "rightsEvidenceId": { "$ref": "#/definitions/StableId" }
+            }
+          }
+        },
+        "fonts": {
+          "type": "array",
+          "maxItems": 1024,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["family", "style", "artifact"],
+            "properties": {
+              "family": { "type": "string", "minLength": 1, "maxLength": 1024 },
+              "style": { "type": "string", "minLength": 1, "maxLength": 1024 },
+              "artifact": { "$ref": "#/definitions/Artifact" },
+              "rightsEvidenceId": { "$ref": "#/definitions/StableId" }
+            }
+          }
+        },
+        "declaredCapture": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "transport": { "enum": ["figma-rest", "figma-plugin"] },
+            "sourceVersion": { "$ref": "#/definitions/Version" },
+            "capturedAt": { "$ref": "#/definitions/Timestamp" },
+            "captureEndedAt": { "$ref": "#/definitions/Timestamp" }
+          }
+        }
+      }
+    },
+    "FigmaSourceMap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "projectId",
+        "designId",
+        "snapshot",
+        "entries"
+      ],
+      "properties": {
+        "schemaVersion": { "$ref": "#/definitions/SchemaVersion" },
+        "projectId": { "$ref": "#/definitions/StableId" },
+        "designId": { "$ref": "#/definitions/StableId" },
+        "snapshot": { "$ref": "#/definitions/ArtifactReference" },
+        "entries": {
+          "type": "array",
+          "maxItems": 20000,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["adapter", "document", "sourceNodeId", "nodeId"],
+            "properties": {
+              "adapter": { "type": "string", "minLength": 1, "maxLength": 160 },
+              "document": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              },
+              "branch": { "$ref": "#/definitions/StableId" },
+              "sourceNodeId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "nodeId": { "$ref": "#/definitions/StableId" }
+            }
+          }
+        }
+      }
+    },
+    "FigmaConversionEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "adapter",
+        "source",
+        "entries",
+        "ignoredProperties"
+      ],
+      "properties": {
+        "schemaVersion": { "$ref": "#/definitions/SchemaVersion" },
+        "adapter": { "const": "figma-offline-fixed-v1" },
+        "source": { "$ref": "#/definitions/ArtifactReference" },
+        "entries": {
+          "type": "array",
+          "maxItems": 200000,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "sourceNodeId",
+              "nodeId",
+              "sourcePointer",
+              "outputPointer",
+              "rule",
+              "value"
+            ],
+            "properties": {
+              "sourceNodeId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "nodeId": { "$ref": "#/definitions/StableId" },
+              "sourcePointer": { "$ref": "#/definitions/JsonPointer" },
+              "outputPointer": { "$ref": "#/definitions/JsonPointer" },
+              "rule": {
+                "enum": [
+                  "identity",
+                  "fixed-layout",
+                  "solid-appearance",
+                  "node-kind",
+                  "text-style",
+                  "styled-ranges"
+                ]
+              },
+              "value": { "$ref": "#/definitions/JsonValue" }
+            }
+          }
+        },
+        "ignoredProperties": {
+          "type": "array",
+          "maxItems": 200000,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["pointer", "reason"],
+            "properties": {
+              "pointer": { "$ref": "#/definitions/JsonPointer" },
+              "reason": { "const": "nonvisual-metadata" }
+            }
+          }
         }
       }
     },

@@ -1,6 +1,6 @@
 # @design-studio/contracts
 
-Version 1.1.0; artifact schema version 1.0; JSON Schema draft-07.
+Version 1.2.0; artifact schema version 1.0; JSON Schema draft-07.
 See [DESIGN_IR.md](../../DESIGN_IR.md) for normative interpretation, defaults,
 readiness/authority separation, supported profile, fixture provenance and
 downstream ownership.
@@ -99,5 +99,29 @@ TypeScript does not encode every JSON Schema restriction (including the closed
 empty cancel object, numeric limits and conditional job-state requirements); validate untrusted
 input at runtime. No handwritten response union or untyped data bag is used.
 
-No semantic resolver, renderer, source importer, host adapter, storage engine,
-handoff compiler, comparator, job engine or CLI/API routes are implemented.
+## Additive offline source contracts (package 1.2.0)
+
+`SourceIdentity` adds `transport: "figma-offline"` with required `intakeId`,
+`contentDigest`, and asserted/unknown `FigmaBinding`. Optional
+`declaredTransport` and `declaredSourceVersion` are assertions, not observations.
+Verified binding is forbidden for this variant. An offline `SourceSnapshot`
+requires unknown consistency and an empty request inventory. Hashes do not
+authenticate origin or invent a REST version. Existing REST/plugin/synthetic
+variants and artifact/provider version 1.0 remain unchanged.
+
+New generated closed contracts/public schema entrypoints:
+`FigmaIntakeManifest`, `FigmaSourceMap`, `FigmaConversionEvidence`. These cover
+source-package declarations, source-coordinate identity maps and reproducible
+conversion projections only. They contain no grants, project provisioning,
+approval, runtime routes or import-job result API. Resource/reference manifest
+descriptors are unverified declarations until actual byte/rights checks.
+See [the pure converter](../figma-import/README.md) for exact semantics.
+
+Old readers can reject the added identity vocabulary; do not relabel it to make
+an old reader accept it. Previously valid artifacts and fixtures remain valid
+and byte-unchanged. Generic `JsonObject`/`JsonValue` validation treats a
+third-party `schemaVersion` property as data; named versioned artifact
+contracts still enforce their own schema version.
+
+This contracts package does not itself implement a resolver, renderer,
+importer, host, storage, jobs or CLI/API routes.
