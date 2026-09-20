@@ -69,7 +69,6 @@ windows.each(
     0,
     "",
     "synthetic-private-error-material",
-    [],
     { private: "synthetic-private-error-material" },
     new Uint16Array(1),
     new Uint8Array(new SharedArrayBuffer(2)),
@@ -107,9 +106,30 @@ windows(
     }
   },
 );
-windows(
-  "late native null still observes cancellation rather than claiming absence",
-  async () => {
+windows.each([[], [1, 2, 255]].map((input) => ({ input })))(
+  "normalizes native arrays at both byte adapters",
+  async ({ input }) => {
+    const native: number[][] = [];
+    const value = adapters(async () => {
+      const bytes = [...input];
+      native.push(bytes);
+      return bytes;
+    });
+    expect(await value.admin.read()).toEqual(Uint8Array.from(input));
+    expect(
+      await value.consumer.read(reference, new AbortController().signal),
+    ).toEqual(Uint8Array.from(input));
+    expect(native.every((bytes) => bytes.every((byte) => byte === 0))).toBe(
+      true,
+    );
+  },
+);
+windows.each([
+  { kind: "null", native: null },
+  { kind: "array", native: [65, 66] },
+])(
+  "late native $kind still observes cancellation and clears mutable data",
+  async ({ native }) => {
     const pending = deferred<unknown>();
     const entered = deferred<void>();
     const value = adapters(() => {
@@ -120,7 +140,9 @@ windows(
     const result = value.consumer.read(reference, abort.signal);
     await entered.promise;
     abort.abort();
-    pending.resolve(null);
+    pending.resolve(native);
     await expect(result).rejects.toMatchObject({ code: "CANCELLED" });
+    if (Array.isArray(native))
+      expect(native.every((byte) => byte === 0)).toBe(true);
   },
 );

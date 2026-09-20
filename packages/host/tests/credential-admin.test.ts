@@ -19,7 +19,7 @@ const reference = {
   providerId: "figma_rest",
   store: "windows-credential-manager",
 } as const;
-function fixture(clock?: Clock, nativeNull = false) {
+function fixture(clock?: Clock, nativeNull = false, nativeArray = false) {
   const raw = syntheticContext(clock ? { clock } : {});
   const sessions = new LocalSessionAuthenticator({
     clock: raw.clock,
@@ -77,7 +77,14 @@ function fixture(clock?: Clock, nativeNull = false) {
       async () => ({
         AsyncEntry: class {
           async getSecret() {
-            return (await read()) ?? null;
+            const bytes = await read();
+            if (bytes === undefined) return null;
+            if (!nativeArray) return bytes;
+            try {
+              return Array.from(bytes);
+            } finally {
+              bytes.fill(0);
+            }
           }
           setSecret(bytes: Uint8Array) {
             return write(bytes);
@@ -127,10 +134,10 @@ const admit = (
     f.context,
   );
 
-it.skipIf(process.platform !== "win32")(
-  "native null supports absent status/setup/removal without permitting a present-value overwrite",
-  async () => {
-    const f = fixture(undefined, true);
+it.skipIf(process.platform !== "win32").each([false, true])(
+  "native null and byte arrays=%s preserve absence and block present-value overwrite",
+  async (arrays) => {
+    const f = fixture(undefined, true, arrays);
     expect(await f.admin.execute(await admit(f, "status"))).toMatchObject({
       status: "complete",
       value: { presence: "absent" },

@@ -318,10 +318,18 @@ underlying native read has settled. Late returned bytes are zeroed and rejected.
 
 Both native byte-read adapters validate an `unknown` result at one shared
 internal boundary. Only `null` and `undefined` normalize to internal absence.
-An actual `Uint8Array` retains its identity, including empty bytes (which are
-present, not absence); strings, arrays, other objects/types and shared buffers
-fail closed without exposing the returned value. Native rejection remains a
-sanitized failure. Admin reads return `undefined` for absence; the consumer
+An actual `Uint8Array`/Buffer retains its identity, including empty bytes (which
+are present, not absence). The measured native numeric-array form is copied
+only after a length cap of `PAT_MAX_BYTES` (4096), plain-array/own-key checks
+and dense enumerable writable own-data integer-byte validation. No getters,
+inherited elements, iterators or coercion are used; proxies, holes, extras,
+nonwritable/malformed data and oversized arrays fail closed. The new array-copy
+cap matches the existing PAT profile; the prior typed-byte path is unchanged.
+Mutable bounded native-array slots are overwritten with zero; failed copies
+are zeroed and never returned. No erasure claim is made for immutable, shared
+or oversized unsupported provider storage. Empty valid arrays remain present
+empty bytes, not absence. Strings/array-like objects and native rejection remain
+sanitized failures. Admin reads return `undefined` for absence; the consumer
 reader still throws `RESOURCE_UNRESOLVED`, never a successful missing secret.
 
 `nativeVaultCapability()` loads the module without constructing an entry.
@@ -332,11 +340,17 @@ paths. A separately authorized Windows dummy-key preflight and same-key
 type-only diagnostic observed actual `null` from pinned 2.0.0 asynchronous
 `getSecret`, despite its `.d.ts` declaring `Uint8Array | undefined`. The shipped
 loader directly exports the native class; its synchronous declaration also
-documents `null`. This correction therefore validates runtime values rather
+documents `null` and numeric arrays. A subsequently authorized same-key dummy
+write succeeded, but the actual async payload was a dense numeric array, not
+the declared `Uint8Array`. That test stopped rather than coercing an unknown
+value. Explicit ownership-record-based cleanup then deleted that exact test
+entry and confirmed raw null absence; byte equality was not proven because the
+original random value had already been wiped. This boundary correction
+therefore validates runtime values rather
 than trusting that asynchronous declaration. The diagnostic used one newly
 generated test actor/project/reference mapping, not an existing user credential
-or native-project authority claim. It performed no enumeration, write or delete.
-Write/read/delete lifecycle, installed enrollment, locked/permission behavior
+or native-project authority claim. No enumeration or other credential access
+was performed. A verified byte roundtrip, installed enrollment, locked/permission behavior
 and all macOS native execution remain separate proof gates.
 The package is MIT; retain its notices and native dependency notices when
 distributing. No dependency build-policy exception is needed for the tested
