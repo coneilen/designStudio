@@ -192,11 +192,18 @@ a vault mutation. An interrupted command may already have changed its exact
 owned entry; use a new explicitly authorized status action rather than assuming
 rollback or repeating setup.
 
-**Evidence limit:** code, synthetic Win32/clipboard/process tests and an owned
-pinned-Node/Job no-UI probe are not a real dialog or vault feasibility proof.
-No real UI display, clipboard read or vault action was run during this slice.
-Synthetic display validation, exact capture release/candidate approval, fresh
-private project creation and real entry enrollment remain separate user gates.
+**Evidence:** a separately authorized dummy-only native check reached READY.
+The user confirmed masking, multiline-paste rejection and Cancel; independent
+machine evidence showed ERROR 1/CLOSED 3, confirmed scrub, normal child exit,
+empty Job and exact TEMP cleanup. Earlier pre-READY and unconfirmed-timeout
+attempts remain recorded failures. An isolated actual Windows byte-backend
+check subsequently passed synthetic write/read equality/delete/absence through
+the corrected pinned adapter, with no leftover entry. No real PAT was used.
+
+These scoped checks are not full installed enrollment or proof of every native
+path. Exact production capture release/candidate approval, fresh real private
+project creation, real entry enrollment and live call authorization remain
+separate user gates. Private evidence and generated test key names stay outside Git.
 The existing installed fixture release/project is unchanged. Native capture
 code does not establish actual Figma permission, seat or quota availability.
 

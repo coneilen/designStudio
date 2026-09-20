@@ -350,8 +350,15 @@ therefore validates runtime values rather
 than trusting that asynchronous declaration. The diagnostic used one newly
 generated test actor/project/reference mapping, not an existing user credential
 or native-project authority claim. No enumeration or other credential access
-was performed. A verified byte roundtrip, installed enrollment, locked/permission behavior
-and all macOS native execution remain separate proof gates.
+was performed. After both boundary corrections, a separately authorized final
+same-key Windows check passed fresh absence, synthetic byte write, in-memory
+read equality, exact-entry deletion and confirmed absence through the actual
+pinned default adapter. Original native calls settled and owned buffers were
+zeroed; no test entry remains. This is current-user backend byte-lifecycle
+evidence, not full installed enrollment, PAT validity, a same-user sandbox or
+forensic erasure of OS/native copies. Locked/permission behavior and all macOS
+native execution remain separate proof gates. Earlier failures and safe proof
+artifacts are retained privately, not committed with test key names or values.
 The package is MIT; retain its notices and native dependency notices when
 distributing. No dependency build-policy exception is needed for the tested
 prebuilt path.
@@ -504,19 +511,27 @@ its own receipt channel at the instant input expires. No public trace, new IPC
 kind or credential callback is introduced. Protocol tests mock the UI collector
 explicitly before invoking this actual helper-session code.
 
-The previous supervised dummy-only attempt failed before READY. No successful
-real display, masking, clipboard or vault proof is claimed. The correction has
-not been shown to a user yet. Later separately user-approved synthetic
-display testing must verify actual masking, gesture/paste routes, ABI/callback
-lifetime and window/process teardown before any real token enrollment.
+The first supervised dummy-only attempt failed before READY. That failure is
+retained as evidence rather than relabeled as successful display.
 
 A later supervised corrected-startup attempt reached READY but ended with
 `INTERRUPTED`/unconfirmed scrub near the input deadline; user behavior was not
 observed. Source analysis found both endpoints' same-deadline reads could destroy
 the receipt channel during teardown. Deterministic real-channel/fake-clock tests
 reproduce that race and the correction, including late bytes and failed cleanup.
-They do **not** establish which timer won in the real attempt, or actual Win32
-timeout, masking, paste rejection or user-Cancel success. Those remain gated.
+They do **not** establish which timer won in that real attempt or prove actual
+Win32 timeout handling.
+
+A later separately authorized supervised check of the corrected native helper
+reached READY. The user confirmed masked dummy text, multiline dummy-paste
+rejection and Cancel. Machine evidence independently recorded ERROR 1, CLOSED 3,
+confirmed scrub, normal child exit and an empty Job without forced termination;
+the exact owned TEMP namespace was cleaned. The copied helper/controller/input/
+UI bytes were reviewed code, with only the approved KnownFolder test substitution
+before inventories and metadata-only parent observation. User observations and
+machine lifecycle records are kept separately. This is evidence for the exercised
+dummy cancellation path, not every ABI/error/timeout path, real PAT enrollment,
+secure desktop or an approved production installation.
 
 From the root: build before typecheck; tests are co-located under `tests/`.
 Focused tests first failed for missing modules, then passed with implementations.

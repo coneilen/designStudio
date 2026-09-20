@@ -86,7 +86,7 @@ installation release. Startup cleanup failures retain the installation borrow
 and return a close-only `CaptureStartupCleanupRequired` for retry. The private
 composition imports the already-built host implementation inside the declared
 workspace dependency; no public host admin constructor/loader override is added.
-Tests use only exact owned TEMP roots and synthetic native vault methods. Most
+Default tests use only exact owned TEMP roots and synthetic native vault methods. Most
 candidate fixtures are inert; the explicitly named no-UI process probe uses the
 approved pinned Node bytes with a synthetic lifecycle peer. Neither establishes
 live vault or dialog behavior.
@@ -147,8 +147,17 @@ for a bad protocol.
 Five-second startup/close bounds and five-minute input time are distinct from
 admin time and never silently refreshed. The no-UI process probe exercises
 real Job membership, private bytes and observed child exit with a synthetic
-peer, not the real UI or full installed-helper startup cost. Real native UI
-verification/display latency remains an explicit later user-approved test gate.
+peer, not the real UI or full installed-helper startup cost.
+
+Separately authorized supervised evidence on the corrected native role reached
+READY using a fresh owned TEMP capture closure/project. The user confirmed
+masked dummy text, multiline-paste rejection and Cancel; the binary transcript
+reported ERROR 1/CLOSED 3 with confirmed scrub, normal child exit and empty Job.
+No forced termination occurred, and identity-checked TEMP cleanup completed.
+Only the approved copied KnownFolder substitution preceded the test inventories;
+helper/controller/UI code and fixed argv/limits were unchanged. This is one
+observed dummy cancellation path, not all native paths or repeatable production
+latency. Human observations are separate from machine evidence.
 
 The fixed helper delegates only its already-authorized START to private
 `pat-dialog-input`; that module imports the real collector directly, with no
@@ -172,6 +181,15 @@ For otherwise valid cancel/deadline receipts, the first locally recorded stop
 cause takes precedence; a later helper deadline cannot relabel an earlier
 manual cancellation. Protocol, transport and cleanup failures still override
 ordinary cancellation and never become confirmed cleanup through this rule.
+
+An independently authorized isolated Windows keyring check also passed actual
+synthetic byte write/read equality/delete/absence through the corrected pinned
+adapter. The measured null/numeric-array declaration mismatches and earlier
+failed attempts are retained as private evidence; no test entry remains. That
+backend check used generated test scope, not a production native-project grant
+or full installed enrollment. Real PAT setup, real source capture, exact
+production release approval and deployment remain unperformed and gated. No
+generated test service/account names or private artifacts are repository data.
 
 Narrow Windows **fresh fixture-catalog projects only** provisioning for F08.
 This is not arbitrary directory adoption, an ACL repair service, an HTTP setup

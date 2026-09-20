@@ -164,12 +164,25 @@ server through test-module mocks only. The copied SQLite role is inventoried
 and attested, but a test-only LocalStore spy loads the **hash-identical approved
 test binary** outside the disposable installation: Windows retains mapped DLLs
 until process exit. This is **not exact installed-role DLL-load proof**.
-There is no corresponding production override. No real UI, clipboard, vault
-entry, Figma request, user candidate or live installation is exercised.
-Native UI/ABI/paste behavior, real vault cleanup, full helper/startup cost,
-exact release/dependency/DLL loading and independent CDN-origin policy remain
-explicit later user-approved gates. Default empty CDN origins produce truthful
-three-call partial capture before contacting the returned host.
+There is no corresponding production override. Those integration tests exercise
+no real user entry or Figma request.
+
+Separate supervised evidence now covers one dummy-only native dialog cancellation
+path: READY, user-confirmed masking/multiline rejection/Cancel, ERROR 1/CLOSED 3,
+confirmed scrub, normal helper exit, empty Job and exact owned TEMP cleanup.
+Earlier failed native attempts are retained privately. A separate current-user
+Windows byte-backend check also passed fresh absence/write/read equality/delete/
+absence through the pinned default adapter after correcting measured native
+null/numeric-array return forms; no dummy entry remains.
+
+Neither check establishes full installed enrollment, real PAT validity, all
+native failure/timeout paths or repeatable production startup cost. Exact user
+release/dependency/DLL approval, fresh real project/enrollment, Figma permission/
+seat/quota, asset/font rights and independent CDN-origin policy remain explicit
+later gates. No real Figma capture, user capture installation or model upload has
+occurred. Default empty CDN origins produce truthful three-call partial capture
+before contacting the returned host. Private evidence and test key names are
+not repository fixtures.
 
 ## Boundary conventions
 
