@@ -124,6 +124,9 @@ The private host Job bridge is shared with renderer-host through an internal
 compatibility re-export. Its only profiles are renderer (64 processes, unchanged)
 and PAT dialog (one process), with the original kill-on-close/non-breakaway
 flags and native membership checks. This is not a generic public launcher.
+Tests which load that native Job bridge require Windows **x64**, including the
+controller tests whose spawned process is mocked. Windows arm64 is not claimed
+as a verified Job ABI. Pure mocked deadline/protocol tests remain portable.
 
 The binary codec permits only eight fixed message kinds, a 32-byte per-run nonce,
 sequence 0/1, at most eight frames per direction, a two-frame bounded queue,

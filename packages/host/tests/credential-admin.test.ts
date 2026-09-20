@@ -134,6 +134,19 @@ const admit = (
     f.context,
   );
 
+it.skipIf(process.platform !== "win32")(
+  "oversized native typed bytes never produce a present status",
+  async () => {
+    const f = fixture(undefined, true);
+    await f.backend.write(new Uint8Array(4097).fill(65));
+    const result = await f.admin.execute(await admit(f, "status"));
+    expect(result).toMatchObject({ error: { code: "PROVIDER_UNAVAILABLE" } });
+    expect(result.status).not.toBe("complete");
+    expect(f.states).toEqual([]);
+    expect(f.calls).toEqual(["write", "read"]);
+  },
+);
+
 it.skipIf(process.platform !== "win32").each([false, true])(
   "native null and byte arrays=%s preserve absence and block present-value overwrite",
   async (arrays) => {

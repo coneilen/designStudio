@@ -20,11 +20,34 @@ import {
 const pairFault = vi.hoisted(() => ({
   denyUnlink: false,
   afterUnlink: undefined as (() => void) | undefined,
+  captureReads: false,
+  reads: [] as Uint8Array[],
+  afterRead: undefined as (() => void) | undefined,
 }));
 vi.mock("node:fs/promises", async (original) => {
   const actual = await original<typeof import("node:fs/promises")>();
   return {
     ...actual,
+    open: async (...args: Parameters<typeof actual.open>) => {
+      const handle = await actual.open(...args);
+      const read = handle.read;
+      Object.defineProperty(handle, "read", {
+        value: async (...input: unknown[]) => {
+          const result: unknown = await Reflect.apply(read, handle, input);
+          const bytes = input[0];
+          if (
+            pairFault.captureReads &&
+            bytes instanceof Uint8Array &&
+            bytes.byteLength > 1
+          ) {
+            pairFault.reads.push(bytes);
+            pairFault.afterRead?.();
+          }
+          return result;
+        },
+      });
+      return handle;
+    },
     unlink: async (...args: Parameters<typeof actual.unlink>) => {
       if (pairFault.denyUnlink)
         throw Object.assign(new Error("Synthetic unlink fault"), {
@@ -42,89 +65,110 @@ const value = <T>(outcome: Outcome<T>): T => {
     throw new Error("Synthetic owned publication failed");
   return outcome.value;
 };
-it("retains observed unlink progress on late revocation without recreating or deleting another pair", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "ds-owned-pair-"));
-  const trusted = new Set<AuthorizationContext>();
-  const grants = new WeakMap<AuthorizationContext, OwnedPendingPublication>();
-  const context = () => {
-    const ctx = syntheticContext({
-      jobId: "pair_job",
-      requestId: "pair_request",
-    });
-    ctx.authorization.sessionId = `pair_${trusted.size}`;
-    ctx.authorization.grants.push({
-      resourceKind: "artifact",
-      resourceId: "owned",
-      operations: ["read", "write"],
-    });
-    trusted.add(ctx.authorization);
-    return ctx;
-  };
-  const files = await ProjectFileSystem.create({
-    projectId: "project_synthetic",
-    authority: (authorization) => trusted.has(authorization),
-    roots: [
-      {
-        id: "owned",
-        path: root,
-        access: "read-write",
-        trustedExclusiveAccess: true,
+it.each(["match", "integrity", "revoked-read"] as const)(
+  "retains observed unlink progress and zeros owned recovery bytes: %s",
+  async (mode) => {
+    const root = await mkdtemp(path.join(tmpdir(), "ds-owned-pair-"));
+    const trusted = new Set<AuthorizationContext>();
+    const grants = new WeakMap<AuthorizationContext, OwnedPendingPublication>();
+    const context = () => {
+      const ctx = syntheticContext({
+        jobId: "pair_job",
+        requestId: "pair_request",
+      });
+      ctx.authorization.sessionId = `pair_${trusted.size}`;
+      ctx.authorization.grants.push({
+        resourceKind: "artifact",
+        resourceId: "owned",
+        operations: ["read", "write"],
+      });
+      trusted.add(ctx.authorization);
+      return ctx;
+    };
+    const files = await ProjectFileSystem.create({
+      projectId: "project_synthetic",
+      authority: (authorization) => trusted.has(authorization),
+      roots: [
+        {
+          id: "owned",
+          path: root,
+          access: "read-write",
+          trustedExclusiveAccess: true,
+        },
+      ],
+      authorizeOwnedPublicationRecovery: async (pending, ctx) => {
+        if (grants.get(ctx.authorization) !== pending)
+          throw new HostBoundaryError(
+            "FORBIDDEN",
+            "Missing pair cleanup admission",
+          );
       },
-    ],
-    authorizeOwnedPublicationRecovery: async (pending, ctx) => {
-      if (grants.get(ctx.authorization) !== pending)
-        throw new HostBoundaryError(
-          "FORBIDDEN",
-          "Missing pair cleanup admission",
-        );
-    },
-  });
-  let pending: OwnedPendingPublication | undefined;
-  try {
-    const original = context();
-    const staged = value(
-      await files.stage(
-        { artifactRootId: "owned", path: "pair.bin" },
-        Uint8Array.of(1, 2, 3),
-        original,
-      ),
-    );
-    pairFault.denyUnlink = true;
-    expect(await files.publish(staged, original)).toMatchObject({
-      error: { code: "OUTPUT_UNCERTAIN" },
     });
-    pending = files.retainPendingPublication(staged, original);
-    pairFault.denyUnlink = false;
-    const revoked = context();
-    grants.set(revoked.authorization, pending);
-    pairFault.afterUnlink = () => trusted.delete(revoked.authorization);
-    expect(
-      await files.reconcileOwnedPublication(pending, revoked),
-    ).toMatchObject({ error: { code: "OUTPUT_UNCERTAIN" } });
-    await expect(files.closePreservingStages()).rejects.toMatchObject({
-      code: "OUTPUT_UNCERTAIN",
-    });
-    const fresh = context();
-    grants.set(fresh.authorization, pending);
-    pairFault.denyUnlink = true;
-    expect(await files.reconcileOwnedPublication(pending, fresh)).toMatchObject(
-      { status: "complete" },
-    );
-    expect(await readFile(path.join(root, "pair.bin"))).toEqual(
-      Buffer.from([1, 2, 3]),
-    );
-  } finally {
-    pairFault.denyUnlink = false;
-    pairFault.afterUnlink = undefined;
-    if (pending) {
-      const last = context();
-      grants.set(last.authorization, pending);
-      await files.reconcileOwnedPublication(pending, last);
+    let pending: OwnedPendingPublication | undefined;
+    try {
+      const original = context();
+      const staged = value(
+        await files.stage(
+          { artifactRootId: "owned", path: "pair.bin" },
+          Uint8Array.of(1, 2, 3),
+          original,
+        ),
+      );
+      pairFault.denyUnlink = true;
+      expect(await files.publish(staged, original)).toMatchObject({
+        error: { code: "OUTPUT_UNCERTAIN" },
+      });
+      pending = files.retainPendingPublication(staged, original);
+      pairFault.denyUnlink = false;
+      const revoked = context();
+      grants.set(revoked.authorization, pending);
+      pairFault.afterUnlink = () => trusted.delete(revoked.authorization);
+      expect(
+        await files.reconcileOwnedPublication(pending, revoked),
+      ).toMatchObject({ error: { code: "OUTPUT_UNCERTAIN" } });
+      await expect(files.closePreservingStages()).rejects.toMatchObject({
+        code: "OUTPUT_UNCERTAIN",
+      });
+      const fresh = context();
+      grants.set(fresh.authorization, pending);
+      pairFault.denyUnlink = true;
+      if (mode === "integrity")
+        await writeFile(path.join(root, "pair.bin"), Buffer.from([4, 5, 6]));
+      pairFault.reads = [];
+      pairFault.captureReads = true;
+      if (mode === "revoked-read")
+        pairFault.afterRead = () => trusted.delete(fresh.authorization);
+      const result = await files.reconcileOwnedPublication(pending, fresh);
+      expect(result).toMatchObject(
+        mode === "match"
+          ? { status: "complete" }
+          : { error: { code: "OUTPUT_UNCERTAIN" } },
+      );
+      expect(pairFault.reads.length).toBeGreaterThan(0);
+      expect(
+        pairFault.reads.every((bytes) => bytes.every((byte) => byte === 0)),
+      ).toBe(true);
+      expect(await readFile(path.join(root, "pair.bin"))).toEqual(
+        Buffer.from(mode === "integrity" ? [4, 5, 6] : [1, 2, 3]),
+      );
+    } finally {
+      pairFault.captureReads = false;
+      pairFault.afterRead = undefined;
+      for (const bytes of pairFault.reads) bytes.fill(0);
+      pairFault.reads = [];
+      pairFault.denyUnlink = false;
+      pairFault.afterUnlink = undefined;
+      await writeFile(path.join(root, "pair.bin"), Buffer.from([1, 2, 3]));
+      if (pending) {
+        const last = context();
+        grants.set(last.authorization, pending);
+        await files.reconcileOwnedPublication(pending, last);
+      }
+      await files.closePreservingStages();
+      await rm(root, { recursive: true });
     }
-    await files.closePreservingStages();
-    await rm(root, { recursive: true });
-  }
-});
+  },
+);
 
 it.skipIf(process.platform !== "win32")(
   "requires exact retained identity and fresh narrow authority, without reviving expired work",
@@ -273,10 +317,16 @@ it.skipIf(process.platform !== "win32")(
           await files.reconcileOwnedPublication(pending, changed),
         ).not.toMatchObject({ status: "complete" });
       const filename = path.join(root, "visible.bin");
+      pairFault.captureReads = true;
+      pairFault.reads = [];
       await writeFile(filename, Buffer.from("synthetic-owneX"));
       expect(
         await files.reconcileOwnedPublication(pending, fresh),
       ).toMatchObject({ error: { code: "OUTPUT_UNCERTAIN" } });
+      expect(pairFault.reads.length).toBeGreaterThan(0);
+      expect(
+        pairFault.reads.every((bytes) => bytes.every((byte) => byte === 0)),
+      ).toBe(true);
       await writeFile(filename, Buffer.from("synthetic-owned"));
       let release = () => {};
       let entered = () => {};
@@ -358,10 +408,16 @@ it.skipIf(process.platform !== "win32")(
       expect(
         await files.reconcileOwnedPublication(pending, last),
       ).toMatchObject({ status: "complete" });
+      expect(
+        pairFault.reads.every((bytes) => bytes.every((byte) => byte === 0)),
+      ).toBe(true);
       await files.closePreservingStages();
       await files.close();
       expect(await readFile(filename, "utf8")).toBe("synthetic-owned");
     } finally {
+      pairFault.captureReads = false;
+      for (const bytes of pairFault.reads) bytes.fill(0);
+      pairFault.reads = [];
       publishing.mockRestore();
       authorizationGate = undefined;
       enteredAuthorization = undefined;

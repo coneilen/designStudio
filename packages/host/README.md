@@ -122,6 +122,11 @@ Denial and barrier failures retain the pending identity for an explicit retry;
 revocation after an observed unlink retains that fact so recovery revalidates
 the remaining single-link destination rather than recreating the pair.
 Ordinary publish/close and historical recovery behavior are otherwise unchanged.
+Owned native-resume and already-unlinked comparison buffers are zeroed on both
+match and integrity failure. A read that fails before transferring its buffer
+(including authority expiry/revocation or handle-close failure) also zeroes that
+unreturned allocation. These are temporary read copies, not persisted artifact
+bytes or caller-owned buffers; recovery authority and receipts are unchanged.
 
 Published paths round-trip without assuming the input and artifact roots match:
 `read({artifactRootId: "artifacts", path: published.path}, context)`.
@@ -318,13 +323,18 @@ underlying native read has settled. Late returned bytes are zeroed and rejected.
 
 Both native byte-read adapters validate an `unknown` result at one shared
 internal boundary. Only `null` and `undefined` normalize to internal absence.
-An actual `Uint8Array`/Buffer retains its identity, including empty bytes (which
-are present, not absence). The measured native numeric-array form is copied
+An actual `Uint8Array`/Buffer at or below `PAT_MAX_BYTES` (4096) retains its
+identity, including empty bytes (which are present, not absence). Oversized
+owned typed views are zeroed and rejected before admin status can report them
+present. Intrinsic byteLength/buffer access and fill avoid shadow properties or
+caller coercion; only the supplied view is scrubbed, not neighboring bytes.
+Shared memory is still refused without claiming ownership or zeroing it.
+The measured native numeric-array form is copied
 only after a length cap of `PAT_MAX_BYTES` (4096), plain-array/own-key checks
 and dense enumerable writable own-data integer-byte validation. No getters,
 inherited elements, iterators or coercion are used; proxies, holes, extras,
 nonwritable/malformed data and oversized arrays fail closed. The new array-copy
-cap matches the existing PAT profile; the prior typed-byte path is unchanged.
+cap matches the typed-byte bound and existing PAT profile.
 Mutable bounded native-array slots are overwritten with zero; failed copies
 are zeroed and never returned. No erasure claim is made for immutable, shared
 or oversized unsupported provider storage. Empty valid arrays remain present

@@ -134,6 +134,72 @@ async function serverTest(
 }
 const good =
   "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{}";
+it.each([
+  ["NODE_EXTRA_CA_CERTS", "synthetic-unapproved-ca"],
+  ["NODE_USE_SYSTEM_CA", "1"],
+  ["SSL_CERT_FILE", "synthetic-unapproved-ca"],
+  ["SSL_CERT_DIR", "synthetic-unapproved-directory"],
+  ["OPENSSL_CONF", "synthetic-unapproved-config"],
+  ["NODE_OPTIONS", "--use-system-ca"],
+  ["NODE_OPTIONS", "--use_openssl_ca"],
+  ["NODE_OPTIONS", "--openssl-config=synthetic-unapproved-config"],
+])(
+  "denies ambient trust override %s before DNS or connection",
+  async (name, value) => {
+    const run = budget();
+    const dns = vi.mocked(lookup).mock.calls.length;
+    const connections = vi.mocked(tls.connect).mock.calls.length;
+    vi.stubEnv(name, value);
+    try {
+      run.call();
+      await expect(
+        new FigmaHttpsTransport().api(
+          "metadata",
+          undefined,
+          Buffer.from("synthetic-pat"),
+          run,
+        ),
+      ).rejects.toMatchObject({ code: "POLICY_FAILED" });
+      expect(vi.mocked(lookup).mock.calls.length).toBe(dns);
+      expect(vi.mocked(tls.connect).mock.calls.length).toBe(connections);
+    } finally {
+      vi.unstubAllEnvs();
+      await run.close();
+    }
+  },
+);
+it.each([
+  "--use-openssl-ca",
+  "--use-system-ca",
+  "--use_system_ca",
+  "--openssl-config=synthetic",
+  "--openssl-shared-config",
+])(
+  "denies trust-related runtime flag %s before DNS or connection",
+  async (flag) => {
+    const run = budget();
+    const dns = vi.mocked(lookup).mock.calls.length;
+    const connections = vi.mocked(tls.connect).mock.calls.length;
+    const original = process.execArgv;
+    process.execArgv = [...original, flag];
+    try {
+      run.call();
+      await expect(
+        new FigmaHttpsTransport().api(
+          "metadata",
+          undefined,
+          Buffer.from("synthetic-pat"),
+          run,
+        ),
+      ).rejects.toMatchObject({ code: "POLICY_FAILED" });
+      expect(vi.mocked(lookup).mock.calls.length).toBe(dns);
+      expect(vi.mocked(tls.connect).mock.calls.length).toBe(connections);
+    } finally {
+      process.execArgv = original;
+      await run.close();
+    }
+  },
+);
 it("uses one already-verified socket, and never forwards API credentials to the reference origin", async () => {
   await serverTest(good, async (facts) => {
     const run = budget();
@@ -148,6 +214,10 @@ it("uses one already-verified socket, and never forwards API credentials to the 
       expect(response.bytes.toString()).toBe("{}");
       expect(facts).toMatchObject({ requests: 1, credentialHeaders: 1 });
       expect(seam.connections).toBe(1);
+      expect(vi.mocked(tls.connect).mock.calls.at(-1)?.[0]).toMatchObject({
+        ca: [...tls.rootCertificates],
+      });
+
       run.call();
       await new FigmaHttpsTransport().image(
         "https://images.capture.invalid/reference.png?synthetic=opaque",
@@ -158,6 +228,30 @@ it("uses one already-verified socket, and never forwards API credentials to the 
       await run.close();
     }
   });
+});
+it("rechecks CA override admission after original DNS settles and before any socket", async () => {
+  const run = budget();
+  const connections = vi.mocked(tls.connect).mock.calls.length;
+  seam.delay = Promise.resolve().then(() => {
+    vi.stubEnv("NODE_EXTRA_CA_CERTS", "synthetic-unapproved");
+    return [{ address: "127.0.0.1", family: 4 }];
+  });
+  try {
+    run.call();
+    await expect(
+      new FigmaHttpsTransport().api(
+        "metadata",
+        undefined,
+        Buffer.from("synthetic-pat"),
+        run,
+      ),
+    ).rejects.toMatchObject({ code: "POLICY_FAILED" });
+    expect(vi.mocked(tls.connect).mock.calls.length).toBe(connections);
+  } finally {
+    vi.unstubAllEnvs();
+    seam.delay = undefined;
+    await run.close();
+  }
 });
 it("sends zero application bytes after authorization is revoked at secureConnect", async () => {
   await serverTest(good, async (facts) => {

@@ -6,13 +6,14 @@ import { PatChannel, PatKind } from "../../host/dist/pat-channel.js";
 import { openCaptureProject } from "../src/capture-project.js";
 import { startCapturePatDialog } from "../src/pat-dialog-controller.js";
 import { withCaptureInstallation } from "./capture-support.js";
+import { supportsNativeJob } from "./job-platform.js";
 
 vi.mock("node:child_process", async (original) => ({
   ...(await original<typeof import("node:child_process")>()),
   spawn: vi.fn(),
 }));
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
-const windows = it.skipIf(process.platform !== "win32");
+const windows = it.skipIf(!supportsNativeJob(process.platform, process.arch));
 const terminalFrame = (nonce: Buffer, value: number) => {
   const bytes = Buffer.alloc(39);
   bytes.writeUInt32BE(1);

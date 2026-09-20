@@ -396,53 +396,59 @@ export class ProjectFileSystem implements FileSystemBoundary {
         absolute,
         constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
       );
+      let bytes: Uint8Array | undefined;
       try {
-        const before = await handle.stat();
-        if (
-          !before.isFile() ||
-          before.nlink !== allowedLinks ||
-          (expected && !sameFile(expected, before))
-        )
-          throw new HostBoundaryError(
-            "PATH_FORBIDDEN",
-            "File is not an exclusively linked regular file.",
-          );
-        guard.consume("input", before.size);
-        guard.consume("output", before.size);
-        const bytes = new Uint8Array(before.size);
-        let offset = 0;
-        while (offset < bytes.byteLength) {
-          guard.check();
-          const { bytesRead } = await handle.read(
-            bytes,
-            offset,
-            Math.min(65536, bytes.byteLength - offset),
-            offset,
-          );
-          if (!bytesRead)
+        try {
+          const before = await handle.stat();
+          if (
+            !before.isFile() ||
+            before.nlink !== allowedLinks ||
+            (expected && !sameFile(expected, before))
+          )
+            throw new HostBoundaryError(
+              "PATH_FORBIDDEN",
+              "File is not an exclusively linked regular file.",
+            );
+          guard.consume("input", before.size);
+          guard.consume("output", before.size);
+          bytes = new Uint8Array(before.size);
+          let offset = 0;
+          while (offset < bytes.byteLength) {
+            guard.check();
+            const { bytesRead } = await handle.read(
+              bytes,
+              offset,
+              Math.min(65536, bytes.byteLength - offset),
+              offset,
+            );
+            if (!bytesRead)
+              throw new HostBoundaryError(
+                "ARTIFACT_INTEGRITY",
+                "File size changed during read.",
+              );
+            offset += bytesRead;
+          }
+          const probe = await handle.read(new Uint8Array(1), 0, 1, offset);
+          const after = await handle.stat();
+          if (
+            probe.bytesRead ||
+            before.size !== after.size ||
+            before.mtimeMs !== after.mtimeMs ||
+            before.ctimeMs !== after.ctimeMs ||
+            !sameFile(before, await lstat(absolute))
+          )
             throw new HostBoundaryError(
               "ARTIFACT_INTEGRITY",
-              "File size changed during read.",
+              "File changed during read.",
             );
-          offset += bytesRead;
+          guard.check();
+          return bytes;
+        } finally {
+          await handle.close();
         }
-        const probe = await handle.read(new Uint8Array(1), 0, 1, offset);
-        const after = await handle.stat();
-        if (
-          probe.bytesRead ||
-          before.size !== after.size ||
-          before.mtimeMs !== after.mtimeMs ||
-          before.ctimeMs !== after.ctimeMs ||
-          !sameFile(before, await lstat(absolute))
-        )
-          throw new HostBoundaryError(
-            "ARTIFACT_INTEGRITY",
-            "File changed during read.",
-          );
-        guard.check();
-        return bytes;
-      } finally {
-        await handle.close();
+      } catch (error) {
+        bytes?.fill(0);
+        throw error;
       }
     });
   }
@@ -738,14 +744,18 @@ export class ProjectFileSystem implements FileSystemBoundary {
               guard,
               pending.identity,
             );
-            if (
-              bytes.byteLength !== pending.staged.artifact.byteLength ||
-              sha256(bytes) !== pending.staged.artifact.sha256
-            )
-              throw new HostBoundaryError(
-                "ARTIFACT_INTEGRITY",
-                "Interrupted native publication bytes changed.",
-              );
+            try {
+              if (
+                bytes.byteLength !== pending.staged.artifact.byteLength ||
+                sha256(bytes) !== pending.staged.artifact.sha256
+              )
+                throw new HostBoundaryError(
+                  "ARTIFACT_INTEGRITY",
+                  "Interrupted native publication bytes changed.",
+                );
+            } finally {
+              bytes.fill(0);
+            }
             const proof = await this.nativePublisher.resume(
               destination,
               pending.nativeState,
@@ -764,14 +774,18 @@ export class ProjectFileSystem implements FileSystemBoundary {
                 guard,
                 pending.identity,
               );
-              if (
-                bytes.byteLength !== pending.staged.artifact.byteLength ||
-                sha256(bytes) !== pending.staged.artifact.sha256
-              )
-                throw new HostBoundaryError(
-                  "ARTIFACT_INTEGRITY",
-                  "Completed unlink destination bytes changed.",
-                );
+              try {
+                if (
+                  bytes.byteLength !== pending.staged.artifact.byteLength ||
+                  sha256(bytes) !== pending.staged.artifact.sha256
+                )
+                  throw new HostBoundaryError(
+                    "ARTIFACT_INTEGRITY",
+                    "Completed unlink destination bytes changed.",
+                  );
+              } finally {
+                bytes.fill(0);
+              }
             } else {
               await this.finishPublishedPair(
                 pending.path,

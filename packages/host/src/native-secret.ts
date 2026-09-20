@@ -6,6 +6,11 @@ const typedBuffer = Object.getOwnPropertyDescriptor(
   Object.getPrototypeOf(Uint8Array.prototype),
   "buffer",
 )?.get;
+const typedByteLength = Object.getOwnPropertyDescriptor(
+  Object.getPrototypeOf(Uint8Array.prototype),
+  "byteLength",
+)?.get;
+const typedFill = Uint8Array.prototype.fill;
 function invalid(): never {
   throw new HostBoundaryError(
     "PROVIDER_UNAVAILABLE",
@@ -24,6 +29,16 @@ export function normalizeNativeSecret(value: unknown): Uint8Array | undefined {
       types.isSharedArrayBuffer(Reflect.apply(typedBuffer, value, []))
     )
       invalid();
+    if (!typedByteLength) invalid();
+    const byteLength: unknown = Reflect.apply(typedByteLength, value, []);
+    if (
+      typeof byteLength !== "number" ||
+      !Number.isSafeInteger(byteLength) ||
+      byteLength > PAT_MAX_BYTES
+    ) {
+      Reflect.apply(typedFill, value, [0]);
+      invalid();
+    }
     return value;
   }
   if (!Array.isArray(value)) invalid();

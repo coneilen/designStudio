@@ -7,6 +7,10 @@ import { publicAddress, sameAddress } from "@design-studio/assets";
 import { HostBoundaryError } from "@design-studio/host";
 import { type CaptureBudget, fail } from "./boundary.js";
 
+// Unlike the process default trust store, this is fixed by the approved Node release.
+const bundledAuthorities = Object.freeze([...tls.rootCertificates]);
+const trustOverride =
+  /(?:^|[\s"'])--(?:use-(?:openssl|system)-ca|openssl-(?:config|shared-config))(?:[=\s"']|$)/;
 export type ApiOperation = "metadata" | "nodes" | "reference-render";
 export interface HttpCapture {
   status: number;
@@ -28,9 +32,20 @@ export class CaptureHttpError extends HostBoundaryError {
 function safeRuntime(): void {
   if (
     ["http", "https", "tls", "net"].some((name) => debuglog(name).enabled) ||
-    process.execArgv.some((arg) =>
-      /^(--tls-keylog|--inspect|--use-env-proxy)/.test(arg),
+    process.execArgv.some(
+      (arg) =>
+        /^(--tls-keylog|--inspect|--use-env-proxy)/.test(
+          arg.replaceAll("_", "-"),
+        ) || trustOverride.test(arg.replaceAll("_", "-")),
     ) ||
+    trustOverride.test((process.env.NODE_OPTIONS ?? "").replaceAll("_", "-")) ||
+    [
+      "NODE_EXTRA_CA_CERTS",
+      "NODE_USE_SYSTEM_CA",
+      "SSL_CERT_FILE",
+      "SSL_CERT_DIR",
+      "OPENSSL_CONF",
+    ].some((name) => process.env[name] !== undefined) ||
     process.env.NODE_TLS_REJECT_UNAUTHORIZED === "0" ||
     process.env.SSLKEYLOGFILE ||
     (process.env.NODE_USE_ENV_PROXY && process.env.NODE_USE_ENV_PROXY !== "0")
@@ -187,11 +202,13 @@ export class FigmaHttpsTransport {
       throw new CaptureHttpError("PROVIDER_UNAVAILABLE");
     }
     budget.check();
+    safeRuntime();
     const socket = tls.connect({
       host: address,
       port: 443,
       servername: url.hostname,
       rejectUnauthorized: true,
+      ca: [...bundledAuthorities],
       minVersion: "TLSv1.2",
       ALPNProtocols: ["http/1.1"],
     });

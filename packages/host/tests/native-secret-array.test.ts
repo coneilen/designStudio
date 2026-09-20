@@ -9,6 +9,45 @@ it("copies the measured dense native byte-array form and wipes its original slot
   expect(native).toEqual([0, 0, 0]);
   bytes?.fill(0);
 });
+it.each(["Buffer", "Uint8Array"] as const)(
+  "caps and intrinsically scrubs an oversized %s view, not adjacent bytes",
+  (kind) => {
+    const backing = new Uint8Array(PAT_MAX_BYTES + 3).fill(65);
+    const bytes =
+      kind === "Buffer"
+        ? Buffer.from(backing.buffer, 1, PAT_MAX_BYTES + 1)
+        : new Uint8Array(backing.buffer, 1, PAT_MAX_BYTES + 1);
+    let calls = 0;
+    for (const name of ["byteLength", "length", "buffer", "fill"])
+      Object.defineProperty(bytes, name, {
+        get() {
+          calls++;
+          throw new Error("Do not call shadow property");
+        },
+      });
+    expect(() => normalizeNativeSecret(bytes)).toThrow();
+    expect(
+      backing.subarray(1, PAT_MAX_BYTES + 2).every((byte) => byte === 0),
+    ).toBe(true);
+    expect(backing[0]).toBe(65);
+    expect(backing[PAT_MAX_BYTES + 2]).toBe(65);
+    expect(calls).toBe(0);
+  },
+);
+it.each([0, PAT_MAX_BYTES])(
+  "preserves valid typed-byte identity at size %i",
+  (size) => {
+    for (const bytes of [Buffer.alloc(size), new Uint8Array(size)])
+      expect(normalizeNativeSecret(bytes)).toBe(bytes);
+  },
+);
+it("refuses oversized shared views without claiming or performing owned zeroing", () => {
+  const bytes = new Uint8Array(new SharedArrayBuffer(PAT_MAX_BYTES + 1)).fill(
+    65,
+  );
+  expect(() => normalizeNativeSecret(bytes)).toThrow();
+  expect(bytes.every((byte) => byte === 65)).toBe(true);
+});
 it("preserves Buffer/Uint8Array identity without invoking a shadowed buffer getter", () => {
   let calls = 0;
   const bytes = Buffer.from("synthetic-only");

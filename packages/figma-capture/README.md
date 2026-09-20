@@ -54,6 +54,20 @@ credential argument. The native header string is transient but cannot be
 cryptographically erased in JavaScript. Unsafe debug/TLS/proxy routing settings
 are refused; no environment or global TLS setting is changed.
 
+Capture trust is the approved Node release's bundled Mozilla roots, supplied
+explicitly as `ca` on the pinned socket. It never inherits the process default
+CA set. Admission rejects `NODE_EXTRA_CA_CERTS`, `NODE_USE_SYSTEM_CA`,
+`SSL_CERT_FILE`, `SSL_CERT_DIR` and `OPENSSL_CONF`, plus `--use-openssl-ca`,
+`--use-system-ca`, `--openssl-config` and `--openssl-shared-config` in execArgv
+or NODE_OPTIONS (including Node's underscore aliases). Checks precede DNS and
+are repeated before connection. No override values, paths or certificates are
+included in errors. Explicit bundled trust matters even after startup variables
+are cleared: Node loads extra roots at process start, and thread-local default
+roots can also be replaced. `--use-bundled-ca` alone does not add trust.
+This follows the pinned [Node 24 TLS](https://nodejs.org/download/release/v24.21.0/docs/api/tls.html#tlsrootcertificates)
+and [CLI CA-source rules](https://nodejs.org/download/release/v24.21.0/docs/api/cli.html#node_extra_ca_certsfile).
+Custom enterprise/system CAs are not implicitly authorized for PAT capture.
+
 Node's maintained parser supplies **one HTTP/1.1 message**, Content-Length or
 chunked. We require semantic completion, exact declared Content-Length, no raw
 duplicate/conflicting framing, no trailers, identity content encoding, one
@@ -75,6 +89,13 @@ Production has no CA/private-IP/transport injection option. Tests mock DNS/publi
 address policy and the connector only within the test runner, restrict actual
 connections to loopback, retain real certificate verification, and generate
 ephemeral test certificates/keys in memory. No key fixture is committed.
+Isolated child tests additionally load a synthetic CA through startup
+NODE_EXTRA_CA_CERTS, remove that variable, and confirm ambient TLS still trusts
+it while the capture socket rejects it with zero application bytes. The same
+check covers replaced thread-local defaults. Only the synthetic public CA is
+written to an identity-checked temporary directory; its key stays in memory.
+This introduces no production CA/private-address bypass or parent-process TLS
+trust mutation, and is not a live Figma compatibility claim.
 
 ## Budgets and ownership
 
