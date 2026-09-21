@@ -1,7 +1,7 @@
 import { tmpdir } from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
-import type { StoredJob } from "../src/job-types.js";
+import type { StoredJob, StoredJobStage } from "../src/job-types.js";
 
 export function mutateOpenSyntheticCapture(
   store: object,
@@ -63,6 +63,39 @@ export function corruptSyntheticCapture(
       JSON.stringify(record),
       record.job.status,
       id,
+    );
+  } finally {
+    db.close();
+  }
+}
+
+export function corruptSyntheticCaptureStage(
+  filename: string,
+  nativeBinding: string,
+  jobId: string,
+  change: (stage: StoredJobStage) => void,
+): void {
+  if (
+    !/^capture-recovery-synthetic-[^\\]+\\state\.sqlite$/.test(
+      path.relative(tmpdir(), filename),
+    )
+  )
+    throw new Error(
+      "Stage corruption requires this test's exact temporary database",
+    );
+  const db = new Database(filename, { nativeBinding });
+  try {
+    const row = db
+      .prepare<[string], { id: string; data: string }>(
+        "SELECT id,data FROM job_stages WHERE job=? ORDER BY id LIMIT 1",
+      )
+      .get(jobId);
+    if (!row) throw new Error("Missing synthetic stage");
+    const stage: StoredJobStage = JSON.parse(row.data);
+    change(stage);
+    db.prepare("UPDATE job_stages SET data=? WHERE id=?").run(
+      JSON.stringify(stage),
+      row.id,
     );
   } finally {
     db.close();

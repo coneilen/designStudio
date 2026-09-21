@@ -29,6 +29,7 @@ import {
   type JobWorkerExpected,
   LocalStore,
   type StoredJob,
+  type StoredJobStage,
 } from "@design-studio/storage";
 import { afterEach, expect, it, vi } from "vitest";
 import {
@@ -40,6 +41,7 @@ import { CAPTURE_RECOVERY_POLICY_SHA256 } from "../../project-host/src/capture-r
 import {
   addSyntheticStoppedCaptures,
   corruptSyntheticCapture,
+  corruptSyntheticCaptureStage,
   mutateOpenSyntheticCapture,
 } from "../../storage/tests/capture-recovery-corruption.js";
 import {
@@ -50,6 +52,7 @@ import {
   assembleNativeCapture,
   type NativeCaptureRuntime,
 } from "../src/capture-runtime-internal.js";
+import { RecoveryDecisions } from "../src/recovery.js";
 
 const seam = vi.hoisted(() => ({ work: undefined as CaptureWork | undefined }));
 vi.mock("@design-studio/project-host", async (original) => ({
@@ -104,6 +107,11 @@ const call = {
 async function fixture(
   retainStage = true,
   cooldown?: "future" | "unknown" | "elapsed",
+  history: {
+    repaired?: boolean;
+    priorResourceUse?: boolean;
+    stageCount?: number;
+  } = {},
 ) {
   const root = await mkdtemp(
     path.join(tmpdir(), "capture-recovery-synthetic-"),
@@ -142,6 +150,8 @@ async function fixture(
   let captureAllowed = false;
   let fault: string | undefined;
   let beforeCommit: (() => void) | undefined;
+  let fixtureRecovery: RecoveryDecisions | undefined;
+  let historicalClaim: StoredJob | undefined;
   const ready = vi.fn(async () => undefined);
   const vault = vi.fn();
   const create = ProjectFileSystem.create.bind(ProjectFileSystem);
@@ -157,8 +167,16 @@ async function fixture(
   );
   const openStore = LocalStore.open.bind(LocalStore);
   vi.spyOn(LocalStore, "open").mockImplementation(async (options) => {
+    const jobs = required(options.jobs);
     store = await openStore({
       ...options,
+      jobs: {
+        ...jobs,
+        authorizeRecovery: (...args) =>
+          fixtureRecovery
+            ? fixtureRecovery.authorize(...args)
+            : jobs.authorizeRecovery(...args),
+      },
       fault: (point) => {
         if (point === "before-commit") beforeCommit?.();
         if (point === fault) throw new Error("Synthetic storage interruption");
@@ -297,121 +315,259 @@ async function fixture(
       context,
     ),
   );
-  record = value(
-    await initialOwners.store.jobs.claim(
-      originalJobId,
-      { state: "queued", rowVersion: record.rowVersion },
-      "synthetic_owner",
-      5000,
-      context,
-    ),
-  );
-  for (let index = 1; index <= 2; index++) {
-    record = value(
+  if (history.priorResourceUse) {
+    const priorContext = await initialOwners.policy.issue({
+      jobId: "synthetic_resource_predecessor",
+      requestId: "synthetic_resource_predecessor",
+      signal: new AbortController().signal,
+    });
+    let prior = value(
+      await initialOwners.store.jobs.create(
+        {
+          ...record.submission,
+          id: "synthetic_resource_predecessor",
+          operation: "write",
+          handlerId: "synthetic-resource-user",
+          deadline: priorContext.deadline,
+        },
+        priorContext,
+      ),
+    );
+    prior = value(
+      await initialOwners.store.jobs.claim(
+        prior.job.id,
+        {
+          state: "queued",
+          rowVersion: prior.rowVersion,
+        },
+        "synthetic_prior_owner",
+        5000,
+        priorContext,
+      ),
+    );
+    value(
       await initialOwners.store.jobs.update(
+        prior.job.id,
+        fence(prior),
+        {
+          kind: "fail",
+          error: {
+            code: "INVALID_INPUT",
+            message: "Synthetic no-effect resource use",
+            retryable: false,
+            diagnosticIds: [],
+          },
+        },
+        priorContext,
+      ),
+    );
+  }
+  if (history.repaired) {
+    const decisions = new RecoveryDecisions(
+      initialOwners.policy,
+      project.projectId,
+    );
+    fixtureRecovery = decisions;
+    const repair = vi.spyOn(initialOwners.store.jobs, "reconcile");
+    const service = new JobService({
+      projectId: project.projectId,
+      artifactRootId: project.artifactRootId,
+      ownerId: "synthetic_repaired_owner",
+      repository: initialOwners.store.jobs,
+      clock: initialOwners.policy.clock,
+      executionAuthority: {
+        verify: initialOwners.policy.verify,
+        observe: (signal) =>
+          initialOwners.policy.issue({
+            jobId: originalJobId,
+            requestId: originalRequestId,
+            signal,
+          }),
+        issue: (_record, signal) =>
+          initialOwners.policy.issue({
+            jobId: originalJobId,
+            requestId: originalRequestId,
+            signal,
+            deadline: record.job.deadline,
+          }),
+      },
+      recoveryAuthority: {
+        async issue(record, signal) {
+          const recoveryContext = await initialOwners.policy.issue({
+            jobId: record.job.id,
+            requestId: record.requestId,
+            signal,
+          });
+          decisions.register(record, recoveryContext);
+          return recoveryContext;
+        },
+        decide: (record, facts, context) =>
+          decisions.decide(record, facts, context),
+      },
+      handlers: [
+        {
+          id: CAPTURE_HANDLER_ID,
+          version: CAPTURE_HANDLER_VERSION,
+          operation: "capture",
+          async run(execution) {
+            historicalClaim = structuredClone(execution.record);
+            for (let index = 1; index <= 2; index++) {
+              await execution.reserve(`figma_http_${index}`, call);
+              await execution.settle(`figma_http_${index}`, call);
+            }
+            if (retainStage)
+              for (let index = 0; index < (history.stageCount ?? 1); index++)
+                value(
+                  await execution.stage(
+                    canonicalBytes({
+                      file: { version: "synthetic_version" },
+                      index,
+                      privateNode: "DO-NOT-EMIT-PROVIDER-DATA",
+                    }),
+                  ),
+                );
+            throw new HostBoundaryError(
+              "CONFLICT",
+              "Synthetic post-effect finalizer conflict",
+            );
+          },
+        },
+      ],
+    });
+    try {
+      value(await service.runOnce());
+      value(await service.waitForAttempt(originalJobId, context));
+    } finally {
+      value(await service.stop());
+      fixtureRecovery = undefined;
+    }
+    record = value(await initialOwners.store.jobs.get(originalJobId, context));
+    expect(repair.mock.calls.map((call) => call[2].kind)).toEqual([
+      "interrupt",
+      "resolved",
+    ]);
+    repair.mockRestore();
+    expect(record).toMatchObject({
+      generation: 3,
+      job: { attempt: 1, status: "failed" },
+    });
+  } else {
+    record = value(
+      await initialOwners.store.jobs.claim(
         originalJobId,
-        fence(record),
-        { kind: "reserve-usage", id: `figma_http_${index}`, usage: call },
+        { state: "queued", rowVersion: record.rowVersion },
+        "synthetic_owner",
+        5000,
         context,
       ),
     );
+    for (let index = 1; index <= 2; index++) {
+      record = value(
+        await initialOwners.store.jobs.update(
+          originalJobId,
+          fence(record),
+          { kind: "reserve-usage", id: `figma_http_${index}`, usage: call },
+          context,
+        ),
+      );
+      record = value(
+        await initialOwners.store.jobs.update(
+          originalJobId,
+          fence(record),
+          {
+            kind: "settle-usage",
+            id: `figma_http_${index}`,
+            result: "settled",
+            actual: call,
+          },
+          context,
+        ),
+      );
+    }
+    if (retainStage) {
+      let retained: unknown = {
+        file: { version: "synthetic_version" },
+        privateNode: "DO-NOT-EMIT-PROVIDER-DATA",
+        signedUrl: "https://private.invalid/?signed=DO-NOT-EMIT",
+      };
+      if (cooldown) {
+        const manifest: FigmaCaptureManifest = {
+          schemaVersion: "1.0",
+          format: "figma-rest-capture-v1",
+          captureId: originalJobId,
+          projectId: project.projectId,
+          policyId: request.policyId,
+          policySha256: request.policySha256,
+          request: record.job.input,
+          selection,
+          startedAt: new Date().toISOString(),
+          endedAt: new Date().toISOString(),
+          completeness: "unavailable",
+          referenceStatus: "unavailable",
+          readiness: "not-evaluated",
+          observations: [
+            {
+              call: 1,
+              operation: "metadata",
+              outcome: "rate-limited",
+              statusCode: 429,
+              receivedBytes: 0,
+              nodeIds: [],
+            },
+          ],
+          artifacts: [],
+          missing: ["metadata"],
+          limitations: [],
+          usage: {
+            externalCalls: 2,
+            dnsQueries: 2,
+            networkReceivedBytes: 0,
+            networkBodyBytes: 0,
+            persistedBytes: 0,
+          },
+          retry:
+            cooldown === "unknown"
+              ? "retry-after-unknown"
+              : "explicit-action-required",
+          ...(cooldown !== "unknown"
+            ? {
+                nextEligibleAt: new Date(
+                  Date.now() + (cooldown === "future" ? 3600000 : -3600000),
+                ).toISOString(),
+              }
+            : {}),
+        };
+        expect(validateContract("FigmaCaptureManifest", manifest).success).toBe(
+          true,
+        );
+        retained = manifest;
+      }
+      record = value(
+        await initialOwners.store.jobs.stage(
+          originalJobId,
+          fence(record),
+          canonicalBytes(retained),
+          context,
+        ),
+      ).record;
+    }
     record = value(
       await initialOwners.store.jobs.update(
         originalJobId,
         fence(record),
         {
-          kind: "settle-usage",
-          id: `figma_http_${index}`,
-          result: "settled",
-          actual: call,
+          kind: "fail",
+          error: {
+            code: "CONFLICT",
+            message: "Synthetic stopped failed attempt",
+            retryable: false,
+            diagnosticIds: [],
+          },
         },
         context,
       ),
     );
   }
-  if (retainStage) {
-    let retained: unknown = {
-      file: { version: "synthetic_version" },
-      privateNode: "DO-NOT-EMIT-PROVIDER-DATA",
-      signedUrl: "https://private.invalid/?signed=DO-NOT-EMIT",
-    };
-    if (cooldown) {
-      const manifest: FigmaCaptureManifest = {
-        schemaVersion: "1.0",
-        format: "figma-rest-capture-v1",
-        captureId: originalJobId,
-        projectId: project.projectId,
-        policyId: request.policyId,
-        policySha256: request.policySha256,
-        request: record.job.input,
-        selection,
-        startedAt: new Date().toISOString(),
-        endedAt: new Date().toISOString(),
-        completeness: "unavailable",
-        referenceStatus: "unavailable",
-        readiness: "not-evaluated",
-        observations: [
-          {
-            call: 1,
-            operation: "metadata",
-            outcome: "rate-limited",
-            statusCode: 429,
-            receivedBytes: 0,
-            nodeIds: [],
-          },
-        ],
-        artifacts: [],
-        missing: ["metadata"],
-        limitations: [],
-        usage: {
-          externalCalls: 2,
-          dnsQueries: 2,
-          networkReceivedBytes: 0,
-          networkBodyBytes: 0,
-          persistedBytes: 0,
-        },
-        retry:
-          cooldown === "unknown"
-            ? "retry-after-unknown"
-            : "explicit-action-required",
-        ...(cooldown !== "unknown"
-          ? {
-              nextEligibleAt: new Date(
-                Date.now() + (cooldown === "future" ? 3600000 : -3600000),
-              ).toISOString(),
-            }
-          : {}),
-      };
-      expect(validateContract("FigmaCaptureManifest", manifest).success).toBe(
-        true,
-      );
-      retained = manifest;
-    }
-    record = value(
-      await initialOwners.store.jobs.stage(
-        originalJobId,
-        fence(record),
-        canonicalBytes(retained),
-        context,
-      ),
-    ).record;
-  }
-  record = value(
-    await initialOwners.store.jobs.update(
-      originalJobId,
-      fence(record),
-      {
-        kind: "fail",
-        error: {
-          code: "CONFLICT",
-          message: "Synthetic stopped failed attempt",
-          retryable: false,
-          diagnosticIds: [],
-        },
-      },
-      context,
-    ),
-  );
   const initial = structuredClone(record);
   const input = {
     operation: "recover" as const,
@@ -425,6 +581,7 @@ async function fixture(
     outputs,
     project,
     initial,
+    historicalClaim,
     input,
     url,
     ready,
@@ -475,9 +632,38 @@ async function fixture(
       });
       return value(await store.jobs.get(originalJobId, context));
     },
+    async stages() {
+      const context = await policy.issue({
+        jobId: originalJobId,
+        requestId: originalRequestId,
+        signal: new AbortController().signal,
+      });
+      return value(await store.jobs.getStages(originalJobId, context));
+    },
+    async ordinaryReceipt(id: string) {
+      const context = await policy.issue({
+        jobId: id,
+        requestId: id,
+        signal: new AbortController().signal,
+      });
+      const stage = value(
+        await store.stage(canonicalBytes({ ordinary: true, id }), context),
+      );
+      return store.commit([stage], context);
+    },
     async mutate(change: (record: StoredJob) => void) {
       await runtime.close();
       corruptSyntheticCapture(
+        project.paths.database,
+        nativeBinding,
+        originalJobId,
+        change,
+      );
+      await open();
+    },
+    async mutateStage(change: (stage: StoredJobStage) => void) {
+      await runtime.close();
+      corruptSyntheticCaptureStage(
         project.paths.database,
         nativeBinding,
         originalJobId,
@@ -954,4 +1140,202 @@ it("refuses an escaped publication pair without adopting or unlinking it", async
   expect(await readFile(stage)).toEqual(bytes);
   expect(await readFile(destination)).toEqual(bytes);
   expect(await f.record()).toEqual(f.initial);
+});
+
+it.each([
+  [false, false],
+  [true, false],
+  [false, true],
+  [true, true],
+] as const)(
+  "authorizes the real repaired failure with stages=%s and prior resource use=%s",
+  async (retain, prior) => {
+    const f = await fixture(retain, undefined, {
+      repaired: true,
+      priorResourceUse: prior,
+      stageCount: 2,
+    });
+    expect(f.initial).toMatchObject({
+      generation: 3,
+      resources: [],
+      job: { status: "failed", attempt: 1 },
+    });
+    const claim = required(f.historicalClaim);
+    expect(claim.generation).toBe(1);
+    expect(claim.resources[0]?.generation).toBe(prior ? 2 : 1);
+    const stages = await f.stages();
+    expect(stages).toHaveLength(retain ? 2 : 0);
+    for (const stage of stages)
+      expect(stage).toMatchObject({
+        fencingToken: 1,
+        attempt: 1,
+        leaseId: claim.job.lease?.id,
+        disposition: "recovery-needed",
+        jobId: f.initial.job.id,
+      });
+    await f.reopen();
+    const proposal = await f.propose();
+    const command = {
+      ...f.input,
+      expectedProof: proposal.proofSha256,
+      confirmation: CAPTURE_RECOVERY_CONFIRMATION,
+    };
+    const issued = await f.runtime.recover(
+      command,
+      new AbortController().signal,
+    );
+    expect(issued.status, JSON.stringify(issued)).toBe("complete");
+    const authorization = required(required(issued.value).authorization);
+    const grant = JSON.parse(
+      await readFile(
+        path.join(f.artifacts, "blobs", authorization.sha256),
+        "utf8",
+      ),
+    );
+    expect(grant.resourceStates).toEqual([
+      {
+        key: f.initial.resourceKeys[0],
+        generation: prior ? 2 : 1,
+        state: "released",
+        jobId: null,
+        leaseId: null,
+        fencingToken: null,
+      },
+    ]);
+    f.allowCapture();
+    const network = vi
+      .spyOn(FigmaHttpsTransport.prototype, "api")
+      .mockRejectedValue(new CaptureHttpError("AUTH_REQUIRED", 401));
+    const next = await f.runtime.execute(
+      {
+        operation: "capture",
+        requestId: f.input.nextRequestId,
+        url: f.url,
+      },
+      new AbortController().signal,
+    );
+    expect(next.status, JSON.stringify(next)).toBe("partial");
+    expect(network).toHaveBeenCalledTimes(1);
+    expect(await f.record()).toEqual(f.initial);
+    expect(await f.stages()).toEqual(stages);
+    await f.reopen();
+    const replay = await f.runtime.recover(
+      command,
+      new AbortController().signal,
+    );
+    expect(replay.value).toEqual({ ...issued.value, consumed: true });
+  },
+);
+
+it.each([
+  "recovery_capture_notes",
+  `recovery_capture_${"a".repeat(63)}`,
+  `recovery_capture_${"a".repeat(63)}g`,
+  `recovery_capture_${"A".repeat(64)}`,
+])(
+  "ordinary receipt %s is allowed and ignored by recovery lookup",
+  async (id) => {
+    const f = await fixture(false);
+    expect((await f.ordinaryReceipt(id)).status).toBe("complete");
+    f.setAdmitted(false);
+    f.allowCapture();
+    const network = vi
+      .spyOn(FigmaHttpsTransport.prototype, "api")
+      .mockRejectedValue(new CaptureHttpError("AUTH_REQUIRED", 401));
+    const capture = await f.runtime.execute(
+      {
+        operation: "capture",
+        requestId: "unrelated_capture",
+        url: "https://www.figma.com/design/OtherFile/selection?node-id=1-2",
+      },
+      new AbortController().signal,
+    );
+    expect(capture.status, JSON.stringify(capture)).toBe("partial");
+    expect(network).toHaveBeenCalledTimes(1);
+  },
+);
+
+it("exact reserved control keys deny ordinary commits and validate real authorization bytes", async () => {
+  const f = await fixture(false);
+  const proposal = await f.propose();
+  const issued = await f.runtime.recover(
+    {
+      ...f.input,
+      expectedProof: proposal.proofSha256,
+      confirmation: CAPTURE_RECOVERY_CONFIRMATION,
+    },
+    new AbortController().signal,
+  );
+  expect(issued.status).toBe("complete");
+  const ordinary = await f.ordinaryReceipt(
+    `recovery_capture_${"f".repeat(64)}`,
+  );
+  expect(ordinary.status).toBe("failed");
+  if (ordinary.status === "failed")
+    expect(ordinary.error.code).toBe("FORBIDDEN");
+  const authorization = required(required(issued.value).authorization);
+  await writeFile(
+    path.join(f.artifacts, "blobs", authorization.sha256),
+    '{"ordinary":true}',
+  );
+  const next = await f.runtime.execute(
+    {
+      operation: "capture",
+      requestId: f.input.nextRequestId,
+      url: "https://www.figma.com/design/OtherFile/selection?node-id=1-2",
+    },
+    new AbortController().signal,
+  );
+  expect(next.status).toBe("failed");
+  expect(next.error?.code).toBe("ARTIFACT_INTEGRITY");
+  expect(f.vault).not.toHaveBeenCalled();
+});
+
+it.each([
+  "lease",
+  "host",
+  "fence",
+  "stale-fence",
+  "attempt",
+  "job",
+  "request",
+  "root",
+  "disposition",
+] as const)("refuses repaired-stage provenance mismatch: %s", async (kind) => {
+  const f = await fixture(true, undefined, { repaired: true, stageCount: 2 });
+  await f.mutateStage((stage) => {
+    if (kind === "lease")
+      stage.leaseId = "lease-11111111-1111-4111-8111-111111111111";
+    if (kind === "host")
+      stage.hostInstanceId = "host-11111111-1111-4111-8111-111111111111";
+    if (kind === "fence") stage.fencingToken = 2;
+    if (kind === "stale-fence") stage.fencingToken = 0;
+    if (kind === "attempt") stage.attempt = 2;
+    if (kind === "job") stage.jobId = "foreign_job";
+    if (kind === "request") stage.requestId = "foreign_request";
+    if (kind === "root") stage.artifactRootId = "foreign_root";
+    if (kind === "disposition") stage.disposition = "retained";
+  });
+  const result = await f.runtime.recover(f.input, new AbortController().signal);
+  expect(result.status, JSON.stringify(result)).toBe("failed");
+  expect(f.vault).not.toHaveBeenCalled();
+  expect(await f.record()).toEqual(f.initial);
+});
+
+it("keeps unsupported generation histories refused and accepts independent resource reuse after a direct failure", async () => {
+  const f = await fixture(true, undefined, { priorResourceUse: true });
+  expect(f.initial.generation).toBe(1);
+  expect((await f.propose()).originalGeneration).toBe(1);
+  await f.mutate((record) => {
+    record.generation = 2;
+  });
+  expect(
+    (await f.runtime.recover(f.input, new AbortController().signal)).status,
+  ).toBe("failed");
+  await f.mutate((record) => {
+    record.generation = 5;
+  });
+  expect(
+    (await f.runtime.recover(f.input, new AbortController().signal)).status,
+  ).toBe("failed");
 });

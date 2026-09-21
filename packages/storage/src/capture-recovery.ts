@@ -26,6 +26,13 @@ export interface CaptureRecoveryEvidence {
   receipt: CommitReceipt;
 }
 export const recoveryKey = (jobId: string) => `recovery_${jobId}`;
+export function isCaptureRecoveryKey(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length === "recovery_capture_".length + 64 &&
+    /^recovery_capture_[0-9a-f]{64}$/.test(value)
+  );
+}
 type Digest = (value: unknown) => string;
 function fail(): never {
   throw new StorageError("INTEGRITY", "Capture recovery evidence changed.");

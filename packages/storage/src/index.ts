@@ -31,6 +31,7 @@ import {
 import {
   type CaptureRecoveryEvidence,
   type CaptureRecoveryState,
+  isCaptureRecoveryKey,
   originalRecoveryState,
   recoveryKey,
 } from "./capture-recovery.js";
@@ -1034,11 +1035,17 @@ export class LocalStore implements ArtifactStore {
     nextJobId: string,
     context: OperationContext,
   ): Promise<CaptureRecoveryAuthorization | null> {
-    const rows = this.db
-      .prepare<[string, string], { data: string }>(
-        "SELECT data FROM receipts WHERE json_extract(data,'$.idempotency.projectId')=? AND json_extract(data,'$.idempotency.actorId')=? AND substr(json_extract(data,'$.idempotency.key'),1,17)='recovery_capture_' LIMIT 1001",
+    const candidates = this.db
+      .prepare<[string, string], { scope: string; key: string }>(
+        "SELECT scope,json_extract(data,'$.idempotency.key') AS key FROM receipts WHERE json_extract(data,'$.idempotency.projectId')=? AND json_extract(data,'$.idempotency.actorId')=? AND json_extract(data,'$.idempotency.operation')='write' AND substr(json_extract(data,'$.idempotency.key'),1,17)='recovery_capture_' LIMIT 20001",
       )
       .all(context.projectId, context.authorization.actorId);
+    if (candidates.length > 20000)
+      throw new StorageError(
+        "LIMIT",
+        "Capture recovery key inspection exceeds its bound.",
+      );
+    const rows = candidates.filter((row) => isCaptureRecoveryKey(row.key));
     if (rows.length > 1000)
       throw new StorageError(
         "LIMIT",
@@ -1046,7 +1053,17 @@ export class LocalStore implements ArtifactStore {
       );
     let found: CaptureRecoveryAuthorization | null = null;
     for (const row of rows) {
-      const receipt = parseContract("CommitReceipt", row.data, "json");
+      if (row.scope !== this.scope(row.key, context))
+        throw new StorageError(
+          "INTEGRITY",
+          "Capture recovery receipt scope changed.",
+        );
+      const receipt = this.receipt(row.key, context);
+      if (!receipt)
+        throw new StorageError(
+          "INTEGRITY",
+          "Capture recovery receipt disappeared.",
+        );
       const output = receipt.outputs[0];
       if (!output || receipt.outputs.length !== 1 || output.byteLength > 65536)
         throw new StorageError(
@@ -1178,7 +1195,7 @@ export class LocalStore implements ArtifactStore {
         );
       } else if (
         this.options.captureRecovery &&
-        /^recovery_capture_[0-9a-f]{64}$/.test(context.requestId)
+        isCaptureRecoveryKey(context.requestId)
       ) {
         throw new StorageError(
           "AUTHORIZATION_CHANGED",

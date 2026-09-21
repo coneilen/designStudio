@@ -294,6 +294,7 @@ export class CaptureRecovery {
       original.job.status !== "failed" ||
       original.job.operation !== "capture" ||
       original.job.attempt !== 1 ||
+      ![1, 3].includes(original.generation) ||
       original.handlerId !== CAPTURE_HANDLER_ID ||
       original.handlerVersion !== CAPTURE_HANDLER_VERSION ||
       original.authorityRef !== `native_${this.work.policySha256}` ||
@@ -372,9 +373,7 @@ export class CaptureRecovery {
       !same(original.resourceKeys, [sourceKey]) ||
       !state.resources.some(
         (resource) =>
-          resource.key === sourceKey &&
-          resource.generation === original.generation &&
-          resource.state === "released",
+          resource.key === sourceKey && resource.state === "released",
       ) ||
       !same(request.credential, project.reference) ||
       !same(request, normalizeFigmaCaptureRequest(request, selected))
@@ -448,6 +447,11 @@ export class CaptureRecovery {
         throw new ApplicationError("ARTIFACT_INTEGRITY");
       this.cooldown(manifest.value, context);
     }
+    // Native capture admits one initial claim (execution fence 1). Its ordinary
+    // failure remains generation 1; interrupt + resolved failure invalidates it
+    // twice to generation 3, without changing the stage fence or resource generation.
+    let historicalLease: string | undefined;
+    let historicalHost: string | undefined;
     const descriptors: CaptureRecoveryStage[] = state.stages.flatMap(
       (stage) => {
         if (stage.jobId !== originalJobId) {
@@ -476,10 +480,22 @@ export class CaptureRecovery {
           stage.requestId !== originalRequestId ||
           stage.artifactRootId !== project.artifactRootId ||
           stage.attempt !== 1 ||
-          stage.fencingToken !== original.generation ||
-          !["retained", "recovery-needed"].includes(stage.disposition)
+          stage.fencingToken !== 1 ||
+          stage.disposition !==
+            (original.generation === 3 ? "recovery-needed" : "retained") ||
+          !/^lease-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+            stage.leaseId,
+          ) ||
+          !/^host-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+            stage.hostInstanceId,
+          ) ||
+          (historicalLease !== undefined &&
+            (stage.leaseId !== historicalLease ||
+              stage.hostInstanceId !== historicalHost))
         )
           throw new ApplicationError("ACTION_REQUIRED");
+        historicalLease = stage.leaseId;
+        historicalHost = stage.hostInstanceId;
         return [
           {
             stagingId: stage.stagingId,

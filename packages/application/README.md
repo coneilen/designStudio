@@ -142,6 +142,13 @@ reconcile, relabel, overwrite or restart the failed job.
 The proof includes the exact original row/version/generation, effects and usage,
 canonical input/resources, credential-journal fingerprint, policy identities,
 private stage/receipt/reference graph, and one normalized next request.
+The admitted one-attempt histories are direct failure (job generation 1) and
+the native stopped-handler interruption/resolution path (job generation 3).
+Both retain execution fence 1; the source resource's reservation generation is
+an independent counter across jobs and must only describe a released resource.
+Retained stages must match the original attempt, expected disposition and one
+consistent historical lease/host/fence group. No current lease is invented for
+a stopped job, and unsupported restoration/requeue histories remain refused.
 Native-scoped inspection verifies retained stage bytes read-only and refuses
 unowned stages, missing/aliased bytes or ambiguous publication. Ordinary
 completed stage journal rows are accepted only with their exact committed output
