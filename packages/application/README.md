@@ -131,6 +131,52 @@ unknown/reserved effects and stage identities. No vault read, network replay,
 new completion receipt or conversion/export acceptance is implied. An orphaned
 capture returns interrupted/action-required, not accepted.
 
+`recover({operation: "recover", requestId, failedJobId, nextRequestId, ...},
+signal)` is a separate offline method on the same owned facade. It requires
+native admission of the closed recovery-policy supplement and never calls
+credential readiness, vault use or the scheduler. Without confirmation it
+returns bounded proposal facts; with the exact proof and versioned confirmation
+literal it commits one immutable authorization artifact/receipt. It does not
+reconcile, relabel, overwrite or restart the failed job.
+
+The proof includes the exact original row/version/generation, effects and usage,
+canonical input/resources, credential-journal fingerprint, policy identities,
+private stage/receipt/reference graph, and one normalized next request.
+The admitted one-attempt histories are direct failure (job generation 1) and
+the native stopped-handler interruption/resolution path (job generation 3).
+Both retain execution fence 1; the source resource's reservation generation is
+an independent counter across jobs and must only describe a released resource.
+Retained stages must match the original attempt, expected disposition and one
+consistent historical lease/host/fence group. No current lease is invented for
+a stopped job, and unsupported restoration/requeue histories remain refused.
+Native-scoped inspection verifies retained stage bytes read-only and refuses
+unowned stages, missing/aliased bytes or ambiguous publication. Ordinary
+completed stage journal rows are accepted only with their exact committed output
+receipt; they are not treated as permission to adopt an unfinished publication.
+Export-root files without an established persistent ownership proof remain
+unsupported for this action. Response/quota/credential validity remain unknown;
+known future or indeterminate rate-limit constraints are never waived.
+
+Replay compares the immutable original snapshot separately from exactly verified
+authorization, seed and successor writes. Only exact identities, contents,
+receipts and protected references are projected out, never a name/prefix family.
+The source resource's successor fence must match that one bound job. Receipt
+insertion and successor submission each recheck storage state inside their
+SQLite transaction. Successor insertion is durable consumption, with no mutable
+spent flag or gap between spending and job creation. Its handler rechecks the
+authorization before credential/provider work. The exclusive native project
+loan and facade execution exclusion serialize app processes and in-process work;
+this remains a trusted-current-user boundary, not a hostile same-user sandbox.
+
+The recovered successor's fixed resources already have a protected receipt.
+After its seed commit, only that invocation's redundant resource stage is
+released under its original host owner. No old stage is deleted. A crash leaving
+that unjournaled intake residue refuses later recovery rather than adopting it.
+Exact committed acknowledgment replay survives reopen and successor insertion;
+publication uncertainty retains existing close-only ownership. A failed
+successor creates no new grant, and the original grant never covers a third
+request, even after a successful successor. No HTTP recovery route is added.
+
 Each command snapshots input before awaits. Native authority fixes current
 actor/project/credential and scopes, retains the scheduler's exact work signal,
 and caps the original 30-second capture deadline by authorization/declared
@@ -142,6 +188,28 @@ effect reservations, stages and fenced receipt commit provide idempotency and
 persisted cooldown/unknown-effect refusal; there is no new database schema or
 automatic retry. Replay inspects existing evidence without reading the vault
 or repeating network calls, under fresh current native authority.
+
+The facade starts the existing scheduler for the whole active attempt, rather
+than running one admission turn and only waiting. Default 100-ms turns renew the
+unchanged five-second lease while asynchronous provider work is pending.
+Submission/start/wait are enclosed by bounded stop-and-join on every exit;
+failed shutdown retains the service and original failure for close-only retry.
+Completed observer turns retire their own authority, so a capture can exceed
+128 turns without exhausting the native authority's unchanged 128-live-context
+cap. Worker authority, current-policy checks, original signals, the 30-second
+deadline, four-call/four-DNS limits and no-retry behavior remain unchanged.
+
+This is not a latency guarantee for native staging or finalization. Heartbeats
+share the execution/storage serialization lanes, and timers cannot run while
+synchronous native I/O blocks the event loop. A stage or commit that itself
+outlives the lease still fails closed; no parallel unfenced renewal is added.
+Synthetic facade regressions use real authority/jobs/SQLite/capture with mocked
+native admission, synthetic credentials, in-memory filesystem durability and
+provider responses. They
+cover six- and 28-second provider delays, more than 128 default-rate turns,
+original provider-error evidence, cancellation/deadline, exceptional exits,
+retained bounded-stop ownership and expired serialized finalization. They do
+not exercise installed/native-I/O latency, a real vault or Figma.
 
 Authenticated conversion takes no artifact/hash/proof argument. It reloads the
 actual private capture job, matching actor, logical request, installed policy,

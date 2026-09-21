@@ -194,7 +194,7 @@ export function storedJob(input: unknown): StoredJob {
       "deadline",
       "budget",
     ],
-    ["inputRevision"],
+    ["inputRevision", "captureRecovery"],
   );
   for (const key of ["id", "handlerId", "handlerVersion", "authorityRef"])
     jobCheck("StableId", submission[key]);
@@ -205,6 +205,8 @@ export function storedJob(input: unknown): StoredJob {
   jobCheck("Budget", submission.budget);
   if (submission.inputRevision !== undefined)
     jobCheck("ArtifactReference", submission.inputRevision);
+  if (submission.captureRecovery !== undefined)
+    jobCheck("CaptureRecoveryBinding", submission.captureRecovery);
   resourceKeys(submission.resourceKeys);
   const job = jobCheck("Job", data.job);
   for (const key of [

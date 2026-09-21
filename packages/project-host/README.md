@@ -22,6 +22,18 @@ Capture roles include the capture/import workspace packages and the pinned
 SQLite binding. This changed policy selects a new independently approved
 namespace; it does not upgrade or adopt the old credential-only project profile.
 
+Recovery-capable candidates retain those exact base capture-policy bytes and
+add `capture-recovery-policy.json`, a separately closed supplement bound to the
+base digest. Version-3 trusted release metadata binds its exact digest and the
+payload inventory must include it. Fixture/version-1 and existing capture/
+version-2 validation remain supported for their original roles; neither can
+authorize `figma-recover`. Recovery admission is private state on the actually
+verified installation lease, not a JSON property or caller configuration.
+The CLI checks it before opening a project for recovery. No new role, namespace
+lookup, migration, project copy, credential reference or old-job authority
+override is introduced. Independently approved new bootstrap/payload inventories
+are still required; changing packaging source does not approve or install them.
+
 `verifyCaptureInstallation` creates a process-owned live lease, not a structural
 JSON grant. `openCaptureProject(lease)` creates one new app-ID project under the
 native KnownFolder `DesignStudio\capture-projects` namespace; passing its logical
@@ -95,7 +107,12 @@ live vault or dialog behavior.
 project. Its work loan excludes simultaneous credential/dialog work. Fixed-scope
 native authority is issued internally using the current principal, project,
 installed policy, original deadline and declared credential expiry. It accepts
-neither an authority callback nor caller grants. `credentials()` reads only the
+neither an authority callback nor caller grants. Aborting an issued context's
+own or parent signal revokes that exact authorization, detaches its listeners
+and removes it from the unchanged 128-live-context limit. Scheduler observers
+are retired after their turn, not retained until the original deadline;
+unrelated/active worker contexts are not revoked by observer retirement.
+`credentials()` reads only the
 fixed app-owned entry through ScopedCredentialStore; no lookup occurs on import
 or construction. Original readers remain held through actual settlement, and
 late buffers are zeroed before close can release the native loan.

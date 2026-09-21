@@ -45,6 +45,14 @@ export interface ProjectRoot {
   managedBlobs?: boolean;
 }
 export interface ProjectFileSystemOptions {
+  captureRecoveryInspection?: {
+    artifactRootId: string;
+    outputRootId: string;
+    authorize(
+      stages: readonly CaptureRecoveryStage[],
+      context: OperationContext,
+    ): Promise<void>;
+  };
   projectId: string;
   authority: Authority;
   roots: readonly ProjectRoot[];
@@ -63,6 +71,16 @@ export interface ProjectFileSystemOptions {
     pending: OwnedPendingPublication,
     context: OperationContext,
   ) => Promise<void>;
+}
+export interface CaptureRecoveryStage {
+  stagingId: string;
+  jobId: string;
+  requestId: string;
+  artifact: Artifact;
+}
+export interface CaptureRecoveryInspection {
+  artifacts: Artifact[];
+  stages: { descriptor: CaptureRecoveryStage; bytes: Uint8Array }[];
 }
 /** Instance-owned identity, not a serializable cleanup grant. */
 export interface OwnedPendingPublication {
@@ -243,7 +261,30 @@ export class ProjectFileSystem implements FileSystemBoundary {
   static async create(
     options: ProjectFileSystemOptions,
   ): Promise<ProjectFileSystem> {
-    const boundary = new ProjectFileSystem({ ...options });
+    const inspection = options.captureRecoveryInspection;
+    if (
+      inspection &&
+      (!validateContract("StableId", inspection.artifactRootId).success ||
+        !validateContract("StableId", inspection.outputRootId).success ||
+        inspection.artifactRootId === inspection.outputRootId ||
+        typeof inspection.authorize !== "function")
+    )
+      throw new HostBoundaryError(
+        "INVALID_INPUT",
+        "Capture inspection requires fixed distinct roots and native admission.",
+      );
+    const boundary = new ProjectFileSystem({
+      ...options,
+      ...(inspection
+        ? {
+            captureRecoveryInspection: Object.freeze({
+              artifactRootId: inspection.artifactRootId,
+              outputRootId: inspection.outputRootId,
+              authorize: inspection.authorize.bind(inspection),
+            }),
+          }
+        : {}),
+    });
     for (const configured of options.roots) {
       if (
         !validateContract("StableId", configured.id).success ||
@@ -1132,6 +1173,152 @@ export class ProjectFileSystem implements FileSystemBoundary {
         );
       await this.finishPublishedPair(stagePath, destination, artifact, guard);
       return structuredClone(artifact);
+    });
+  }
+  inspectCaptureRecovery(
+    input: readonly CaptureRecoveryStage[],
+    context: OperationContext,
+  ): Promise<Outcome<CaptureRecoveryInspection>> {
+    const stages = structuredClone(input);
+    return this.execute(context, async (context) => {
+      const config = this.options.captureRecoveryInspection;
+      if (!config || stages.length > 128)
+        throw new HostBoundaryError(
+          "FORBIDDEN",
+          "Native capture inspection is not admitted.",
+        );
+      await config.authorize(stages, context);
+      const expected = new Map<string, CaptureRecoveryStage>();
+      for (const stage of stages) {
+        if (
+          !/^[0-9a-f-]{36}$/.test(stage.stagingId) ||
+          !validateContract("StableId", stage.jobId).success ||
+          !validateContract("StableId", stage.requestId).success ||
+          !validateContract("Artifact", stage.artifact).success ||
+          expected.has(stage.stagingId)
+        )
+          throw new HostBoundaryError(
+            "ARTIFACT_INTEGRITY",
+            "Invalid native capture stage evidence.",
+          );
+        expected.set(stage.stagingId, stage);
+      }
+      const result: CaptureRecoveryInspection = { artifacts: [], stages: [] };
+      let remaining = 20000;
+      try {
+        for (const id of [config.artifactRootId, config.outputRootId]) {
+          const { root, guard } = this.guard(id, context, "write");
+          if (id === config.artifactRootId && !root.managedBlobs)
+            throw new HostBoundaryError(
+              "FORBIDDEN",
+              "Capture inspection requires the owned managed artifact root.",
+            );
+          await this.checkRoot(root);
+          const list = async (directory: string) => {
+            const entries = await boundedEntries(directory, remaining, guard);
+            remaining -= entries.length;
+            return entries;
+          };
+          for (const entry of await list(root.path)) {
+            const directory = path.join(root.path, entry);
+            if (entry === "blobs" && id === config.artifactRootId) {
+              await this.resolve(root, "blobs");
+              for (const name of await list(directory)) {
+                if (!/^[0-9a-f]{64}$/.test(name))
+                  throw new HostBoundaryError(
+                    "ARTIFACT_INTEGRITY",
+                    "Capture blob namespace is not exact.",
+                  );
+                const absolute = await this.resolve(root, `blobs/${name}`);
+                const bytes = await this.readBytes(absolute, guard);
+                try {
+                  if (sha256(bytes) !== name)
+                    throw new HostBoundaryError(
+                      "ARTIFACT_INTEGRITY",
+                      "Capture blob evidence changed.",
+                    );
+                  result.artifacts.push({
+                    id: `sha256_${name}`,
+                    sha256: name,
+                    path: `blobs/${name}`,
+                    byteLength: bytes.length,
+                    mediaType: "application/octet-stream",
+                  });
+                } finally {
+                  bytes.fill(0);
+                }
+              }
+            } else if (/^\.host-[0-9a-f-]{36}$/.test(entry)) {
+              const before = await io(() => lstat(directory));
+              if (
+                !before.isDirectory() ||
+                before.isSymbolicLink() ||
+                path.resolve(await io(() => realpath(directory))) !==
+                  path.resolve(directory)
+              )
+                throw new HostBoundaryError(
+                  "PATH_FORBIDDEN",
+                  "Capture staging directory is not owned.",
+                );
+              for (const name of await list(directory)) {
+                const descriptor = expected.get(name);
+                if (!descriptor || id !== config.artifactRootId)
+                  throw new HostBoundaryError(
+                    "ACTION_REQUIRED",
+                    "Unowned capture staging evidence requires separate recovery.",
+                  );
+                const filename = path.join(directory, name);
+                const stat = await io(() => lstat(filename));
+                if (stat.isSymbolicLink() || !stat.isFile() || stat.nlink !== 1)
+                  throw new HostBoundaryError(
+                    "ARTIFACT_INTEGRITY",
+                    "Capture publication is ambiguous.",
+                  );
+                const bytes = await this.readBytes(filename, guard, stat);
+                if (
+                  bytes.length !== descriptor.artifact.byteLength ||
+                  sha256(bytes) !== descriptor.artifact.sha256
+                ) {
+                  bytes.fill(0);
+                  throw new HostBoundaryError(
+                    "ARTIFACT_INTEGRITY",
+                    "Retained capture stage differs from its record.",
+                  );
+                }
+                result.stages.push({ descriptor, bytes });
+                expected.delete(name);
+              }
+              const after = await io(() => lstat(directory));
+              if (!sameFile(before, after) || after.isSymbolicLink())
+                throw new HostBoundaryError(
+                  "PATH_FORBIDDEN",
+                  "Capture staging directory changed.",
+                );
+            } else {
+              throw new HostBoundaryError(
+                "ACTION_REQUIRED",
+                "Unclassified capture publication requires separate recovery.",
+              );
+            }
+          }
+          await this.checkRoot(root);
+          guard.check();
+        }
+        if (expected.size)
+          throw new HostBoundaryError(
+            "ARTIFACT_INTEGRITY",
+            "Recorded capture stages are missing.",
+          );
+        await config.authorize(stages, context);
+        result.artifacts.sort((a, b) => a.id.localeCompare(b.id));
+        result.stages.sort((a, b) =>
+          a.descriptor.stagingId.localeCompare(b.descriptor.stagingId),
+        );
+        return result;
+      } catch (error) {
+        for (const stage of result.stages) stage.bytes.fill(0);
+        throw error;
+      }
     });
   }
   inventory(

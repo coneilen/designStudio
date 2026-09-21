@@ -18,6 +18,10 @@ import {
   capturePolicyBytes,
 } from "../dist/capture-profile.js";
 import {
+  CAPTURE_RECOVERY_POLICY_SHA256,
+  captureRecoveryPolicyBytes,
+} from "../dist/capture-recovery-profile.js";
+import {
   boundedFile,
   digest,
   encodeInventory,
@@ -540,6 +544,11 @@ export async function packageCandidate({
       capturePolicyBytes(),
       { flag: "wx" },
     );
+    await writeFile(
+      path.join(payload, "capture-recovery-policy.json"),
+      captureRecoveryPolicyBytes(),
+      { flag: "wx" },
+    );
   } else {
     await mkdir(path.join(payload, "fixtures"));
     await copyPhysical(
@@ -597,10 +606,11 @@ export async function packageCandidate({
     JSON.stringify(
       capture
         ? {
-            version: 2,
+            version: 3,
             kind: CAPTURE_PROFILE,
             manifestSha256: digest(manifest),
             capturePolicySha256: CAPTURE_POLICY_SHA256,
+            captureRecoveryPolicySha256: CAPTURE_RECOVERY_POLICY_SHA256,
           }
         : {
             version: 1,
@@ -624,7 +634,11 @@ export async function packageCandidate({
     manifestSha256: digest(manifest),
     bootstrapSha256: digest(bootstrapInventory),
     ...(capture
-      ? { profile: CAPTURE_PROFILE, capturePolicySha256: CAPTURE_POLICY_SHA256 }
+      ? {
+          profile: CAPTURE_PROFILE,
+          capturePolicySha256: CAPTURE_POLICY_SHA256,
+          captureRecoveryPolicySha256: CAPTURE_RECOVERY_POLICY_SHA256,
+        }
       : { catalogSha256 }),
     output,
     provenance:

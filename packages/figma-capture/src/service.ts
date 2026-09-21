@@ -1,6 +1,7 @@
 import type {
   Artifact,
   ArtifactReference,
+  CaptureRecoveryBinding,
   CredentialStore,
   FigmaCaptureManifest,
   FigmaCaptureRequest,
@@ -45,7 +46,10 @@ export interface CaptureServiceOptions {
   policy: CapturePolicy;
   authority: Authority;
   credentials: CredentialStore;
-  repository: Pick<JobRepository, "discoverOwned" | "get" | "getJobReceipt">;
+  repository: Pick<JobRepository, "discoverOwned" | "get" | "getJobReceipt"> &
+    Partial<
+      Pick<JobRepository, "getCaptureRecovery" | "getCaptureRecoveryForNext">
+    >;
   /** Current authorized private artifact read; return exclusively owned bytes, never log them. */
   readArtifact(
     reference: ArtifactReference,
@@ -228,7 +232,23 @@ export function createFigmaCaptureJobs(input: CaptureServiceOptions) {
       fail("ARTIFACT_INTEGRITY", "Capture result artifact is invalid.");
     }
   };
-  const history = async (currentId: string, context: OperationContext) => {
+  const history = async (
+    current: FigmaCaptureRequest,
+    context: OperationContext,
+  ) => {
+    const reserved = repository.getCaptureRecoveryForNext
+      ? await checked(repository.getCaptureRecoveryForNext(context), context)
+      : null;
+    if (
+      reserved &&
+      canonicalDigest(reserved.authorization.nextRequest) !==
+        canonicalDigest(current)
+    )
+      fail(
+        "CONFLICT",
+        "This next request is reserved for different capture bytes.",
+      );
+    let recovery: CaptureRecoveryBinding | undefined;
     let cursor: { createdAt: string; id: string } | undefined;
     let seen = 0;
     const cursors = new Set<string>();
@@ -253,7 +273,7 @@ export function createFigmaCaptureJobs(input: CaptureServiceOptions) {
             "Capture history exceeds bounded inspection; explicit maintenance is required.",
           );
         if (
-          item.jobId === currentId ||
+          item.jobId === current.captureId ||
           item.operation !== "capture" ||
           item.handlerId !== CAPTURE_HANDLER_ID
         )
@@ -282,11 +302,33 @@ export function createFigmaCaptureJobs(input: CaptureServiceOptions) {
         if (record.usage.externalCalls === 0) continue;
         const result = await resultFor(record, context);
         check(context);
-        if (!result)
-          fail(
-            "ACTION_REQUIRED",
-            "Prior capture network effects lack a committed result; explicit recovery is required.",
-          );
+        if (!result) {
+          const evidence = repository.getCaptureRecovery
+            ? await checked(
+                repository.getCaptureRecovery(item.jobId, context),
+                context,
+              )
+            : null;
+          if (
+            !evidence ||
+            recovery ||
+            canonicalDigest(evidence.authorization.nextRequest) !==
+              canonicalDigest(current) ||
+            evidence.authorization.proposal.nextRequestId !==
+              context.requestId ||
+            evidence.authorization.originalRecordSha256 !==
+              canonicalDigest(record)
+          )
+            fail(
+              "ACTION_REQUIRED",
+              "Prior capture network effects lack an exact one-next recovery authorization.",
+            );
+          recovery = {
+            originalJobId: record.job.id,
+            authorization: referenceOnly(evidence.artifact),
+          };
+          continue;
+        }
         const text = await load(
           result.manifest,
           context,
@@ -323,7 +365,19 @@ export function createFigmaCaptureJobs(input: CaptureServiceOptions) {
             "A prior capture's persisted Retry-After has not elapsed; no automatic retry.",
           );
       }
-      if (!page.nextCursor) return;
+      if (!page.nextCursor) {
+        if (
+          reserved &&
+          (!recovery ||
+            canonicalDigest(recovery.authorization) !==
+              canonicalDigest(reserved.artifact))
+        )
+          fail(
+            "CONFLICT",
+            "Capture recovery reservation lacks its original history binding.",
+          );
+        return recovery;
+      }
       const marker = canonicalDigest(page.nextCursor);
       if (cursors.has(marker))
         fail("ARTIFACT_INTEGRITY", "Capture history pagination repeated.");
@@ -349,7 +403,15 @@ export function createFigmaCaptureJobs(input: CaptureServiceOptions) {
         const request = await requestFor(record.job.input, context, true);
         await execution.checkpoint();
         check(context);
-        await history(record.job.id, context);
+        const recovery = await history(request, context);
+        if (
+          canonicalDigest(recovery ?? null) !==
+          canonicalDigest(record.submission.captureRecovery ?? null)
+        )
+          fail(
+            "FORBIDDEN",
+            "Capture recovery differs from its immutable submission binding.",
+          );
         check(context);
         const prepared = await captureSelectedFrame(request, execution, {
           policy,
@@ -469,6 +531,11 @@ export function createFigmaCaptureJobs(input: CaptureServiceOptions) {
       const normalized = ownRequest(request, policy);
       return { request: normalized, bytes: canonicalBytes(normalized) };
     },
+    async prepare(request: unknown, supplied: OperationContext) {
+      const context = snapshotOperationContext(supplied);
+      check(context);
+      return history(ownRequest(request, policy), context);
+    },
     async submit(
       service: Pick<JobService, "submit">,
       input: unknown,
@@ -527,7 +594,7 @@ export function createFigmaCaptureJobs(input: CaptureServiceOptions) {
           diagnosticIds: [],
         };
       }
-      await history(request.captureId, context);
+      const recovery = await history(request, context);
       check(context);
       const budget = {
         ...context.budget,
@@ -558,6 +625,7 @@ export function createFigmaCaptureJobs(input: CaptureServiceOptions) {
           ),
         ).toISOString(),
         budget,
+        ...(recovery ? { captureRecovery: recovery } : {}),
       };
       const submitted = await service.submit(submission, context);
       check(context);

@@ -20,6 +20,8 @@ import {
 } from "./capture-authority.js";
 import { CAPTURE_POLICY, CAPTURE_POLICY_SHA256 } from "./capture-profile.js";
 import { type CaptureProject, captureProjectOwner } from "./capture-project.js";
+import { CAPTURE_RECOVERY_POLICY_SHA256 } from "./capture-recovery-profile.js";
+import { assertCaptureRecoveryInstallation } from "./installation.js";
 import { refuse } from "./native.js";
 
 export interface CaptureWork {
@@ -34,6 +36,10 @@ export interface CaptureWork {
   readonly policy: NativeCapturePolicy;
   current(): Promise<void>;
   readyCredential(now: number): Promise<string | undefined>;
+  recoveryAuthority(): Promise<{
+    policySha256: string;
+    credentialSha256: string;
+  }>;
   isCurrent(): boolean;
   attestDatabase(
     filename: string,
@@ -113,6 +119,14 @@ export function acquireCaptureWork(project: CaptureProject): CaptureWork {
     current,
     isCurrent,
     readyCredential,
+    async recoveryAuthority() {
+      await current();
+      assertCaptureRecoveryInstallation(owner.installation);
+      const credentialSha256 = await owner.journalFingerprint();
+      await current();
+      assertCaptureRecoveryInstallation(owner.installation);
+      return { policySha256: CAPTURE_RECOVERY_POLICY_SHA256, credentialSha256 };
+    },
     async attestDatabase(
       filename: string,
       scope: {

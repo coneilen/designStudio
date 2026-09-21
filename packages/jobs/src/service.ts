@@ -809,10 +809,10 @@ export class JobService {
     const operation = this.turn.then(
       async (): Promise<Outcome<SchedulerReport>> => {
         let context: OperationContext | undefined;
+        const observer = new AbortController();
         try {
           if (this.stopping)
             throw new HostBoundaryError("CONFLICT", "Scheduler is stopping.");
-          const observer = new AbortController();
           context = snapshotOperationContext(
             await this.bounded(
               this.options.executionAuthority.observe(observer.signal),
@@ -990,6 +990,9 @@ export class JobService {
             },
             error,
           );
+        } finally {
+          // A turn owns only its observer, never the active worker's authority.
+          observer.abort();
         }
       },
     );

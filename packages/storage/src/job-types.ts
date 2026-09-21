@@ -2,6 +2,7 @@ import type {
   Artifact,
   ArtifactReference,
   Budget,
+  CaptureRecoveryBinding,
   Clock,
   CommitReceipt,
   ContractError,
@@ -10,6 +11,7 @@ import type {
   Outcome,
   StagedArtifact,
 } from "@design-studio/contracts";
+import type { CaptureRecoveryEvidence } from "./capture-recovery.js";
 import type { LogicalArtifactBinding, RevisionCommit } from "./types.js";
 
 export interface JobSubmission {
@@ -18,6 +20,7 @@ export interface JobSubmission {
   input: ArtifactReference;
   resources: Job["resources"];
   inputRevision?: ArtifactReference;
+  captureRecovery?: CaptureRecoveryBinding;
   handlerId: string;
   handlerVersion: string;
   authorityRef: string;
@@ -220,6 +223,13 @@ export interface JobCancelResult {
 }
 
 export interface JobRepository {
+  getCaptureRecoveryForNext(
+    context: OperationContext,
+  ): Promise<Outcome<CaptureRecoveryEvidence | null>>;
+  getCaptureRecovery(
+    originalJobId: string,
+    context: OperationContext,
+  ): Promise<Outcome<CaptureRecoveryEvidence | null>>;
   discoverOwned(
     query: JobDiscoveryQuery,
     context: OperationContext,

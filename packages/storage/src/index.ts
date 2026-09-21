@@ -5,6 +5,7 @@ import {
   type Artifact,
   type ArtifactReference,
   type ArtifactStore,
+  type CaptureRecoveryAuthorization,
   type CommitReceipt,
   type ContractError,
   type ContractName,
@@ -27,8 +28,16 @@ import {
   bindingKey,
   bindings,
 } from "./bindings.js";
+import {
+  type CaptureRecoveryEvidence,
+  type CaptureRecoveryState,
+  isCaptureRecoveryKey,
+  originalRecoveryState,
+  recoveryKey,
+} from "./capture-recovery.js";
 import { openDatabase } from "./database.js";
-import type { JobRepository } from "./job-types.js";
+import { storedResource, storedStage } from "./job-codec.js";
+import type { JobRepository, JobSubmission } from "./job-types.js";
 import { type JobCommitHooks, StoredJobs } from "./jobs.js";
 import {
   type BackupMetadata,
@@ -45,6 +54,12 @@ import {
 
 export { decodeBackup, encodeBackup } from "./backup-codec.js";
 export { BINDING_LIMITS } from "./bindings.js";
+export {
+  type CaptureRecoveryEvidence,
+  type CaptureRecoveryState,
+  originalRecoveryState,
+  recoveryKey,
+} from "./capture-recovery.js";
 export { JOB_LIMITS as JOB_STORAGE_LIMITS } from "./job-codec.js";
 export * from "./job-types.js";
 export * from "./types.js";
@@ -134,6 +149,20 @@ export class LocalStore implements ArtifactStore {
     this.jobStore = new StoredJobs({
       db,
       options,
+      captureRecovery: (id, context) =>
+        this.captureRecoveryEvidence(id, context),
+      captureRecoveryForNext: async (context) => {
+        if (!this.options.captureRecovery || !context.jobId) return null;
+        const reserved = await this.findCaptureRecovery(context.jobId, context);
+        return reserved
+          ? this.captureRecoveryEvidence(
+              reserved.proposal.originalJobId,
+              context,
+            )
+          : null;
+      },
+      verifyCaptureRecovery: (input, context) =>
+        this.verifyCaptureRecoverySubmission(input, context),
       run: (context, operation, action) => this.run(context, operation, action),
       snapshot: (input, context, operation, action) =>
         this.snapshot(input, context, operation, action),
@@ -179,6 +208,26 @@ export class LocalStore implements ArtifactStore {
   }
 
   static async open(options: StorageOptions): Promise<LocalStore> {
+    const recovery = options.captureRecovery;
+    if (recovery) {
+      if (
+        typeof recovery.authorize !== "function" ||
+        typeof recovery.verify !== "function" ||
+        typeof recovery.verifyIssuance !== "function"
+      )
+        throw new StorageError(
+          "INVALID_INPUT",
+          "Capture recovery requires the native proof verifiers.",
+        );
+      options = {
+        ...options,
+        captureRecovery: Object.freeze({
+          authorize: recovery.authorize.bind(recovery),
+          verify: recovery.verify.bind(recovery),
+          verifyIssuance: recovery.verifyIssuance.bind(recovery),
+        }),
+      };
+    }
     check("StableId", options.projectId);
     check("StableId", options.artifactRootId);
     check("StableId", options.permissionScope);
@@ -654,6 +703,408 @@ export class LocalStore implements ArtifactStore {
       this.commitInternal(snapshot, context),
     );
   }
+  private recoveryConfiguration() {
+    const config = this.options.captureRecovery;
+    if (!config)
+      throw new StorageError(
+        "ACTION_REQUIRED",
+        "Capture recovery is not admitted.",
+      );
+    return config;
+  }
+  private recoveryState(): CaptureRecoveryState {
+    let remaining = 26214400;
+    const boundedTable = (table: string, expression: string, limit = 20000) => {
+      const size = this.db
+        .prepare<[], { count: number; bytes: number }>(
+          `SELECT count(*) AS count,COALESCE(sum(${expression}),0) AS bytes FROM ${table}`,
+        )
+        .get();
+      if (!size || size.count > limit || size.bytes > remaining)
+        throw new StorageError(
+          "LIMIT",
+          "Capture recovery metadata exceeds its bound.",
+        );
+      remaining -= size.bytes;
+    };
+    const rows = (
+      table: "jobs" | "job_resources" | "job_stages" | "artifacts" | "receipts",
+    ) => {
+      boundedTable(
+        table,
+        "length(CAST(data AS BLOB))",
+        table === "jobs" ? 1000 : 20000,
+      );
+      const values = this.db
+        .prepare<[], { data: string }>(
+          `SELECT data FROM ${table} ORDER BY data LIMIT 20001`,
+        )
+        .all();
+      if (values.length > (table === "jobs" ? 1000 : 20000))
+        throw new StorageError(
+          "LIMIT",
+          "Capture recovery inspection exceeds its bound.",
+        );
+      return values;
+    };
+    boundedTable(
+      "receipts",
+      "length(CAST(scope AS BLOB))+length(CAST(data AS BLOB))",
+    );
+    boundedTable(
+      "artifact_refs",
+      "length(owner_kind)+length(owner_id)+length(artifact_id)",
+    );
+    const receipts = this.db
+      .prepare<[], { scope: string; data: string }>(
+        "SELECT scope,data FROM receipts ORDER BY scope LIMIT 20001",
+      )
+      .all();
+    const references = this.db
+      .prepare<[], CaptureRecoveryState["references"][number]>(
+        "SELECT owner_kind AS kind,owner_id AS owner,artifact_id AS artifactId FROM artifact_refs ORDER BY owner_kind,owner_id,artifact_id LIMIT 20001",
+      )
+      .all();
+    if (receipts.length > 20000 || references.length > 20000)
+      throw new StorageError(
+        "LIMIT",
+        "Capture recovery references exceed their bound.",
+      );
+    const other = [
+      "revisions",
+      "heads",
+      "reviews",
+      "pins",
+      "artifact_bindings",
+    ].map((table) => {
+      boundedTable(
+        table,
+        table === "heads"
+          ? "length(design)+length(branch)+length(revision)"
+          : "length(CAST(data AS BLOB))",
+      );
+      const data = this.db.prepare(`SELECT * FROM ${table} LIMIT 20001`).all();
+      if (data.length > 20000)
+        throw new StorageError(
+          "LIMIT",
+          "Capture recovery metadata exceeds its bound.",
+        );
+      return data.map((item) => this.digest(item)).sort();
+    });
+    const state: CaptureRecoveryState = {
+      jobs: rows("jobs")
+        .map((row) =>
+          this.jobStore.load(check("Job", JSON.parse(row.data).job).id),
+        )
+        .sort((a, b) => a.job.id.localeCompare(b.job.id)),
+      resources: rows("job_resources")
+        .map((row) => storedResource(JSON.parse(row.data)))
+        .sort((a, b) => a.key.localeCompare(b.key)),
+      stages: rows("job_stages")
+        .map((row) => storedStage(JSON.parse(row.data)))
+        .sort((a, b) => a.stagingId.localeCompare(b.stagingId)),
+      artifacts: rows("artifacts")
+        .map((row) => parseContract("Artifact", row.data, "json"))
+        .sort((a, b) => a.id.localeCompare(b.id)),
+      receipts: receipts.map((row) => ({
+        scope: row.scope,
+        receipt: parseContract("CommitReceipt", row.data, "json"),
+      })),
+      references,
+      otherSha256: this.digest(other),
+    };
+    if (this.options.canonicalBytes(state).byteLength > 26214400)
+      throw new StorageError(
+        "LIMIT",
+        "Capture recovery metadata bytes exceed their bound.",
+      );
+    const artifacts = new Map(state.artifacts.map((item) => [item.id, item]));
+    const jobs = new Map(state.jobs.map((item) => [item.job.id, item]));
+    const owners = new Map<string, Set<string>>();
+    for (const item of state.references) {
+      const key = JSON.stringify([item.kind, item.owner]);
+      const references = owners.get(key) ?? new Set<string>();
+      references.add(item.artifactId);
+      owners.set(key, references);
+    }
+    const assertReferences = (kind: string, id: string, expected: string[]) => {
+      const key = JSON.stringify([kind, id]);
+      const actual = owners.get(key) ?? new Set<string>();
+      if (!this.equal([...actual].sort(), [...new Set(expected)].sort()))
+        throw new StorageError(
+          "INTEGRITY",
+          "Capture recovery protection graph is inconsistent.",
+        );
+      owners.delete(key);
+    };
+    const published = new Set<string>();
+    const completedJobs = new Set<string>();
+    for (const { scope, receipt } of state.receipts) {
+      const tracked = jobs.get(receipt.jobId);
+      if (tracked) completedJobs.add(tracked.job.id);
+      const expected = tracked
+        ? this.jobStore.receiptScope(tracked)
+        : JSON.stringify([
+            this.options.projectId,
+            receipt.idempotency.actorId,
+            "write",
+            receipt.idempotency.key,
+          ]);
+      if (
+        scope !== expected ||
+        receipt.projectId !== this.options.projectId ||
+        receipt.idempotency.projectId !== this.options.projectId ||
+        (tracked
+          ? !this.jobStore.receiptConsistent(tracked, receipt)
+          : receipt.idempotency.operation !== "write")
+      )
+        throw new StorageError(
+          "INTEGRITY",
+          "Capture recovery receipt scope is inconsistent.",
+        );
+      for (const output of receipt.outputs) {
+        if (!this.equal(artifacts.get(output.id), output))
+          throw new StorageError(
+            "INTEGRITY",
+            "Capture recovery receipt output is inconsistent.",
+          );
+        published.add(output.id);
+      }
+      assertReferences(
+        "job",
+        receipt.id,
+        receipt.outputs.map((item) => item.id),
+      );
+    }
+    for (const job of state.jobs) {
+      if (
+        Boolean(job.job.receipt) !== completedJobs.has(job.job.id) ||
+        (job.job.status === "completed" && !completedJobs.has(job.job.id)) ||
+        (job.finalOutputSha256 !== undefined && !completedJobs.has(job.job.id))
+      )
+        throw new StorageError(
+          "INTEGRITY",
+          "Capture recovery job receipt is missing.",
+        );
+      const references = this.jobStore.inputRefs(job);
+      if (
+        references.some(
+          (item) => artifacts.get(item.id)?.sha256 !== item.sha256,
+        )
+      )
+        throw new StorageError(
+          "INTEGRITY",
+          "Capture recovery job input is inconsistent.",
+        );
+      assertReferences(
+        "job-input",
+        job.job.id,
+        references.map((item) => item.id),
+      );
+    }
+    if (owners.size || state.artifacts.some((item) => !published.has(item.id)))
+      throw new StorageError(
+        "INTEGRITY",
+        "Capture recovery has unowned metadata.",
+      );
+    return state;
+  }
+  captureRecoveryState(
+    context: OperationContext,
+  ): Promise<Outcome<CaptureRecoveryState>> {
+    return this.run(context, "read", async (context) => {
+      await this.recoveryConfiguration().authorize(context);
+      return this.recoveryState();
+    });
+  }
+  private async captureRecoveryEvidence(
+    originalJobId: string,
+    context: OperationContext,
+  ): Promise<CaptureRecoveryEvidence | null> {
+    check("StableId", originalJobId);
+    const config = this.recoveryConfiguration();
+    await config.authorize(context);
+    const receipt = this.receipt(recoveryKey(originalJobId), context);
+    if (!receipt) return null;
+    const output = receipt.outputs[0];
+    if (!output || receipt.outputs.length !== 1 || output.byteLength > 65536)
+      throw new StorageError("INTEGRITY", "Invalid capture recovery receipt.");
+    const bytes = await this.read(output, context);
+    let authorization: CaptureRecoveryAuthorization;
+    try {
+      authorization = parseContract(
+        "CaptureRecoveryAuthorization",
+        new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+        "json",
+        { maxInputBytes: 65536 },
+      );
+      if (this.digest(authorization) !== output.sha256)
+        throw new StorageError(
+          "INTEGRITY",
+          "Noncanonical capture recovery evidence.",
+        );
+    } finally {
+      bytes.fill(0);
+    }
+    if (authorization.proposal.originalJobId !== originalJobId)
+      throw new StorageError(
+        "INTEGRITY",
+        "Capture recovery original identity changed.",
+      );
+    const evidence = {
+      authorization,
+      artifact: { id: output.id, sha256: output.sha256 },
+      receipt,
+    };
+    const state = this.recoveryState();
+    if (
+      this.digest(
+        originalRecoveryState(state, evidence, (value) => this.digest(value)),
+      ) !== authorization.storageSha256
+    )
+      throw new StorageError("CONFLICT", "Capture recovery baseline changed.");
+    await config.verify(evidence, state, context);
+    this.checkpoint(context);
+    return evidence;
+  }
+  private async verifyCaptureRecoverySubmission(
+    input: JobSubmission,
+    context: OperationContext,
+  ): Promise<() => void> {
+    if (!input.captureRecovery) {
+      if (
+        this.options.captureRecovery &&
+        (await this.findCaptureRecovery(input.id, context))
+      )
+        throw new StorageError(
+          "CONFLICT",
+          "This next request requires its reserved capture authorization.",
+        );
+      return () => {};
+    }
+    check("CaptureRecoveryBinding", input.captureRecovery);
+    const evidence = await this.captureRecoveryEvidence(
+      input.captureRecovery.originalJobId,
+      context,
+    );
+    if (
+      !evidence ||
+      this.digest(evidence.artifact) !==
+        this.digest(input.captureRecovery.authorization) ||
+      evidence.authorization.proposal.nextJobId !== input.id ||
+      evidence.authorization.proposal.nextRequestId !== context.requestId ||
+      input.input.sha256 !== this.digest(evidence.authorization.nextRequest) ||
+      input.resources.sha256 !==
+        this.digest(evidence.authorization.nextResources)
+    )
+      throw new StorageError(
+        "CONFLICT",
+        "Capture recovery does not bind this submission.",
+      );
+    return () => {
+      this.checkpoint(context);
+      if (
+        this.digest(
+          originalRecoveryState(this.recoveryState(), evidence, (value) =>
+            this.digest(value),
+          ),
+        ) !== evidence.authorization.storageSha256
+      )
+        throw new StorageError(
+          "CONFLICT",
+          "Capture recovery changed before submission.",
+        );
+    };
+  }
+  commitCaptureRecovery(
+    authorization: CaptureRecoveryAuthorization,
+    output: StagedArtifact,
+    context: OperationContext,
+  ): Promise<Outcome<CommitReceipt>> {
+    return this.snapshot({ authorization, output }, context, "write", (owned) =>
+      this.commitInternal(
+        [owned.output],
+        context,
+        undefined,
+        undefined,
+        owned.authorization,
+      ),
+    );
+  }
+  private async findCaptureRecovery(
+    nextJobId: string,
+    context: OperationContext,
+  ): Promise<CaptureRecoveryAuthorization | null> {
+    const candidates = this.db
+      .prepare<[string, string], { scope: string; key: string }>(
+        "SELECT scope,json_extract(data,'$.idempotency.key') AS key FROM receipts WHERE json_extract(data,'$.idempotency.projectId')=? AND json_extract(data,'$.idempotency.actorId')=? AND json_extract(data,'$.idempotency.operation')='write' AND substr(json_extract(data,'$.idempotency.key'),1,17)='recovery_capture_' LIMIT 20001",
+      )
+      .all(context.projectId, context.authorization.actorId);
+    if (candidates.length > 20000)
+      throw new StorageError(
+        "LIMIT",
+        "Capture recovery key inspection exceeds its bound.",
+      );
+    const rows = candidates.filter((row) => isCaptureRecoveryKey(row.key));
+    if (rows.length > 1000)
+      throw new StorageError(
+        "LIMIT",
+        "Capture recovery lookup exceeds its bound.",
+      );
+    let found: CaptureRecoveryAuthorization | null = null;
+    for (const row of rows) {
+      if (row.scope !== this.scope(row.key, context))
+        throw new StorageError(
+          "INTEGRITY",
+          "Capture recovery receipt scope changed.",
+        );
+      const receipt = this.receipt(row.key, context);
+      if (!receipt)
+        throw new StorageError(
+          "INTEGRITY",
+          "Capture recovery receipt disappeared.",
+        );
+      const output = receipt.outputs[0];
+      if (!output || receipt.outputs.length !== 1 || output.byteLength > 65536)
+        throw new StorageError(
+          "INTEGRITY",
+          "Invalid capture recovery lookup evidence.",
+        );
+      const bytes = await this.read(output, context);
+      try {
+        const grant = parseContract(
+          "CaptureRecoveryAuthorization",
+          new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+          "json",
+          { maxInputBytes: 65536 },
+        );
+        const key = recoveryKey(grant.proposal.originalJobId);
+        if (
+          grant.proposal.projectId !== context.projectId ||
+          grant.proposal.actorId !== context.authorization.actorId ||
+          this.digest(grant) !== output.sha256 ||
+          receipt.jobId !== key ||
+          receipt.idempotency.key !== key ||
+          !this.equal(this.receipt(key, context), receipt)
+        )
+          throw new StorageError(
+            "INTEGRITY",
+            "Capture recovery lookup scope changed.",
+          );
+        if (grant.proposal.nextJobId === nextJobId) {
+          if (found)
+            throw new StorageError(
+              "CONFLICT",
+              "Multiple capture authorizations reserve this next request.",
+            );
+          found = grant;
+        }
+      } finally {
+        bytes.fill(0);
+      }
+    }
+    return found;
+  }
   commitRevision(
     request: RevisionCommit,
     context: OperationContext,
@@ -701,6 +1152,7 @@ export class LocalStore implements ArtifactStore {
     context: OperationContext,
     request?: RevisionCommit,
     hooks?: JobCommitHooks,
+    recovery?: CaptureRecoveryAuthorization,
   ): Promise<Outcome<CommitReceipt>> {
     return this.run(context, "write", async (context) => {
       if (!context.jobId)
@@ -709,6 +1161,57 @@ export class LocalStore implements ArtifactStore {
           "Committing requires a jobId for a durable receipt.",
         );
       await this.guard(context, "write", "job", context.jobId);
+      let recoveryBaseline: string | undefined;
+      if (recovery) {
+        check("CaptureRecoveryAuthorization", recovery);
+        const key = recoveryKey(recovery.proposal.originalJobId);
+        if (
+          context.jobId !== key ||
+          context.requestId !== key ||
+          context.projectId !== recovery.proposal.projectId ||
+          context.authorization.actorId !== recovery.proposal.actorId ||
+          outputs.length !== 1 ||
+          outputs[0]?.artifact.sha256 !== this.digest(recovery) ||
+          this.options.canonicalBytes(recovery).byteLength > 65536
+        )
+          throw new StorageError(
+            "CONFLICT",
+            "Capture recovery commit is not byte/owner bound.",
+          );
+        const state = this.recoveryState();
+        recoveryBaseline = this.digest(state);
+        await this.recoveryConfiguration().authorize(context);
+        if (
+          await this.findCaptureRecovery(recovery.proposal.nextJobId, context)
+        )
+          throw new StorageError(
+            "CONFLICT",
+            "Capture recovery next request is already reserved.",
+          );
+        await this.recoveryConfiguration().verifyIssuance(
+          recovery,
+          state,
+          context,
+        );
+      } else if (
+        this.options.captureRecovery &&
+        isCaptureRecoveryKey(context.requestId)
+      ) {
+        throw new StorageError(
+          "AUTHORIZATION_CHANGED",
+          "Capture recovery control identity is reserved.",
+        );
+      }
+      const checkRecovery = () => {
+        if (
+          recoveryBaseline !== undefined &&
+          this.digest(this.recoveryState()) !== recoveryBaseline
+        )
+          throw new StorageError(
+            "CONFLICT",
+            "Capture recovery state changed before commit.",
+          );
+      };
       if (hooks) await hooks.prepare(context);
       else this.jobStore.assertLegacyAvailable(context);
       const suppliedBindings =
@@ -929,6 +1432,7 @@ export class LocalStore implements ArtifactStore {
       check("CommitReceipt", receipt);
       this.checkpoint(context);
       this.db.transaction(() => {
+        checkRecovery();
         if (hooks) hooks.check(context);
         else this.jobStore.assertLegacyAvailable(context);
         for (const artifact of published) this.putArtifact(artifact);
@@ -959,6 +1463,27 @@ export class LocalStore implements ArtifactStore {
         if (hooks) {
           hooks.check(context);
           hooks.finish(receipt, context);
+        }
+        if (recovery) {
+          const output = published[0];
+          if (
+            !output ||
+            this.digest(
+              originalRecoveryState(
+                this.recoveryState(),
+                {
+                  authorization: recovery,
+                  artifact: { id: output.id, sha256: output.sha256 },
+                  receipt,
+                },
+                (value) => this.digest(value),
+              ),
+            ) !== recovery.storageSha256
+          )
+            throw new StorageError(
+              "CONFLICT",
+              "Capture recovery state changed during commit.",
+            );
         }
         for (const item of bound) this.artifact(item.reference);
         this.checkpoint(context);
