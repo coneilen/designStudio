@@ -70,6 +70,22 @@ function changed(
 }
 
 describe("bounded offline Figma conversion", () => {
+  it("replays the complete pre-v2 artifact digest only under caller-selected v1 policy", () => {
+    const original = { ...input(), policy: "fixed-v1" as const };
+    const legacy = convertFigmaSnapshot(original);
+    const { originalBytes: _bytes, ...artifacts } = legacy;
+    expect(canonicalDigest(artifacts)).toBe(
+      "5b6f55cbaa0d9091d3751d7412dddff37811f7cbca38e57bf5697379522c54ff",
+    );
+    expect(() => verifyFigmaConversion(original, legacy)).not.toThrow();
+    expect(() => verifyFigmaConversion(input(), legacy)).toThrow(
+      "deterministic source replay",
+    );
+    expect(convertFigmaSnapshot(input()).conversionEvidence.adapter).toBe(
+      "figma-offline-fixed-v2",
+    );
+  });
+
   it("converts fixed geometry, preserves raw bytes, and never authenticates declared metadata", () => {
     const result = convertFigmaSnapshot(input());
     expect(result.originalBytes).toEqual(bytes);
@@ -119,7 +135,7 @@ describe("bounded offline Figma conversion", () => {
     [
       "relativeTransform",
       [
-        [1, 0, 2],
+        [2, 0, 2],
         [0, 1, 3],
       ],
     ],
@@ -533,13 +549,21 @@ describe("bounded offline Figma conversion", () => {
     expect(missing.report.readiness).toBe("blocked");
   });
 
-  it("rejects a source ID that aliases the derived conversion artifact", () => {
-    const selected = input();
-    selected.manifest.structure.id = `conversion_${canonicalDigest([selected.projectId, selected.designId, selected.intakeId])}`;
-    expect(() => convertFigmaSnapshot(selected)).toThrow(
-      "Source artifact collides",
-    );
-  });
+  it.each(["fixed-v1", "fixed-v2"] as const)(
+    "rejects a source ID that aliases the %s derived conversion artifact",
+    (policy) => {
+      const selected = { ...input(), policy };
+      const result = convertFigmaSnapshot(selected);
+      const projection = result.provenance.evidence.find((entry) =>
+        entry.artifact.id.startsWith("conversion_"),
+      );
+      if (!projection) throw new Error("Missing derived projection identity.");
+      selected.manifest.structure.id = projection.artifact.id;
+      expect(() => convertFigmaSnapshot(selected)).toThrow(
+        "Source artifact collides",
+      );
+    },
+  );
   it("preserves unsupported source and property-level losses instead of flattening", () => {
     const result = convertFigmaSnapshot(
       changed((root, child) => {

@@ -226,6 +226,17 @@ standalone stage/commit receipts and remains blocked or needs-review, never
 render-ready, approved or an implementation handoff. Missing fonts, fills,
 rights, unsupported structures and reference limitations remain explicit.
 
+Conversion design identity and standalone operation receipts now bind the
+trusted current converter policy (`fixed-v2`, implementation revision 0.3.0).
+An already converted capture can produce a distinct corrected v2 draft without
+overwriting its prior v1 receipt or artifacts. Explicit legacy replay retains
+the original v1 identity formulas; candidate output never selects a downgrade.
+The internal conversion helper does not authenticate a capture or expose a new
+caller policy/receipt injection surface: committed-source admission remains in
+the native composition. Synthetic portable SQLite tests cover old-receipt
+reopening, policy coexistence, deterministic reuse and integrity rejection;
+they do not start a native application or perform live reconversion.
+
 Synthetic integration tests exercise the actual native dispatcher/private
 project/database/jobs/capture code with synthetic vault bytes and a local TLS
 server through test-module mocks only. The copied SQLite role is inventoried

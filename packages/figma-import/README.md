@@ -1,9 +1,11 @@
 # @design-studio/figma-import
 
-Pure converter, version 0.2.0; offline profile `figma-offline-fixed-v1` is unchanged.
+Pure converter with current `fixed-v2` policy (implementation revision 0.3.0)
+and explicitly selectable `fixed-v1` replay (revision 0.2.0).
 This is **not a live Figma importer, authorized intake host, renderer, or installed
 CLI feature**. It has no network, filesystem, credential, plugin, project-creation,
-job, or process capability. No real Albums Pivot source has been captured.
+job, or process capability. Package fidelity tests use independently synthetic
+sources, not private design captures.
 
 ## Public API
 
@@ -15,16 +17,21 @@ job, or process capability. No real Albums Pivot source has been captured.
   `Uint8Array` structure bytes, an untrusted `FigmaIntakeManifest`, logical
   project/design/intake/actor IDs, and a caller-declared local `observedAt`.
   Optional resources are canonical byte-pinned **declarations**, not grants.
+  `policy` is the caller's intended `"fixed-v1"` or `"fixed-v2"` policy;
+  omission selects current v2. Unknown policies fail.
 - `convertFigmaStructure(input, limits?): FigmaStructureConversion` shares the
   same semantic implementation, but returns **no SourceSnapshot/SourceIdentity**.
   Its explicit selected view can retain bounded extra API siblings in the
   original nodes envelope without converting them. Original hash and JSON
   pointers refer to the unmodified envelope, not rewritten selected-node JSON.
-  The `figma-structure-fixed-v1` projection is source-neutral, not a REST proof.
+  The `figma-structure-fixed-v2` projection is source-neutral, not a REST proof.
 - `verifyFigmaConversion(input, candidate, limits?): void` independently
   recomputes the output using separately retained original inputs and the pinned
   converter. Rejects changed projections, designs, reports, maps or original
   bytes. It is not a signature/authorship or rights verification.
+  Replay selects policy from the separately retained input, never from the
+  candidate's adapter. Legacy candidates require explicitly intended v1;
+  they cannot downgrade a current-policy verification.
 - `FigmaImportError.diagnostic` exposes typed conversion failures. The shared
   contracts parser can also throw `ContractBoundaryError` for malformed JSON.
 
@@ -59,7 +66,8 @@ containing source node, without inventing evidence at a nonexistent pointer.
 | Auto-layout | Fixed captured geometry only, with an **approximated** loss and blocked strict readiness; not editable auto-layout equivalence. |
 | Text | Explicit characters/pixel metrics, exact matching declared PostScript face/family/weight/style, UTF-16 mixed ranges. Missing/ambiguous fonts or unsupported text styles become raw-preserved unsupported nodes. Visible glyph strokes produce a blocking property loss, never a box border; empty/hidden strokes produce neither. |
 | Images, vectors, components/instances | Raw-preserved opaque nodes or blocked paint losses; no decoded asset, invented expansion, generated SVG or screenshot fallback. |
-| Transforms, hidden nodes, masks, effects, advanced/unknown paint or layout | Explicit node/property losses. Rotated/transformed/hidden nodes are opaque; no geometry reconstruction from axis-aligned bounds. |
+| Translation-only transforms (v2) | Exactly identity-linear, finite 2x3 matrices are admitted. Captured absolute bounds determine parent-relative fixed layout; translation is not applied twice. Nested supported containers are traversed. Transform handling has source-linked fixed-layout evidence. |
+| Other transforms, hidden nodes, masks, effects, advanced/unknown paint or layout | Explicit node/property losses. Rotated/scaled/reflected/skewed/malformed transforms and hidden nodes remain opaque; no geometry reconstruction from axis-aligned bounds. V1 retains its original presence-only transform rejection for replay. |
 
 This profile does not implement the larger milestone's semantic auto-layout,
 component expansion, image/crop conversion, resource decoder, or source-preview
@@ -87,6 +95,9 @@ IDs derive from logical project/design/intake and source-node coordinates, not
 names, order, or pixel/content hashes. Replays within that intake preserve IDs;
 independent asserted intakes do not silently merge. A persisted authoritative
 identity registry and verified cross-capture reconciliation remain later work.
+V2 additionally binds derived artifact scope to its policy descriptor and node
+identity to its adapter. Explicit v1 retains the original identity formulas and
+byte-reproducible outputs; changing policy does not overwrite a prior conversion.
 
 Original bytes are never canonicalized or replaced. Derived resources are
 canonical-byte locked. Conversion projections identify a raw node pointer,
@@ -101,6 +112,9 @@ capture receipt and exact original artifacts before invoking the neutral API.
 It binds the returned source map to the physical committed REST SourceSnapshot;
 callers cannot supply JSON, hashes or callbacks to issue that binding. Native
 capture completeness still grants no fonts, image-fill rights or render readiness.
+The wrapper binds the current converter policy to both new design identity and
+the immutable conversion operation key. Reopening an already converted capture
+can create a distinct v2 result without replacing its old v1 receipt or artifacts.
 Source artifact IDs cannot alias the generated projection artifact; evidence
 dispatch requires both the artifact ID and digest, rejecting unknown identities.
 
@@ -133,7 +147,10 @@ pnpm typecheck
 
 Original synthetic tests cover authority separation, loss regressions,
 provenance replay tampering, fonts/ranges, byte integrity, identity, budgets,
-and clean-process package consumption. They are not real-source fidelity proof.
+and clean-process package consumption. Numerical nested translation and pure
+layout/CSS tests cover parent offsets, paint order, clipping, borders and declared
+text appearance without launching a browser. These are not pixel, font-rights
+or real-source fidelity proof, and fewer losses do not establish readiness.
 
 Public REST nodes/property documentation was reread on 2026-09-18:
 [file endpoints](https://developers.figma.com/docs/rest-api/file-endpoints/),

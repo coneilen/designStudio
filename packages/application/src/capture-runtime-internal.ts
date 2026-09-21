@@ -40,6 +40,11 @@ import {
 } from "@design-studio/project-host";
 import { LocalStore, type StoredJob } from "@design-studio/storage";
 import {
+  captureConversionEntries,
+  captureConversionIdentity,
+  persistCaptureConversion,
+} from "./capture-conversion.js";
+import {
   CaptureRecovery,
   type NativeCaptureRecoveryInput,
   nativeCaptureResources,
@@ -1049,13 +1054,19 @@ export async function assembleNativeCapture(
             },
             policy.verify,
           );
+        const conversion = captureConversionIdentity(
+          request.captureId,
+          manifest,
+          nodes,
+        );
         const converted = convertFigmaStructure(
           {
+            policy: conversion.policy,
             selection: manifest.selection,
             structure: nodes,
             structureBytes: raw.bytes,
             projectId: project.projectId,
-            designId: `design_${canonicalDigest([request.captureId, nodes.sha256])}`,
+            designId: conversion.designId,
             intakeId: request.captureId,
             actorId: work.actorId,
             observedAt: manifest.endedAt,
@@ -1072,72 +1083,20 @@ export async function assembleNativeCapture(
         try {
           if (hashBytes(converted.originalBytes) !== nodes.sha256)
             throw new ApplicationError("ARTIFACT_INTEGRITY");
-          converted.sourceMap.snapshot = ref(sourceArtifact);
-          const projection = canonicalBytes(converted.conversionEvidence);
-          const projectionRef = {
-            id: `sha256_${hashBytes(projection)}`,
-            sha256: hashBytes(projection),
-          };
-          for (const evidence of converted.provenance.evidence)
-            if (evidence.artifact.sha256 === projectionRef.sha256)
-              evidence.artifact = { ...projectionRef };
-          const resourceBytes = canonicalBytes(converted.resources);
-          const entries = [
-            ...(converted.design
-              ? [
-                  {
-                    role: "design" as const,
-                    bytes: canonicalBytes(converted.design),
-                  },
-                ]
-              : []),
-            { role: "resources" as const, bytes: resourceBytes },
-            {
-              role: "source-map" as const,
-              bytes: canonicalBytes(converted.sourceMap),
-            },
-            { role: "conversion-evidence" as const, bytes: projection },
-            {
-              role: "provenance" as const,
-              bytes: canonicalBytes(converted.provenance),
-            },
-            {
-              role: "report" as const,
-              bytes: canonicalBytes(converted.report),
-            },
-          ];
-          if (
-            entries.reduce((sum, entry) => sum + entry.bytes.length, 0) >
-            CAPTURE_LIMITS.maxOutputBytes
-          )
-            throw new ApplicationError("INPUT_LIMIT");
-          const key = `convert_${canonicalDigest([request.captureId, manifest, "figma-structure-fixed-v1", "0.2.0"])}`;
+          const entries = captureConversionEntries(converted, sourceArtifact);
+          const key = conversion.operationId;
           const ctx = await policy.issue({
             jobId: key,
             requestId: key,
             signal: context.signal,
             deadline: context.deadline,
           });
-          let receipt = unwrap(await db.getReceipt(key, ctx));
-          if (!receipt) {
-            const staged = [];
-            for (const entry of entries) {
+          artifacts.push(
+            ...(await persistCaptureConversion(entries, db, ctx, async () => {
               await policy.check();
               check();
-              staged.push(unwrap(await db.stage(entry.bytes, ctx)));
-            }
-            await policy.check();
-            check();
-            receipt = unwrap(await db.commit(staged, ctx));
-          }
-          if (receipt.outputs.length !== entries.length)
-            throw new ApplicationError("ARTIFACT_INTEGRITY");
-          for (const [index, entry] of entries.entries()) {
-            const artifact = receipt.outputs[index];
-            if (!artifact || artifact.sha256 !== hashBytes(entry.bytes))
-              throw new ApplicationError("ARTIFACT_INTEGRITY");
-            artifacts.push({ role: entry.role, artifact });
-          }
+            })),
+          );
           return converted.report.readiness === "blocked"
             ? ("blocked" as const)
             : ("needs-review" as const);
