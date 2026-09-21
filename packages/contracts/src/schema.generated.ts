@@ -4316,7 +4316,9 @@ export const foundationSchema = {
         "adapter": {
           "enum": [
             "figma-offline-fixed-v1",
-            "figma-structure-fixed-v1"
+            "figma-structure-fixed-v1",
+            "figma-offline-fixed-v2",
+            "figma-structure-fixed-v2"
           ]
         },
         "source": {

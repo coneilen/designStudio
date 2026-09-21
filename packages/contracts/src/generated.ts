@@ -2161,7 +2161,8 @@ export interface FigmaSourceMap {
  */
 export interface FigmaConversionEvidence {
   schemaVersion: SchemaVersion;
-  adapter: "figma-offline-fixed-v1" | "figma-structure-fixed-v1";
+  adapter:
+    "figma-offline-fixed-v1" | "figma-structure-fixed-v1" | "figma-offline-fixed-v2" | "figma-structure-fixed-v2";
   source: ArtifactReference;
   /**
    * @maxItems 200000
