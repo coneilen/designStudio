@@ -95,7 +95,12 @@ live vault or dialog behavior.
 project. Its work loan excludes simultaneous credential/dialog work. Fixed-scope
 native authority is issued internally using the current principal, project,
 installed policy, original deadline and declared credential expiry. It accepts
-neither an authority callback nor caller grants. `credentials()` reads only the
+neither an authority callback nor caller grants. Aborting an issued context's
+own or parent signal revokes that exact authorization, detaches its listeners
+and removes it from the unchanged 128-live-context limit. Scheduler observers
+are retired after their turn, not retained until the original deadline;
+unrelated/active worker contexts are not revoked by observer retirement.
+`credentials()` reads only the
 fixed app-owned entry through ScopedCredentialStore; no lookup occurs on import
 or construction. Original readers remain held through actual settlement, and
 late buffers are zeroed before close can release the native loan.

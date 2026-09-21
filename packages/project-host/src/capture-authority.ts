@@ -172,13 +172,18 @@ export function nativeCapturePolicy(work: CaptureWork) {
         method: "POST",
         bearer: token.credential,
       });
-      const abort = () => sessions.revoke(authorization);
-      owned.signal.addEventListener("abort", abort, { once: true });
-      owned.parentSignal?.addEventListener("abort", abort, { once: true });
-      issued.set(authorization, () => {
+      const detach = () => {
         owned.signal.removeEventListener("abort", abort);
         owned.parentSignal?.removeEventListener("abort", abort);
-      });
+      };
+      const abort = () => {
+        detach();
+        sessions.revoke(authorization);
+        issued.delete(authorization);
+      };
+      owned.signal.addEventListener("abort", abort, { once: true });
+      owned.parentSignal?.addEventListener("abort", abort, { once: true });
+      issued.set(authorization, detach);
       return snapshotOperationContext({
         schemaVersion: "1.0",
         projectId: work.project.projectId,

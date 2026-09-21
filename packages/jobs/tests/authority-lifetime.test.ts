@@ -3,8 +3,57 @@ import { createFakeClock } from "@design-studio/contracts/testing";
 import { HostBoundaryError } from "@design-studio/host";
 import { expect, test } from "vitest";
 import { detail } from "../src/boundary.js";
-import type { JobServiceOptions } from "../src/types.js";
+import type {
+  HandlerResult,
+  JobExecution,
+  JobServiceOptions,
+} from "../src/types.js";
 import { deferred, fixture, makeService, value } from "./support.js";
+
+test.each([false, true])(
+  "turn retires its observer on failure=%s without aborting the worker",
+  async (fail) => {
+    const f = await fixture();
+    const observers: AbortSignal[] = [];
+    const running = deferred<JobExecution>();
+    const release = deferred<HandlerResult>();
+    const service = makeService(
+      f,
+      async (execution) => {
+        running.resolve(execution);
+        return release.promise;
+      },
+      {
+        executionAuthority: {
+          ...f.executionAuthority,
+          async observe(signal) {
+            observers.push(signal);
+            if (fail && observers.length === 2)
+              throw new HostBoundaryError(
+                "PROVIDER_UNAVAILABLE",
+                "Synthetic observer failure",
+              );
+            return f.executionAuthority.observe(signal);
+          },
+        },
+      },
+    );
+    value(await service.submit(f.submission(), f.context()));
+    try {
+      value(await service.runOnce());
+      const execution = await running.promise;
+      expect(observers[0]?.aborted).toBe(true);
+      const turn = await service.runOnce();
+      expect(turn.status).toBe(fail ? "failed" : "complete");
+      expect(observers[1]?.aborted).toBe(true);
+      expect(execution.context.signal.aborted).toBe(false);
+    } finally {
+      release.resolve({ kind: "wait", error: detail("ACTION_REQUIRED") });
+      value(await service.waitForAttempt("job-work", f.context()));
+      value(await service.stop());
+    }
+  },
+);
 
 test("execution issuance uses remaining job lifetime and still tracks late settlement", async () => {
   const clock = createFakeClock(Date.parse("2026-09-17T00:00:00Z"));

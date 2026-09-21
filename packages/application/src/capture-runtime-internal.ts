@@ -647,6 +647,7 @@ export async function assembleNativeCapture(
         const deadline = new Date(policy.clock.now() + 30000).toISOString();
         const jobId = identity(owned.requestId);
         const base = { jobId, requestId: owned.requestId, signal, deadline };
+        let attemptFailure: ErrorCode | undefined;
         try {
           await policy.check();
           let ctx = await policy.issue(base);
@@ -775,27 +776,36 @@ export async function assembleNativeCapture(
                     recovery.decide(record, facts, context),
                 },
               });
-              unwrap(
-                await execution.submit(
-                  service,
-                  normalized.request,
-                  requestArtifact,
-                  {
-                    snapshotId: resource.id,
-                    sha256: resource.sha256,
-                    componentRegistryRevision: "none",
-                    tokenRegistryRevision: "none",
-                    selectedModes: {},
-                  },
-                  `native_${work.policySha256}`,
-                  ctx,
-                ),
-              );
-              unwrap(await service.runOnce());
-              unwrap(await service.waitForAttempt(jobId, ctx));
-              unwrap(await service.stop());
-              service = undefined;
-              execution.releaseJob(jobId);
+              try {
+                unwrap(
+                  await execution.submit(
+                    service,
+                    normalized.request,
+                    requestArtifact,
+                    {
+                      snapshotId: resource.id,
+                      sha256: resource.sha256,
+                      componentRegistryRevision: "none",
+                      tokenRegistryRevision: "none",
+                      selectedModes: {},
+                    },
+                    `native_${work.policySha256}`,
+                    ctx,
+                  ),
+                );
+                unwrap(await service.start());
+                unwrap(await service.waitForAttempt(jobId, ctx));
+              } catch (error) {
+                attemptFailure = signal.aborted
+                  ? "CANCELLED"
+                  : safeError(error).code;
+                throw error;
+              } finally {
+                // Keep ownership if bounded stop cannot join the original work.
+                unwrap(await service.stop());
+                service = undefined;
+                execution.releaseJob(jobId);
+              }
             }
           } else if (!existing.length) throw new ApplicationError("NOT_FOUND");
           const loaded = await committed(owned.requestId, ctx);
@@ -909,7 +919,7 @@ export async function assembleNativeCapture(
           );
         } catch (error) {
           const code = signal.aborted ? "CANCELLED" : safeError(error).code;
-          primaryFailure = code;
+          primaryFailure = attemptFailure ?? code;
           return envelope(
             owned.operation,
             owned.requestId,

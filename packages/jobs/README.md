@@ -168,6 +168,14 @@ not exceed heartbeat and heartbeat is below lease. Storage further caps leases
 by job/context/grant deadlines. F03 holds its queue during publication I/O:
 delayed heartbeats cannot retroactively revive an expired lease.
 
+Each scheduler turn aborts its own observation signal when that turn settles,
+on success or failure, so the authority issuer can retire its temporary grants.
+This does not abort active worker signals or replace execution authority.
+`waitForAttempt` does not drive heartbeats: callers waiting on asynchronous work
+must keep `start()` running (or independently drive scheduler turns), then join
+`stop()` on every exit. Execution staging/finalization remains serialized with
+heartbeat and cannot be kept alive by an overlapping unfenced renewal.
+
 Original observe/issue/recovery callback promises are tracked independently of
 their deadline races, until actual fulfillment or rejection. Aborting their
 signals does not remove them from shutdown accounting. A late result after

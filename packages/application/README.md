@@ -143,6 +143,28 @@ persisted cooldown/unknown-effect refusal; there is no new database schema or
 automatic retry. Replay inspects existing evidence without reading the vault
 or repeating network calls, under fresh current native authority.
 
+The facade starts the existing scheduler for the whole active attempt, rather
+than running one admission turn and only waiting. Default 100-ms turns renew the
+unchanged five-second lease while asynchronous provider work is pending.
+Submission/start/wait are enclosed by bounded stop-and-join on every exit;
+failed shutdown retains the service and original failure for close-only retry.
+Completed observer turns retire their own authority, so a capture can exceed
+128 turns without exhausting the native authority's unchanged 128-live-context
+cap. Worker authority, current-policy checks, original signals, the 30-second
+deadline, four-call/four-DNS limits and no-retry behavior remain unchanged.
+
+This is not a latency guarantee for native staging or finalization. Heartbeats
+share the execution/storage serialization lanes, and timers cannot run while
+synchronous native I/O blocks the event loop. A stage or commit that itself
+outlives the lease still fails closed; no parallel unfenced renewal is added.
+Synthetic facade regressions use real authority/jobs/SQLite/capture with mocked
+native admission, synthetic credentials, in-memory filesystem durability and
+provider responses. They
+cover six- and 28-second provider delays, more than 128 default-rate turns,
+original provider-error evidence, cancellation/deadline, exceptional exits,
+retained bounded-stop ownership and expired serialized finalization. They do
+not exercise installed/native-I/O latency, a real vault or Figma.
+
 Authenticated conversion takes no artifact/hash/proof argument. It reloads the
 actual private capture job, matching actor, logical request, installed policy,
 handler/version, settled effects, committed receipt, canonical request,
