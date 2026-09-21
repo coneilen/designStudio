@@ -376,6 +376,28 @@ export type ErrorCode =
   | "INTERNAL_ERROR";
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "NativeCaptureRecoveryEnvelope".
+ */
+export type NativeCaptureRecoveryEnvelope = {
+  [k: string]: unknown;
+} & {
+  schemaVersion: SchemaVersion;
+  operation: "recover";
+  projectId: StableId;
+  requestId: StableId;
+  status: "complete" | "failed" | "cancelled" | "interrupted" | "unavailable";
+  error?: ContractError;
+  value?: {
+    phase: "proposed" | "authorized";
+    proposal: CaptureRecoveryProposal;
+    consumed: boolean;
+    confirmationText: string;
+    authorization?: ArtifactReference;
+    receiptId?: StableId;
+  };
+};
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "NativeCaptureEnvelope".
  */
 export type NativeCaptureEnvelope = {
@@ -799,6 +821,11 @@ export interface ContractCatalog {
   FigmaCaptureRequest: FigmaCaptureRequest;
   FigmaCaptureManifest: FigmaCaptureManifest;
   FigmaCaptureResult: FigmaCaptureResult;
+  CaptureRecoveryProposal: CaptureRecoveryProposal;
+  CaptureRecoveryBinding: CaptureRecoveryBinding;
+  CaptureRecoveryResource: CaptureRecoveryResource;
+  CaptureRecoveryAuthorization: CaptureRecoveryAuthorization;
+  NativeCaptureRecoveryEnvelope: NativeCaptureRecoveryEnvelope;
   NativeCaptureEnvelope: NativeCaptureEnvelope;
   FigmaIntakeManifest: FigmaIntakeManifest;
   FigmaSourceMap: FigmaSourceMap;
@@ -1989,6 +2016,70 @@ export interface FigmaCaptureResult {
   referenceStatus: "complete" | "partial" | "unavailable";
   readiness: "not-evaluated";
   nextEligibleAt?: Timestamp;
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "CaptureRecoveryProposal".
+ */
+export interface CaptureRecoveryProposal {
+  schemaVersion: SchemaVersion;
+  projectId: StableId;
+  actorId: StableId;
+  originalRequestId: StableId;
+  originalJobId: StableId;
+  nextRequestId: StableId;
+  nextJobId: StableId;
+  originalVersion: number;
+  originalGeneration: number;
+  proofSha256: Sha256;
+  externalCalls: number;
+  responseEvidence: "unknown";
+  quotaEvidence: "unknown";
+  credentialValidity: "unknown";
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "CaptureRecoveryBinding".
+ */
+export interface CaptureRecoveryBinding {
+  originalJobId: StableId;
+  authorization: ArtifactReference;
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "CaptureRecoveryResource".
+ */
+export interface CaptureRecoveryResource {
+  key: StableId;
+  generation: number;
+  state: "released";
+  jobId: null;
+  leaseId: null;
+  fencingToken: null;
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "CaptureRecoveryAuthorization".
+ */
+export interface CaptureRecoveryAuthorization {
+  schemaVersion: SchemaVersion;
+  proposal: CaptureRecoveryProposal;
+  recordedAt: Timestamp;
+  confirmation: "AUTHORIZE-ONE-CAPTURE-WITH-UNKNOWN-RESPONSE-AND-QUOTA";
+  artifactRootId: StableId;
+  permissionScope: StableId;
+  basePolicySha256: Sha256;
+  recoveryPolicySha256: Sha256;
+  credentialSha256: Sha256;
+  originalRecordSha256: Sha256;
+  storageSha256: Sha256;
+  filesystemSha256: Sha256;
+  nextRequest: FigmaCaptureRequest;
+  nextResources: ResourceSnapshot;
+  /**
+   * @maxItems 32
+   */
+  resourceStates: CaptureRecoveryResource[];
 }
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema

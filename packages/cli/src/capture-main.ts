@@ -3,8 +3,10 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { ApplicationError } from "@design-studio/application";
 import {
+  CAPTURE_RECOVERY_CONFIRMATION,
   NativeCaptureCleanupRequired,
   type NativeCaptureInput,
+  type NativeCaptureRecoveryInput,
   type NativeCaptureRuntime,
   NativeCaptureStartupCleanupRequired,
   openNativeCapture,
@@ -12,9 +14,11 @@ import {
 import {
   type ErrorCode,
   type NativeCaptureEnvelope,
+  type NativeCaptureRecoveryEnvelope,
   validateContract,
 } from "@design-studio/contracts";
 import {
+  assertCaptureRecoveryInstallation,
   type CaptureInstallationLease,
   type CaptureProject,
   CaptureStartupCleanupRequired,
@@ -27,6 +31,7 @@ import {
 } from "@design-studio/project-host";
 
 type Action = "setup" | "status" | "update" | "remove";
+type NativeEnvelope = NativeCaptureEnvelope | NativeCaptureRecoveryEnvelope;
 interface NativeArguments {
   command:
     | "help"
@@ -35,11 +40,12 @@ interface NativeArguments {
     | "figma-capture"
     | "figma-inspect"
     | "figma-convert"
-    | "figma-artifact";
+    | "figma-artifact"
+    | "figma-recover";
   project?: string;
   reference?: string;
   expires?: string;
-  capture?: NativeCaptureInput;
+  capture?: NativeCaptureInput | NativeCaptureRecoveryInput;
 }
 export function parseCaptureArguments(
   argv: readonly string[],
@@ -54,7 +60,10 @@ export function parseCaptureArguments(
     throw new ApplicationError("INVALID_INPUT");
   const [area, verb] = args;
   if (area === "figma") {
-    if (!verb || !["capture", "inspect", "convert", "artifact"].includes(verb))
+    if (
+      !verb ||
+      !["capture", "inspect", "convert", "artifact", "recover"].includes(verb)
+    )
       throw new ApplicationError("INVALID_INPUT");
     const options = new Map<string, string>();
     for (let index = 2; index < args.length; index += 2) {
@@ -70,6 +79,14 @@ export function parseCaptureArguments(
           "--request-id",
           ...(verb === "capture" ? ["--url"] : []),
           ...(verb === "artifact" ? ["--role", "--output"] : []),
+          ...(verb === "recover"
+            ? [
+                "--failed-job-id",
+                "--next-request-id",
+                "--expected-proof",
+                "--confirm",
+              ]
+            : []),
         ].includes(name)
       )
         throw new ApplicationError("INVALID_INPUT");
@@ -90,6 +107,36 @@ export function parseCaptureArguments(
     )
       throw new ApplicationError("INVALID_INPUT");
     const role = options.get("--role");
+    if (verb === "recover") {
+      const failedJobId = options.get("--failed-job-id");
+      const nextRequestId = options.get("--next-request-id");
+      const expectedProof = options.get("--expected-proof");
+      const confirmation = options.get("--confirm");
+      if (
+        !failedJobId ||
+        !/^capture_[0-9a-f]{64}$/.test(failedJobId) ||
+        !nextRequestId ||
+        !validateContract("StableId", nextRequestId).success ||
+        requestId === nextRequestId ||
+        (expectedProof === undefined) !== (confirmation === undefined) ||
+        (expectedProof !== undefined &&
+          (!validateContract("Sha256", expectedProof).success ||
+            confirmation !== CAPTURE_RECOVERY_CONFIRMATION))
+      )
+        throw new ApplicationError("INVALID_INPUT");
+      return {
+        command: "figma-recover",
+        project,
+        capture: {
+          operation: "recover",
+          requestId,
+          failedJobId,
+          nextRequestId,
+          ...(expectedProof !== undefined ? { expectedProof } : {}),
+          ...(confirmation !== undefined ? { confirmation } : {}),
+        },
+      };
+    }
     const roles = [
       "metadata",
       "nodes",
@@ -200,7 +247,7 @@ export class NativeCaptureCommandCleanupRequired extends Error {
   private closing: Promise<void> | undefined;
   private closed = false;
   constructor(
-    private readonly envelope: NativeCaptureEnvelope,
+    private readonly envelope: NativeEnvelope,
     readonly operationCode: ErrorCode,
     private currentCleanupCode: ErrorCode,
     private readonly release: () => Promise<void>,
@@ -213,7 +260,7 @@ export class NativeCaptureCommandCleanupRequired extends Error {
   get cleanupCode(): ErrorCode {
     return this.currentCleanupCode;
   }
-  get result(): NativeCaptureEnvelope {
+  get result(): NativeEnvelope {
     const result = structuredClone(this.envelope);
     if (result.error)
       result.error.message = cleanupMessage(
@@ -256,9 +303,10 @@ export async function runCaptureCommand(args: readonly string[]) {
         "figma capture --project <ID> --url <single-frame URL> --request-id <logical ID>",
         "figma inspect|convert --project <ID> --request-id <logical ID>",
         "figma artifact --project <ID> --request-id <logical ID> --role <artifact role> --output <private filename>",
+        "figma recover --project <ID> --request-id <failed request> --failed-job-id <failed job> --next-request-id <next request> [--expected-proof <SHA256> --confirm AUTHORIZE-ONE-CAPTURE-WITH-UNKNOWN-RESPONSE-AND-QUOTA]",
       ],
       limitation:
-        "Native entry needs an independently approved capture release. Setup/update display an app-owned masked Figma PAT dialog; status reads one owned vault entry; remove deletes only the explicitly confirmed entry. Capture allows at most four calls in 30 seconds. The default empty download-origin policy yields a partial result before CDN contact. Inspection is private metadata only; explicit artifact output stays in the owned private project. Conversion is an unapproved draft, never render-readiness.",
+        "Native entry needs an independently approved capture release. Setup/update display an app-owned masked Figma PAT dialog; status reads one owned vault entry; remove deletes only the explicitly confirmed entry. Capture allows at most four calls in 30 seconds. The default empty download-origin policy yields a partial result before CDN contact. Inspection is private metadata only; explicit artifact output stays in the owned private project. Conversion is an unapproved draft, never render-readiness. Recovery additionally requires the installed recovery supplement: it records one exact next-request authorization offline, not a retry, quota assertion, or capture result. Third requests remain blocked.",
     };
   if (retainedCommands.size) throw new ApplicationError("ACTION_REQUIRED");
   let installation: CaptureInstallationLease | undefined;
@@ -280,6 +328,8 @@ export async function runCaptureCommand(args: readonly string[]) {
   try {
     installation = await verifyCaptureInstallation();
     guard = registerCaptureInstallationGuards(installation);
+    if (request.command === "figma-recover")
+      assertCaptureRecoveryInstallation(installation);
     if (abort.signal.aborted) throw new ApplicationError("CANCELLED");
     project = await openCaptureProject(
       installation,
@@ -295,7 +345,10 @@ export async function runCaptureCommand(args: readonly string[]) {
       };
     } else if (request.capture) {
       runtime = await openNativeCapture(project);
-      result = await runtime.execute(request.capture, abort.signal);
+      result =
+        request.capture.operation === "recover"
+          ? await runtime.recover(request.capture, abort.signal)
+          : await runtime.execute(request.capture, abort.signal);
     } else {
       if (!["setup", "status", "update", "remove"].includes(request.command))
         throw new ApplicationError("INVALID_INPUT");
@@ -353,7 +406,12 @@ export async function runCaptureCommand(args: readonly string[]) {
       try {
         await release();
       } catch (error) {
-        const prior = validateContract("NativeCaptureEnvelope", result);
+        const prior = validateContract(
+          request.capture.operation === "recover"
+            ? "NativeCaptureRecoveryEnvelope"
+            : "NativeCaptureEnvelope",
+          result,
+        );
         const operationCode =
           primary ??
           (error instanceof NativeCaptureCleanupRequired
@@ -366,7 +424,7 @@ export async function runCaptureCommand(args: readonly string[]) {
           error instanceof NativeCaptureCleanupRequired
             ? error.cleanupCode
             : safeCode(error);
-        const envelope: NativeCaptureEnvelope = {
+        const envelope: NativeEnvelope = {
           schemaVersion: "1.0",
           operation: request.capture.operation,
           projectId: request.project,
@@ -429,25 +487,30 @@ export async function runCaptureCommand(args: readonly string[]) {
   }
   if (cleanupFailure) throw cleanupFailure;
   if (primary && request.capture && request.project) {
-    const checked = validateContract("NativeCaptureEnvelope", {
-      schemaVersion: "1.0",
-      operation: request.capture.operation,
-      projectId: request.project,
-      requestId: request.capture.requestId,
-      status:
-        primary === "CANCELLED"
-          ? "cancelled"
-          : primary === "INTERRUPTED"
-            ? "interrupted"
-            : "failed",
-      error: {
-        code: primary,
-        message:
-          "Native capture or cleanup did not complete. Inspect the logical request before any retry.",
-        retryable: false,
-        diagnosticIds: [],
+    const checked = validateContract(
+      request.capture.operation === "recover"
+        ? "NativeCaptureRecoveryEnvelope"
+        : "NativeCaptureEnvelope",
+      {
+        schemaVersion: "1.0",
+        operation: request.capture.operation,
+        projectId: request.project,
+        requestId: request.capture.requestId,
+        status:
+          primary === "CANCELLED"
+            ? "cancelled"
+            : primary === "INTERRUPTED"
+              ? "interrupted"
+              : "failed",
+        error: {
+          code: primary,
+          message:
+            "Native capture or cleanup did not complete. Inspect the logical request before any retry.",
+          retryable: false,
+          diagnosticIds: [],
+        },
       },
-    });
+    );
     if (!checked.success) throw new ApplicationError("INTERNAL_ERROR");
     return checked.value;
   }

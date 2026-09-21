@@ -10,6 +10,7 @@ import {
   type StagedArtifact,
 } from "@design-studio/contracts";
 import type Database from "better-sqlite3";
+import type { CaptureRecoveryEvidence } from "./capture-recovery.js";
 import {
   bounded,
   cancelControlScope,
@@ -70,6 +71,17 @@ export interface JobCommitHooks {
 
 /** Package-private bridge; callers never receive a database or transaction callback. */
 export interface JobHost {
+  captureRecoveryForNext(
+    context: OperationContext,
+  ): Promise<CaptureRecoveryEvidence | null>;
+  captureRecovery(
+    originalJobId: string,
+    context: OperationContext,
+  ): Promise<CaptureRecoveryEvidence | null>;
+  verifyCaptureRecovery(
+    input: JobSubmission,
+    context: OperationContext,
+  ): Promise<() => void>;
   db: Database.Database;
   options: StorageOptions;
   run<T>(
@@ -491,7 +503,26 @@ export class StoredJobs implements JobRepository {
         id: record.job.resources.snapshotId,
         sha256: record.job.resources.sha256,
       },
+      ...(record.submission.captureRecovery
+        ? [record.submission.captureRecovery.authorization]
+        : []),
     ];
+  }
+  getCaptureRecovery(
+    originalJobId: string,
+    context: OperationContext,
+  ): Promise<Outcome<CaptureRecoveryEvidence | null>> {
+    return this.host.run(context, "read", async (context) => {
+      await this.authorize(originalJobId, context, "read");
+      return this.host.captureRecovery(originalJobId, context);
+    });
+  }
+  getCaptureRecoveryForNext(
+    context: OperationContext,
+  ): Promise<Outcome<CaptureRecoveryEvidence | null>> {
+    return this.host.run(context, "read", (context) =>
+      this.host.captureRecoveryForNext(context),
+    );
   }
   create(
     input: JobSubmission,
@@ -513,7 +544,7 @@ export class StoredJobs implements JobRepository {
             "deadline",
             "budget",
           ],
-          ["inputRevision"],
+          ["inputRevision", "captureRecovery"],
         );
         await this.authorize(input.id, context, "write");
         const config = this.enabled();
@@ -657,9 +688,14 @@ export class StoredJobs implements JobRepository {
             );
           await this.host.read(artifact, context);
         }
+        const recoveryCheck = await this.host.verifyCaptureRecovery(
+          input,
+          context,
+        );
         return this.transaction(
           context,
           () => {
+            recoveryCheck();
             this.count("jobs", JOB_LIMITS.jobs);
             this.host.db
               .prepare("INSERT INTO jobs VALUES (?,?,?,?,?,?)")
@@ -675,6 +711,7 @@ export class StoredJobs implements JobRepository {
             return record;
           },
           () => {
+            recoveryCheck();
             if (this.now() >= Date.parse(record.job.deadline))
               throw new StorageError(
                 "DEADLINE",

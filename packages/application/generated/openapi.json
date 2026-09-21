@@ -4014,6 +4014,190 @@
               "nextEligibleAt": { "$ref": "#/definitions/Timestamp" }
             }
           },
+          "CaptureRecoveryProposal": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "schemaVersion",
+              "projectId",
+              "actorId",
+              "originalRequestId",
+              "originalJobId",
+              "nextRequestId",
+              "nextJobId",
+              "originalVersion",
+              "originalGeneration",
+              "proofSha256",
+              "externalCalls",
+              "responseEvidence",
+              "quotaEvidence",
+              "credentialValidity"
+            ],
+            "properties": {
+              "schemaVersion": { "$ref": "#/definitions/SchemaVersion" },
+              "projectId": { "$ref": "#/definitions/StableId" },
+              "actorId": { "$ref": "#/definitions/StableId" },
+              "originalRequestId": { "$ref": "#/definitions/StableId" },
+              "originalJobId": { "$ref": "#/definitions/StableId" },
+              "nextRequestId": { "$ref": "#/definitions/StableId" },
+              "nextJobId": { "$ref": "#/definitions/StableId" },
+              "originalVersion": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "originalGeneration": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "proofSha256": { "$ref": "#/definitions/Sha256" },
+              "externalCalls": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 4
+              },
+              "responseEvidence": { "const": "unknown" },
+              "quotaEvidence": { "const": "unknown" },
+              "credentialValidity": { "const": "unknown" }
+            }
+          },
+          "CaptureRecoveryBinding": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["originalJobId", "authorization"],
+            "properties": {
+              "originalJobId": { "$ref": "#/definitions/StableId" },
+              "authorization": { "$ref": "#/definitions/ArtifactReference" }
+            }
+          },
+          "CaptureRecoveryResource": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "key",
+              "generation",
+              "state",
+              "jobId",
+              "leaseId",
+              "fencingToken"
+            ],
+            "properties": {
+              "key": { "$ref": "#/definitions/StableId" },
+              "generation": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "state": { "const": "released" },
+              "jobId": { "type": "null" },
+              "leaseId": { "type": "null" },
+              "fencingToken": { "type": "null" }
+            }
+          },
+          "CaptureRecoveryAuthorization": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "schemaVersion",
+              "proposal",
+              "recordedAt",
+              "confirmation",
+              "artifactRootId",
+              "permissionScope",
+              "basePolicySha256",
+              "recoveryPolicySha256",
+              "credentialSha256",
+              "originalRecordSha256",
+              "storageSha256",
+              "filesystemSha256",
+              "nextRequest",
+              "nextResources",
+              "resourceStates"
+            ],
+            "properties": {
+              "schemaVersion": { "$ref": "#/definitions/SchemaVersion" },
+              "proposal": { "$ref": "#/definitions/CaptureRecoveryProposal" },
+              "recordedAt": { "$ref": "#/definitions/Timestamp" },
+              "confirmation": {
+                "const": "AUTHORIZE-ONE-CAPTURE-WITH-UNKNOWN-RESPONSE-AND-QUOTA"
+              },
+              "artifactRootId": { "$ref": "#/definitions/StableId" },
+              "permissionScope": { "$ref": "#/definitions/StableId" },
+              "basePolicySha256": { "$ref": "#/definitions/Sha256" },
+              "recoveryPolicySha256": { "$ref": "#/definitions/Sha256" },
+              "credentialSha256": { "$ref": "#/definitions/Sha256" },
+              "originalRecordSha256": { "$ref": "#/definitions/Sha256" },
+              "storageSha256": { "$ref": "#/definitions/Sha256" },
+              "filesystemSha256": { "$ref": "#/definitions/Sha256" },
+              "nextRequest": { "$ref": "#/definitions/FigmaCaptureRequest" },
+              "nextResources": { "$ref": "#/definitions/ResourceSnapshot" },
+              "resourceStates": {
+                "type": "array",
+                "maxItems": 32,
+                "items": { "$ref": "#/definitions/CaptureRecoveryResource" }
+              }
+            }
+          },
+          "NativeCaptureRecoveryEnvelope": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "schemaVersion",
+              "operation",
+              "projectId",
+              "requestId",
+              "status"
+            ],
+            "properties": {
+              "schemaVersion": { "$ref": "#/definitions/SchemaVersion" },
+              "operation": { "const": "recover" },
+              "projectId": { "$ref": "#/definitions/StableId" },
+              "requestId": { "$ref": "#/definitions/StableId" },
+              "status": {
+                "enum": [
+                  "complete",
+                  "failed",
+                  "cancelled",
+                  "interrupted",
+                  "unavailable"
+                ]
+              },
+              "error": { "$ref": "#/definitions/ContractError" },
+              "value": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "phase",
+                  "proposal",
+                  "consumed",
+                  "confirmationText"
+                ],
+                "properties": {
+                  "phase": { "enum": ["proposed", "authorized"] },
+                  "proposal": {
+                    "$ref": "#/definitions/CaptureRecoveryProposal"
+                  },
+                  "consumed": { "type": "boolean" },
+                  "confirmationText": { "type": "string", "maxLength": 1024 },
+                  "authorization": {
+                    "$ref": "#/definitions/ArtifactReference"
+                  },
+                  "receiptId": { "$ref": "#/definitions/StableId" }
+                }
+              }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": { "status": { "const": "complete" } },
+                  "required": ["status"]
+                },
+                "then": { "required": ["value"] },
+                "else": { "required": ["error"] }
+              }
+            ]
+          },
           "NativeCaptureEnvelope": {
             "type": "object",
             "additionalProperties": false,

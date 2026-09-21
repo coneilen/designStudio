@@ -3,6 +3,7 @@ import type {
   Artifact,
   ArtifactReference,
   AuthorizationContext,
+  CaptureRecoveryAuthorization,
   CommitReceipt,
   ExpectedBase,
   FileSystemBoundary,
@@ -11,6 +12,10 @@ import type {
   Revision,
   StagedArtifact,
 } from "@design-studio/contracts";
+import type {
+  CaptureRecoveryEvidence,
+  CaptureRecoveryState,
+} from "./capture-recovery.js";
 import type {
   JobStorageOptions,
   StoredJob,
@@ -49,6 +54,19 @@ export interface StoredArtifactBinding extends LogicalArtifactBinding {
 }
 
 export interface StorageOptions {
+  captureRecovery?: {
+    authorize(context: OperationContext): Promise<void>;
+    verify(
+      evidence: CaptureRecoveryEvidence,
+      state: CaptureRecoveryState,
+      context: OperationContext,
+    ): Promise<void>;
+    verifyIssuance(
+      authorization: CaptureRecoveryAuthorization,
+      state: CaptureRecoveryState,
+      context: OperationContext,
+    ): Promise<void>;
+  };
   jobs?: JobStorageOptions;
   databasePath: string;
   nativeBinding: string;

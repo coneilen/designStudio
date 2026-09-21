@@ -22,6 +22,18 @@ Capture roles include the capture/import workspace packages and the pinned
 SQLite binding. This changed policy selects a new independently approved
 namespace; it does not upgrade or adopt the old credential-only project profile.
 
+Recovery-capable candidates retain those exact base capture-policy bytes and
+add `capture-recovery-policy.json`, a separately closed supplement bound to the
+base digest. Version-3 trusted release metadata binds its exact digest and the
+payload inventory must include it. Fixture/version-1 and existing capture/
+version-2 validation remain supported for their original roles; neither can
+authorize `figma-recover`. Recovery admission is private state on the actually
+verified installation lease, not a JSON property or caller configuration.
+The CLI checks it before opening a project for recovery. No new role, namespace
+lookup, migration, project copy, credential reference or old-job authority
+override is introduced. Independently approved new bootstrap/payload inventories
+are still required; changing packaging source does not approve or install them.
+
 `verifyCaptureInstallation` creates a process-owned live lease, not a structural
 JSON grant. `openCaptureProject(lease)` creates one new app-ID project under the
 native KnownFolder `DesignStudio\capture-projects` namespace; passing its logical

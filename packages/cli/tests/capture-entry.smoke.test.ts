@@ -17,6 +17,8 @@ it("built native role metadata and helper import do not prompt, read clipboard, 
   expect(JSON.parse(help.stdout)).toMatchObject({
     status: "complete",
     profile: "figma-capture-v1",
+    usage: expect.arrayContaining([expect.stringContaining("figma recover")]),
+    limitation: expect.stringContaining("installed recovery supplement"),
   });
   const helper = pathToFileURL(
     fileURLToPath(

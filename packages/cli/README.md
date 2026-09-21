@@ -134,7 +134,8 @@ launch.mjs capture figma convert --project <capture-ID> --request-id <logical ID
 launch.mjs capture figma artifact --project <capture-ID> --request-id <logical ID> --role <role> --output <private filename>
 ```
 
-Figma commands emit one closed `NativeCaptureEnvelope`, never raw source.
+Capture/inspect/convert/artifact commands emit one closed
+`NativeCaptureEnvelope`, never raw source.
 Exit 0 means accepted/complete (not render readiness), exit 4 means partial,
 and a failed/cancelled/interrupted result is nonzero. A completed partial job
 is not relabeled full success. The same logical ID cannot change selection;
@@ -166,6 +167,53 @@ proof. Private uncertain data remains; the in-memory retry owner is usable
 only while its process survives. Cross-process adoption/recovery is not added
 by this correction. Stored queued/claimed captures without a live admitted
 executor are reported interrupted, never falsely accepted conversion/export.
+
+### Explicit offline authorization of one next capture
+
+`figma recover` additionally requires the exact installed recovery-policy
+supplement (version-3 capture release metadata). An old capture installation,
+fixture installation, copied policy or caller flag cannot authorize it. The
+base capture policy/hash, project namespace and credential reference remain
+unchanged; there is no project adoption or credential replacement.
+
+First request a read-only proposal, then record the exact displayed proof:
+
+```text
+launch.mjs capture figma recover --project <capture-ID> --request-id <failed-request> --failed-job-id <failed-job> --next-request-id <next-request>
+launch.mjs capture figma recover --project <capture-ID> --request-id <failed-request> --failed-job-id <failed-job> --next-request-id <next-request> --expected-proof <proposal-SHA256> --confirm AUTHORIZE-ONE-CAPTURE-WITH-UNKNOWN-RESPONSE-AND-QUOTA
+```
+
+The bounded `NativeCaptureRecoveryEnvelope` contains only logical identities,
+counts, digests, confirmation text and authorization/receipt references. It
+does not expose provider/node data, signed URLs, secret bytes or private paths.
+`complete` means a proposal or authorization was produced, **not** that a
+capture completed. No credential readiness/status/vault lookup, provider call,
+capture scheduler or automatic retry is part of this action.
+
+The confirmation acknowledges that settled accounting does not prove successful
+responses, available quota, valid credentials or no network effect. Only a
+stopped terminal failed attempt with resolved effects and verifiable private
+stage/publication/receipt evidence qualifies. Known future Retry-After and
+retry-after-unknown remain blocking. Missing/ambiguous publications, unknown or
+reserved effects, unowned stages and unclassified output-root files require
+separate recovery; this command never adopts or deletes them.
+
+Authorization preserves the original failed job and binds one exact next
+normalized request for the same selection, credential reference, principal,
+project and policy, including the nonsecret credential-journal fingerprint.
+Invoke `figma capture` separately using that next request ID and selection URL.
+The successor job's atomic insertion consumes the authorization; replay never
+restarts it. Exact unchanged acknowledgment replay returns the same durable
+receipt, including after successor insertion. A changed target or stale proof
+is refused. **Third requests remain blocked even if the authorized successor
+succeeds.** Recovery chains and quota-review overrides are not implemented.
+
+A crash before the acknowledgment receipt commits leaves no usable grant;
+unowned or uncertain residue is preserved and refused. A crash after the receipt
+but before successor insertion leaves authorization only, not scheduled work.
+A crash after insertion does not permit a different target or an automatic
+restart. Failed successors with unresolved retained publication evidence still
+require separate recovery; acknowledgment replay is not permission to clear it.
 
 Setup/update reject `--json` and require explicit `--interactive`; optional
 `--expires-at <ISO timestamp>` is only a user-declared claim. There is no token

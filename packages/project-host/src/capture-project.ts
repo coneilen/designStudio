@@ -50,6 +50,7 @@ interface Owned {
   users: number;
   helpers: number;
   work: number;
+  journalFingerprint(): Promise<string>;
 }
 const projects = new WeakMap<CaptureProject, Owned>();
 const uuid =
@@ -244,6 +245,14 @@ export async function openCaptureProject(
       users: 0,
       helpers: 0,
       work: 0,
+      async journalFingerprint() {
+        const record = await serial(readRecords);
+        return createHash("sha256")
+          .update(
+            JSON.stringify({ count: record.count, previous: record.previous }),
+          )
+          .digest("hex");
+      },
     };
     const project: CaptureProject = Object.freeze({
       projectId: scope.projectId,

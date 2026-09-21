@@ -118,6 +118,9 @@ async function fixture() {
     },
     current: async () => {},
     readyCredential: async () => undefined,
+    recoveryAuthority: async () => {
+      throw new Error("Scheduler fixture does not authorize recovery");
+    },
     isCurrent: () => true,
     attestDatabase: async () => {},
     credentials: () => credentials,

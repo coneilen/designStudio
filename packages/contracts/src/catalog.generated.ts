@@ -76,6 +76,11 @@ export interface ContractTypes {
   FigmaCaptureRequest: Types.FigmaCaptureRequest;
   FigmaCaptureManifest: Types.FigmaCaptureManifest;
   FigmaCaptureResult: Types.FigmaCaptureResult;
+  CaptureRecoveryProposal: Types.CaptureRecoveryProposal;
+  CaptureRecoveryBinding: Types.CaptureRecoveryBinding;
+  CaptureRecoveryResource: Types.CaptureRecoveryResource;
+  CaptureRecoveryAuthorization: Types.CaptureRecoveryAuthorization;
+  NativeCaptureRecoveryEnvelope: Types.NativeCaptureRecoveryEnvelope;
   NativeCaptureEnvelope: Types.NativeCaptureEnvelope;
   FigmaIntakeManifest: Types.FigmaIntakeManifest;
   FigmaSourceMap: Types.FigmaSourceMap;
@@ -230,6 +235,11 @@ export const contractNames: readonly ContractName[] = [
   "FigmaCaptureRequest",
   "FigmaCaptureManifest",
   "FigmaCaptureResult",
+  "CaptureRecoveryProposal",
+  "CaptureRecoveryBinding",
+  "CaptureRecoveryResource",
+  "CaptureRecoveryAuthorization",
+  "NativeCaptureRecoveryEnvelope",
   "NativeCaptureEnvelope",
   "FigmaIntakeManifest",
   "FigmaSourceMap",

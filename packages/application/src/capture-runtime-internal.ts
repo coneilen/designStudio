@@ -5,8 +5,8 @@ import type {
   FigmaCaptureManifest,
   FigmaCaptureRequest,
   NativeCaptureEnvelope,
+  NativeCaptureRecoveryEnvelope,
   OperationContext,
-  ResourceSnapshot,
   StagedArtifact,
 } from "@design-studio/contracts";
 import { parseContract, validateContract } from "@design-studio/contracts";
@@ -39,6 +39,11 @@ import {
   type CaptureProject,
 } from "@design-studio/project-host";
 import { LocalStore, type StoredJob } from "@design-studio/storage";
+import {
+  CaptureRecovery,
+  type NativeCaptureRecoveryInput,
+  nativeCaptureResources,
+} from "./capture-recovery.js";
 import { RecoveryDecisions } from "./recovery.js";
 import { ApplicationError, safeError, unwrap } from "./response.js";
 
@@ -52,6 +57,10 @@ export interface NativeCaptureInput {
   outputRelative?: string;
 }
 export interface NativeCaptureRuntime {
+  recover(
+    input: NativeCaptureRecoveryInput,
+    signal: AbortSignal,
+  ): Promise<NativeCaptureRecoveryEnvelope>;
   execute(
     input: NativeCaptureInput,
     signal: AbortSignal,
@@ -95,6 +104,7 @@ export async function assembleNativeCapture(
   let store: LocalStore | undefined;
   let service: JobService | undefined;
   let capture: ReturnType<typeof createFigmaCaptureJobs> | undefined;
+  let captureRecovery: CaptureRecovery | undefined;
   let active = false;
   let closing = false;
   let closed = false;
@@ -199,6 +209,14 @@ export async function assembleNativeCapture(
   try {
     await work.current();
     files = await ProjectFileSystem.create({
+      captureRecoveryInspection: {
+        artifactRootId: project.artifactRootId,
+        outputRootId: policy.outputRoot,
+        authorize: async (stages, context) => {
+          if (!captureRecovery) throw new ApplicationError("FORBIDDEN");
+          await captureRecovery.authorizeInspection(stages, context);
+        },
+      },
       projectId: project.projectId,
       authority: policy.verify,
       budgetLimits: CAPTURE_LIMITS,
@@ -284,6 +302,20 @@ export async function assembleNativeCapture(
     };
     await work.current();
     store = await LocalStore.open({
+      captureRecovery: {
+        authorize: async (context) => {
+          if (!captureRecovery) throw new ApplicationError("FORBIDDEN");
+          await captureRecovery.authorize(context);
+        },
+        verify: async (...args) => {
+          if (!captureRecovery) throw new ApplicationError("FORBIDDEN");
+          await captureRecovery.storage.verify(...args);
+        },
+        verifyIssuance: async (...args) => {
+          if (!captureRecovery) throw new ApplicationError("FORBIDDEN");
+          await captureRecovery.storage.verifyIssuance(...args);
+        },
+      },
       projectId: project.projectId,
       artifactRootId: project.artifactRootId,
       permissionScope: work.permissionScope,
@@ -440,6 +472,7 @@ export async function assembleNativeCapture(
       )
         throw new ApplicationError("FORBIDDEN");
     };
+    captureRecovery = new CaptureRecovery(work, fs, db, selectionPolicy);
     const discover = async (ctx: OperationContext, jobId?: string) => {
       const ids: string[] = [];
       let cursor: { createdAt: string; id: string } | undefined;
@@ -613,6 +646,33 @@ export async function assembleNativeCapture(
       return checked.value;
     };
     const runtime: NativeCaptureRuntime = Object.freeze({
+      async recover(input: NativeCaptureRecoveryInput, signal: AbortSignal) {
+        if (publications.size) throw new ApplicationError("INTERRUPTED");
+        if (
+          this !== runtime ||
+          active ||
+          closed ||
+          closing ||
+          service ||
+          !captureRecovery
+        )
+          throw new ApplicationError("FORBIDDEN");
+        active = true;
+        try {
+          const result = await captureRecovery.execute(
+            structuredClone(input),
+            signal,
+          );
+          if (
+            !validateContract("NativeCaptureRecoveryEnvelope", result).success
+          )
+            throw new ApplicationError("INTERNAL_ERROR");
+          primaryFailure = result.error?.code;
+          return result;
+        } finally {
+          active = false;
+        }
+      },
       async execute(input: NativeCaptureInput, signal: AbortSignal) {
         if (publications.size) throw new ApplicationError("INTERRUPTED");
         if (this !== runtime || active || closed || closing || service)
@@ -671,6 +731,7 @@ export async function assembleNativeCapture(
               policySha256: canonicalDigest(selected),
               credential: project.reference,
             });
+            captureRecovery?.activate(normalized.request);
             if (existing.length) {
               await committed(owned.requestId, ctx, normalized.request);
             } else {
@@ -681,30 +742,11 @@ export async function assembleNativeCapture(
                 network: selected,
                 jobReads: history,
               });
-              const resources: ResourceSnapshot = {
-                schemaVersion: "1.0",
-                id: `resources_${canonicalDigest(project.projectId)}`,
-                projectId: project.projectId,
-                components: {
-                  schemaVersion: "1.0",
-                  projectId: project.projectId,
-                  revision: "none",
-                  definitions: [],
-                  mappings: [],
-                },
-                tokens: {
-                  schemaVersion: "1.0",
-                  projectId: project.projectId,
-                  revision: "none",
-                  collections: [],
-                  selectedModes: {},
-                  definitions: [],
-                  resolved: [],
-                  adapters: [],
-                },
-                assets: [],
-                fonts: [],
-              };
+              const recoveryBinding = await capture.prepare(
+                normalized.request,
+                ctx,
+              );
+              const resources = nativeCaptureResources(project.projectId);
               const seedId = `seed_${canonicalDigest([jobId, normalized.request])}`;
               const seed = await policy.issue({
                 ...base,
@@ -718,6 +760,14 @@ export async function assembleNativeCapture(
                   unwrap(await db.stage(canonicalBytes(resources), seed)),
                 ];
                 receipt = unwrap(await db.commit(staged, seed));
+                if (recoveryBinding) {
+                  // The grant proves these resource bytes already have an immutable receipt.
+                  // Release only this invocation's redundant seed stage, never an old job stage.
+                  const resourceStage = staged[1];
+                  if (!resourceStage)
+                    throw new ApplicationError("ARTIFACT_INTEGRITY");
+                  unwrap(await fs.discard(resourceStage.stagingId, seed));
+                }
               }
               const requestArtifact = receipt.outputs[0];
               const resource = receipt.outputs[1];
@@ -933,6 +983,7 @@ export async function assembleNativeCapture(
           );
         } finally {
           active = false;
+          captureRecovery?.clear();
         }
       },
       async close() {

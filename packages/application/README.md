@@ -131,6 +131,45 @@ unknown/reserved effects and stage identities. No vault read, network replay,
 new completion receipt or conversion/export acceptance is implied. An orphaned
 capture returns interrupted/action-required, not accepted.
 
+`recover({operation: "recover", requestId, failedJobId, nextRequestId, ...},
+signal)` is a separate offline method on the same owned facade. It requires
+native admission of the closed recovery-policy supplement and never calls
+credential readiness, vault use or the scheduler. Without confirmation it
+returns bounded proposal facts; with the exact proof and versioned confirmation
+literal it commits one immutable authorization artifact/receipt. It does not
+reconcile, relabel, overwrite or restart the failed job.
+
+The proof includes the exact original row/version/generation, effects and usage,
+canonical input/resources, credential-journal fingerprint, policy identities,
+private stage/receipt/reference graph, and one normalized next request.
+Native-scoped inspection verifies retained stage bytes read-only and refuses
+unowned stages, missing/aliased bytes or ambiguous publication. Ordinary
+completed stage journal rows are accepted only with their exact committed output
+receipt; they are not treated as permission to adopt an unfinished publication.
+Export-root files without an established persistent ownership proof remain
+unsupported for this action. Response/quota/credential validity remain unknown;
+known future or indeterminate rate-limit constraints are never waived.
+
+Replay compares the immutable original snapshot separately from exactly verified
+authorization, seed and successor writes. Only exact identities, contents,
+receipts and protected references are projected out, never a name/prefix family.
+The source resource's successor fence must match that one bound job. Receipt
+insertion and successor submission each recheck storage state inside their
+SQLite transaction. Successor insertion is durable consumption, with no mutable
+spent flag or gap between spending and job creation. Its handler rechecks the
+authorization before credential/provider work. The exclusive native project
+loan and facade execution exclusion serialize app processes and in-process work;
+this remains a trusted-current-user boundary, not a hostile same-user sandbox.
+
+The recovered successor's fixed resources already have a protected receipt.
+After its seed commit, only that invocation's redundant resource stage is
+released under its original host owner. No old stage is deleted. A crash leaving
+that unjournaled intake residue refuses later recovery rather than adopting it.
+Exact committed acknowledgment replay survives reopen and successor insertion;
+publication uncertainty retains existing close-only ownership. A failed
+successor creates no new grant, and the original grant never covers a third
+request, even after a successful successor. No HTTP recovery route is added.
+
 Each command snapshots input before awaits. Native authority fixes current
 actor/project/credential and scopes, retains the scheduler's exact work signal,
 and caps the original 30-second capture deadline by authorization/declared

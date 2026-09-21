@@ -10,6 +10,7 @@ export {
   type CaptureWork,
 } from "./capture-work.js";
 export {
+  assertCaptureRecoveryInstallation,
   type CaptureInstallationLease,
   type FixtureInstallationLease,
   type FixtureInstallationPaths,
