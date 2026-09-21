@@ -31,7 +31,13 @@ import {
   limits,
   shape,
 } from "./boundary.js";
-import { translationOnly } from "./geometry.js";
+import {
+  equalRenderBounds,
+  equalSize,
+  leftTopConstraints,
+  neutralFixedProperty,
+  translationOnly,
+} from "./geometry.js";
 import { type FigmaConversionPolicy, figmaConversionPolicy } from "./policy.js";
 import { parseFigmaSelection } from "./selection.js";
 import { parseSource, type SourceNode } from "./source.js";
@@ -418,6 +424,18 @@ function convertShared(
       if (!legacy && key === "relativeTransform" && translationOnly(value))
         continue;
       if (
+        !legacy &&
+        key === "absoluteRenderBounds" &&
+        equalRenderBounds(value, node.bounds)
+      )
+        continue;
+      if (
+        !legacy &&
+        ((key === "size" && equalSize(value, node.bounds)) ||
+          neutralFixedProperty(key, value))
+      )
+        continue;
+      if (
         (key === "visible" && value === true) ||
         (key === "blendMode" &&
           ["NORMAL", "PASS_THROUGH"].includes(String(value))) ||
@@ -472,7 +490,31 @@ function convertShared(
       },
     };
     projection(node, "/layout", common.layout, "fixed-layout");
+    if (!legacy && equalSize(node.raw.size, bounds))
+      projection(
+        node,
+        "/layout",
+        common.layout,
+        "fixed-layout",
+        `${node.pointer}/size`,
+      );
+    if (!legacy && leftTopConstraints(node.raw.constraints))
+      projection(
+        node,
+        "/layout/offset",
+        common.layout.offset,
+        "fixed-layout",
+        `${node.pointer}/constraints`,
+      );
     projection(node, "/metadata/sourceAbsoluteBounds", bounds, "identity");
+    if (!legacy && equalRenderBounds(node.raw.absoluteRenderBounds, bounds))
+      projection(
+        node,
+        "/metadata/sourceAbsoluteBounds",
+        bounds,
+        "fixed-layout",
+        `${node.pointer}/absoluteRenderBounds`,
+      );
     if (common.name !== undefined)
       projection(
         node,
@@ -535,7 +577,15 @@ function convertShared(
       );
     }
     let result: DesignNode;
-    if (node.type === "FRAME" || node.type === "GROUP") {
+    const capturedInstance = !legacy && node.type === "INSTANCE";
+    if (node.type === "FRAME" || node.type === "GROUP" || capturedInstance) {
+      if (capturedInstance)
+        loss(
+          node,
+          "type",
+          "Captured instance children are retained as a fixed frame, not editable component or override semantics.",
+          "approximated",
+        );
       if (node.raw.layoutMode !== undefined && node.raw.layoutMode !== "NONE")
         loss(
           node,
@@ -550,7 +600,7 @@ function convertShared(
         children.push(converted);
       }
       result =
-        node.type === "FRAME"
+        node.type === "FRAME" || capturedInstance
           ? {
               ...common,
               type: "frame",
@@ -712,7 +762,11 @@ function convertShared(
     mode === "offline"
       ? {
           schemaVersion: "1.0",
-          id: `source_${canonicalDigest([input.intakeId, raw.sha256])}`,
+          id: `source_${canonicalDigest([
+            input.intakeId,
+            raw.sha256,
+            ...(!legacy ? [policy] : []),
+          ])}`,
           projectId: input.projectId,
           identity: {
             transport: "figma-offline",

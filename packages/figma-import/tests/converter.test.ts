@@ -81,9 +81,11 @@ describe("bounded offline Figma conversion", () => {
     expect(() => verifyFigmaConversion(input(), legacy)).toThrow(
       "deterministic source replay",
     );
-    expect(convertFigmaSnapshot(input()).conversionEvidence.adapter).toBe(
-      "figma-offline-fixed-v2",
-    );
+    const current = convertFigmaSnapshot(input());
+    expect(current.conversionEvidence.adapter).toBe("figma-offline-fixed-v2");
+    expect(current.source.id).not.toBe(legacy.source.id);
+    expect(current.source.identity).toEqual(legacy.source.identity);
+    expect(current.source.artifacts).toEqual(legacy.source.artifacts);
   });
 
   it("converts fixed geometry, preserves raw bytes, and never authenticates declared metadata", () => {
@@ -179,11 +181,11 @@ describe("bounded offline Figma conversion", () => {
   });
 
   it("keeps image/component/vector nodes opaque without pixel fallbacks", () => {
-    for (const type of ["INSTANCE", "VECTOR", "RECTANGLE"]) {
+    for (const type of ["COMPONENT", "VECTOR", "RECTANGLE"]) {
       const result = convertFigmaSnapshot(
         changed((_root, child) => {
           child.type = type;
-          if (type === "INSTANCE") child.children = [];
+          if (type === "COMPONENT") child.children = [];
           if (type === "RECTANGLE")
             child.fills = [{ type: "IMAGE", imageRef: "missing" }];
         }),
