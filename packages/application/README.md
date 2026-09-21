@@ -1,5 +1,38 @@
 # @design-studio/application
 
+## Native reference evidence
+
+The native capture facade separately exposes explicit reference planning,
+approval, download and inspection under the installation's closed reference
+supplement. Its dedicated read-only proof loader never calls original-capture
+reconciliation: it requires an already completed version-pinned capture and
+verifies its job, atomic receipt, artifact hashes, source, selected node, version,
+bounds and render-map membership. Nodes and source snapshots can exceed 256 KiB
+within the aggregate bound; small control artifacts retain a 256 KiB cap.
+
+An immutable offline approval receipt protects the proposal and canonical
+reference request, reusing the original committed empty resource snapshot.
+Unused expired approvals can be explicitly renewed through a fresh proposal
+binding the prior approval hash and next generation (at most 32); lost responses
+replay the exact existing grant without extending its deadline. Native ownership
+and no-replace receipts serialize renewal races. Any admitted job forbids renewal.
+A deterministic `reference-download` job is
+reserved before transport and cannot be replaced by changing request IDs.
+Independent completion verification binds exact staged image/evidence bytes to
+the current original execution. No old source/manifest/result, capture recovery
+grant, conversion receipt or capture budget is rewritten. Reference evidence
+records dimensions, bounds, scale, color knowledge, counters, errors and the
+exact original artifact/version relation. Dimension mismatch or unknown color
+remains partial. Conversion/renderer consumption is not part of this capability.
+
+Reopen is read-only for admitted jobs, including queued/interrupted jobs and
+unknown effects; it cannot redispatch network work. A known no-HTTP effect is
+distinct from a known denied response or unknown effect. Stages/orphan
+publications block new admission. In-process uncertain publication retains the
+existing close-only owned recovery object; a crash does not prove publication or
+authorize cleanup/adoption. Failures remain actionable and nonretryable without
+printing private signed query strings.
+
 F08 fresh synthetic-fixture foundation, based on coordinator-approved
 `6b079c7efb958d2946b506203f8866f095385908` plus reviewed storage, host and
 installation prerequisites. This is not a general-purpose design studio or an

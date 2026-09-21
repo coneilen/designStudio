@@ -7,6 +7,7 @@ test("built package exposes only the trusted Windows factory, never native/path/
     "WindowsFixtureProjects",
     "acquireCaptureWork",
     "assertCaptureRecoveryInstallation",
+    "assertCaptureReferenceInstallation",
     "assertCaptureWork",
     "openCaptureCredentials",
     "openCaptureProject",

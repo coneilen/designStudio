@@ -1,5 +1,23 @@
 # @design-studio/figma-capture
 
+## Separate one-shot reference acquisition
+
+The reference handler consumes only a native-approved immutable capture binding,
+not a fresh capture or caller URL. It reuses the existing public-DNS check, pinned
+TLS peer, bundled roots, HTTP framing validation and isolated decoder. The fixed
+reference origin receives no PAT, authorization header or cookies; redirects and
+automatic retries are forbidden. One DNS lookup and one GET are independently
+bounded by the new job's original 30-second deadline and approval expiry.
+
+Reference limits are 25 MiB aggregate logical private input plus received network
+bytes, 25 MiB output including evidence, and 6,553,600 decoded pixels (also subject
+to the RGBA output bound). Storage/host verification reads retain their own
+existing finite budgets. Every admission uses one attempt. Recognized SigV4
+expiry can deny locally; a 403 alone is reported as denial, not asserted expiry.
+Persisted observations distinguish actual HTTP status from unknown effects and
+proven no-HTTP effects. Neither a successful GET nor a decoded PNG establishes
+font/image-fill rights, original capture completeness or renderer readiness.
+
 Version 0.1.0. Bounded, single-selected-FRAME REST capture core. This package
 does not implement a public native capture command, converter wrapper, Figma
 writes, fills/variables/libraries/history traversal, model/device actions, or

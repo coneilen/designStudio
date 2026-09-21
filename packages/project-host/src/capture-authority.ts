@@ -66,6 +66,7 @@ export function nativeCapturePolicy(work: CaptureWork) {
       jobReads?: readonly string[];
       jobWrite?: boolean;
       network?: CapturePolicy;
+      reference?: { sourceId: string };
       source?: CapturePolicy;
       output?: boolean;
     }): Promise<OperationContext> {
@@ -73,11 +74,19 @@ export function nativeCapturePolicy(work: CaptureWork) {
         ...input,
         jobReads: [...(input.jobReads ?? [])],
         ...(input.network ? { network: structuredClone(input.network) } : {}),
+        ...(input.reference
+          ? { reference: structuredClone(input.reference) }
+          : {}),
         ...(input.source ? { source: structuredClone(input.source) } : {}),
       };
       await check();
       if (owned.signal.aborted || owned.parentSignal?.aborted)
         throw new ApplicationError("CANCELLED");
+      if (owned.reference) {
+        if (owned.network || owned.source || !work.referenceAuthority)
+          throw new ApplicationError("FORBIDDEN");
+        await work.referenceAuthority();
+      }
       if (owned.jobReads.length > 1000)
         throw new ApplicationError("INPUT_LIMIT");
       const credentialExpiry = owned.network
@@ -147,6 +156,12 @@ export function nativeCapturePolicy(work: CaptureWork) {
           resourceId: outputRoot,
           operations: ["read", "write"],
         });
+      if (owned.reference)
+        grants.push({
+          resourceKind: "source",
+          resourceId: owned.reference.sourceId,
+          operations: ["reference-download"],
+        });
       for (const [authorization, detach] of issued)
         if (Date.parse(authorization.expiresAt) <= clock.now()) {
           detach();
@@ -162,7 +177,10 @@ export function nativeCapturePolicy(work: CaptureWork) {
           sessionId: randomUUID(),
           expiresAt: new Date(end).toISOString(),
           grants,
-          egress: owned.network ? "explicit-grant-required" : "deny",
+          egress:
+            owned.network || owned.reference
+              ? "explicit-grant-required"
+              : "deny",
         },
         "cli",
       );
@@ -193,7 +211,12 @@ export function nativeCapturePolicy(work: CaptureWork) {
         signal: owned.signal,
         clock,
         deadline: new Date(end).toISOString(),
-        budget: { ...CAPTURE_LIMITS },
+        budget: {
+          ...CAPTURE_LIMITS,
+          ...(owned.reference
+            ? { maxExternalCalls: 1, maxRasterPixels: 6553600 }
+            : {}),
+        },
       });
     },
     close() {

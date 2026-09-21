@@ -11,7 +11,7 @@ it("imports the capture service without network/vault work and keeps transport/t
       `
     const api = await import("@design-studio/figma-capture");
     if (typeof api.createFigmaCaptureJobs !== "function" || api.CAPTURE_LIMITS.maxExternalCalls !== 4) throw new Error("Missing capture API");
-    for (const key of ["FigmaHttpsTransport", "decodeReference", "captureSelectedFrame", "syntheticCertificate"]) {
+    for (const key of ["FigmaHttpsTransport", "decodeReference", "captureSelectedFrame", "syntheticCertificate", "acquireReference", "ReferenceBudget", "referenceUrl", "parseCaptureJson"]) {
       if (key in api) throw new Error("Private capture implementation exported");
     }
     try { await import("@design-studio/figma-capture/dist/transport.js"); throw new Error("Private subpath exported"); }

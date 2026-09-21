@@ -6,6 +6,7 @@ import type {
   FigmaCaptureRequest,
   NativeCaptureEnvelope,
   NativeCaptureRecoveryEnvelope,
+  NativeReferenceEnvelope,
   OperationContext,
   StagedArtifact,
 } from "@design-studio/contracts";
@@ -45,6 +46,10 @@ import {
   nativeCaptureResources,
 } from "./capture-recovery.js";
 import { RecoveryDecisions } from "./recovery.js";
+import {
+  NativeReference,
+  type NativeReferenceInput,
+} from "./reference-runtime.js";
 import { ApplicationError, safeError, unwrap } from "./response.js";
 
 type Operation = "capture" | "inspect" | "convert" | "artifact";
@@ -57,6 +62,10 @@ export interface NativeCaptureInput {
   outputRelative?: string;
 }
 export interface NativeCaptureRuntime {
+  reference?(
+    input: NativeReferenceInput,
+    signal: AbortSignal,
+  ): Promise<NativeReferenceEnvelope>;
   recover(
     input: NativeCaptureRecoveryInput,
     signal: AbortSignal,
@@ -105,6 +114,7 @@ export async function assembleNativeCapture(
   let service: JobService | undefined;
   let capture: ReturnType<typeof createFigmaCaptureJobs> | undefined;
   let captureRecovery: CaptureRecovery | undefined;
+  let reference: NativeReference | undefined;
   let active = false;
   let closing = false;
   let closed = false;
@@ -133,6 +143,7 @@ export async function assembleNativeCapture(
       unwrap(await service.stop());
       service = undefined;
     }
+    await reference?.close();
     for (const [pending, original] of publications) {
       await policy.check();
       const context = await policy.issue({
@@ -382,6 +393,11 @@ export async function assembleNativeCapture(
           },
         },
         verifyCompletion: async (...args) => {
+          if (args[0].job.operation === "reference-download") {
+            if (!reference) throw new ApplicationError("FORBIDDEN");
+            await reference.verifyCompletion(...args);
+            return;
+          }
           if (!capture) throw new ApplicationError("FORBIDDEN");
           await policy.check();
           await capture.verifyCompletion(...args);
@@ -393,6 +409,7 @@ export async function assembleNativeCapture(
     });
     await work.current();
     const db = store;
+    reference = new NativeReference(work, fs, db, recovery);
     const read = async (
       reference: ArtifactReference,
       ctx: OperationContext,
@@ -646,6 +663,31 @@ export async function assembleNativeCapture(
       return checked.value;
     };
     const runtime: NativeCaptureRuntime = Object.freeze({
+      async reference(input: NativeReferenceInput, signal: AbortSignal) {
+        if (publications.size) throw new ApplicationError("INTERRUPTED");
+        if (
+          this !== runtime ||
+          active ||
+          closed ||
+          closing ||
+          service ||
+          !reference
+        )
+          throw new ApplicationError("FORBIDDEN");
+        active = true;
+        try {
+          const result = await reference.execute(
+            structuredClone(input),
+            signal,
+          );
+          if (!validateContract("NativeReferenceEnvelope", result).success)
+            throw new ApplicationError("INTERNAL_ERROR");
+          primaryFailure = result.error?.code;
+          return result;
+        } finally {
+          active = false;
+        }
+      },
       async recover(input: NativeCaptureRecoveryInput, signal: AbortSignal) {
         if (publications.size) throw new ApplicationError("INTERRUPTED");
         if (

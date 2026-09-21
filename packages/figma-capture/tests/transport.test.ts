@@ -4,6 +4,11 @@ import tls from "node:tls";
 import { syntheticContext } from "@design-studio/contracts/testing";
 import { expect, it, vi } from "vitest";
 import { CAPTURE_LIMITS, CaptureBudget, ownPolicy } from "../src/boundary.js";
+import {
+  REFERENCE_LIMITS,
+  REFERENCE_ORIGIN,
+  ReferenceBudget,
+} from "../src/reference.js";
 import { FigmaHttpsTransport } from "../src/transport.js";
 import { syntheticCertificate } from "./tls-fixture.js";
 
@@ -102,7 +107,11 @@ async function serverTest(
     socket.once("data", (bytes) => {
       facts.applicationBytes += bytes.length;
       facts.requests++;
-      if (bytes.toString("ascii").includes("X-Figma-Token:"))
+      if (
+        /^(?:X-Figma-Token|Authorization|Cookie):/im.test(
+          bytes.toString("ascii"),
+        )
+      )
         facts.credentialHeaders++;
       socket.end(response);
     });
@@ -132,6 +141,85 @@ async function serverTest(
     seam.delay = undefined;
   }
 }
+it("uses exact-host reference authority with no credentials, redirect following or second DNS", async () => {
+  await serverTest(
+    "HTTP/1.1 302 Found\r\nContent-Length: 0\r\nLocation: https://foreign.invalid/private\r\nConnection: close\r\n\r\n",
+    async (facts) => {
+      const context = syntheticContext({ budget: { ...REFERENCE_LIMITS } });
+      context.authorization.egress = "explicit-grant-required";
+      context.authorization.grants.push(
+        {
+          resourceKind: "source",
+          resourceId: "reference_one",
+          operations: ["reference-download"],
+        },
+        {
+          resourceKind: "artifact",
+          resourceId: "artifact_root",
+          operations: ["write"],
+        },
+      );
+      const limit = new ReferenceBudget(
+        context,
+        "reference_one",
+        "artifact_root",
+        () => true,
+        0,
+      );
+      try {
+        await expect(
+          new FigmaHttpsTransport().image(
+            `${REFERENCE_ORIGIN}/synthetic.png?secret=synthetic`,
+            limit,
+          ),
+        ).rejects.toMatchObject({ status: 302 });
+        expect(facts.requests).toBe(1);
+        expect(facts.credentialHeaders).toBe(0);
+        expect(limit.dns).toBe(1);
+        expect(() => limit.dnsQuery()).toThrow();
+      } finally {
+        await limit.close();
+      }
+    },
+  );
+});
+it("rejects a private DNS answer for the fixed reference origin with proven no HTTP request", async () => {
+  await serverTest("", async (facts) => {
+    seam.answers = [{ address: "10.1.2.3", family: 4 }];
+    const context = syntheticContext({ budget: { ...REFERENCE_LIMITS } });
+    context.authorization.egress = "explicit-grant-required";
+    context.authorization.grants.push(
+      {
+        resourceKind: "source",
+        resourceId: "reference_one",
+        operations: ["reference-download"],
+      },
+      {
+        resourceKind: "artifact",
+        resourceId: "artifact_root",
+        operations: ["write"],
+      },
+    );
+    const limit = new ReferenceBudget(
+      context,
+      "reference_one",
+      "artifact_root",
+      () => true,
+      0,
+    );
+    try {
+      await expect(
+        new FigmaHttpsTransport().image(
+          `${REFERENCE_ORIGIN}/synthetic.png`,
+          limit,
+        ),
+      ).rejects.toMatchObject({ code: "POLICY_FAILED", requestIssued: false });
+      expect(facts.requests).toBe(0);
+    } finally {
+      await limit.close();
+    }
+  });
+});
 const good =
   "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{}";
 it.each([

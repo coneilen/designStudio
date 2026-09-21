@@ -34,6 +34,24 @@ lookup, migration, project copy, credential reference or old-job authority
 override is introduced. Independently approved new bootstrap/payload inventories
 are still required; changing packaging source does not approve or install them.
 
+Reference-capable version-4 release metadata additionally binds the exact
+`capture-reference-policy.json` inventory member. Both historical base and
+recovery policy bytes, namespaces, credential references and old job identities
+remain unchanged. Version-1/2/3 or structural caller-created leases cannot
+authorize reference actions. The separate supplement permits only
+`https://figma-alpha-api.s3.us-west-2.amazonaws.com`, never a wildcard or a
+caller-provided URL. Reference authority grants no credential use and does not
+read credential readiness, journal fingerprints or the vault.
+
+Reference approval is offline, exact-proof-bound and expires after at most five
+minutes (earlier when the stored URL has a recognized earlier expiry). A separate
+explicit invocation admits one deterministic acquisition job with one GET, one
+DNS lookup and one original absolute deadline of at most 30 seconds. The approval
+expiry caps that deadline. A consumed attempt is never refreshed by a new command,
+process, request ID or URL refresh. Packaging source now describes this additional
+capability; no candidate, installation, origin approval or live download is
+authorized by that source change.
+
 `verifyCaptureInstallation` creates a process-owned live lease, not a structural
 JSON grant. `openCaptureProject(lease)` creates one new app-ID project under the
 native KnownFolder `DesignStudio\capture-projects` namespace; passing its logical

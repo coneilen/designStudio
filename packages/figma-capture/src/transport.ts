@@ -5,7 +5,7 @@ import tls from "node:tls";
 import { debuglog } from "node:util";
 import { publicAddress, sameAddress } from "@design-studio/assets";
 import { HostBoundaryError } from "@design-studio/host";
-import { type CaptureBudget, fail } from "./boundary.js";
+import { type CaptureBudget, fail, type ImageBudget } from "./boundary.js";
 
 // Unlike the process default trust store, this is fixed by the approved Node release.
 const bundledAuthorities = Object.freeze([...tls.rootCertificates]);
@@ -22,6 +22,7 @@ export class CaptureHttpError extends HostBoundaryError {
     code: ConstructorParameters<typeof HostBoundaryError>[0],
     readonly status?: number,
     readonly retryAfter?: string,
+    readonly requestIssued?: boolean,
   ) {
     super(
       code,
@@ -151,7 +152,7 @@ export class FigmaHttpsTransport {
       secret,
     );
   }
-  image(input: string, budget: CaptureBudget): Promise<HttpCapture> {
+  image(input: string, budget: ImageBudget): Promise<HttpCapture> {
     let url: URL;
     try {
       url = new URL(input);
@@ -176,7 +177,7 @@ export class FigmaHttpsTransport {
   private async read(
     url: URL,
     maximum: number,
-    budget: CaptureBudget,
+    budget: ImageBudget,
     secret?: Uint8Array,
   ): Promise<HttpCapture> {
     safeRuntime();
@@ -198,8 +199,14 @@ export class FigmaHttpsTransport {
       address = first.address;
     } catch (error) {
       budget.check();
-      if (error instanceof CaptureHttpError) throw error;
-      throw new CaptureHttpError("PROVIDER_UNAVAILABLE");
+      if (error instanceof CaptureHttpError)
+        throw new CaptureHttpError(error.code, undefined, undefined, false);
+      throw new CaptureHttpError(
+        "PROVIDER_UNAVAILABLE",
+        undefined,
+        undefined,
+        false,
+      );
     }
     budget.check();
     safeRuntime();
@@ -462,10 +469,16 @@ export class FigmaHttpsTransport {
       return { status, bytes, ...(mediaType ? { mediaType } : {}) };
     } catch (error) {
       budget.check();
-      if (error instanceof CaptureHttpError) throw error;
+      if (error instanceof CaptureHttpError)
+        throw new CaptureHttpError(error.code, status, retryAfter, issued);
       if (error instanceof HostBoundaryError)
-        throw new CaptureHttpError(error.code, status, retryAfter);
-      throw new CaptureHttpError("PROVIDER_UNAVAILABLE", status, retryAfter);
+        throw new CaptureHttpError(error.code, status, retryAfter, issued);
+      throw new CaptureHttpError(
+        "PROVIDER_UNAVAILABLE",
+        status,
+        retryAfter,
+        issued,
+      );
     } finally {
       budget.signal.removeEventListener("abort", abort);
       request?.destroy();
