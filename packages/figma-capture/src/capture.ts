@@ -11,7 +11,10 @@ import type {
   SourceSnapshot,
   StagedArtifact,
 } from "@design-studio/contracts";
-import { validateContract } from "@design-studio/contracts";
+import {
+  referenceDiagnosticFields,
+  validateContract,
+} from "@design-studio/contracts";
 import { canonicalBytes, canonicalDigest } from "@design-studio/design-ir";
 import {
   type Authority,
@@ -27,6 +30,11 @@ import {
   ownRequest,
 } from "./boundary.js";
 import { decodeReference, parseCaptureJson } from "./decode.js";
+import {
+  mimeClass,
+  operationDiagnostic,
+  requirePngMime,
+} from "./diagnostic.js";
 import {
   type ApiOperation,
   CaptureHttpError,
@@ -232,6 +240,7 @@ export async function captureSelectedFrame(
   let retry: FigmaCaptureManifest["retry"];
   let remediationOrigin: string | undefined;
   let errorCode: ErrorCode | undefined;
+  let referenceDiagnostic: FigmaCaptureManifest["referenceDiagnostic"];
   const transport = new FigmaHttpsTransport();
   const stage = async (bytes: Uint8Array): Promise<StagedArtifact> => {
     budget.check();
@@ -467,7 +476,13 @@ export async function captureSelectedFrame(
                       );
                       try {
                         safe(image.bytes);
+                        const classification = requirePngMime(image.mediaType);
                         const info = await decodeReference(image.bytes, budget);
+                        referenceDiagnostic = {
+                          stage: "png",
+                          reason: "validated",
+                          mimeClass: classification,
+                        };
                         budget.check();
                         const original = await stage(image.bytes);
                         artifacts.push({
@@ -498,6 +513,11 @@ export async function captureSelectedFrame(
                           referenceStatus = "partial";
                           missing.add("reference-color-unknown");
                         }
+                      } catch (error) {
+                        throw operationDiagnostic(
+                          error,
+                          mimeClass(image.mediaType),
+                        );
                       } finally {
                         image.bytes.fill(0);
                       }
@@ -522,10 +542,15 @@ export async function captureSelectedFrame(
                   "DEADLINE_EXCEEDED",
                   "OUTPUT_LIMIT",
                   "INPUT_LIMIT",
+                  "RASTER_LIMIT",
+                  "NODE_LIMIT",
+                  "DEPTH_LIMIT",
                 ].includes(error.code))
             )
               throw error;
             errorCode = error.code;
+            referenceDiagnostic =
+              referenceDiagnosticFields(error).referenceDiagnostic;
             missing.add("capture-step-unavailable");
           }
           budget.check();
@@ -618,6 +643,7 @@ export async function captureSelectedFrame(
             ...(source ? { source } : {}),
             completeness,
             referenceStatus,
+            ...(referenceDiagnostic ? { referenceDiagnostic } : {}),
             readiness: "not-evaluated",
             observations,
             artifacts,
@@ -658,6 +684,7 @@ export async function captureSelectedFrame(
             readiness: "not-evaluated",
             persistedBytes: 0,
             ...(errorCode ? { errorCode } : {}),
+            ...(referenceDiagnostic ? { referenceDiagnostic } : {}),
             ...(nextEligibleAt ? { nextEligibleAt } : {}),
           };
           const resultBytes = bytesWithTotal(
@@ -686,12 +713,17 @@ export async function captureSelectedFrame(
     if (outcome.status !== "complete") {
       if (outcome.status === "partial")
         fail(outcome.error.code, "Credential-bound capture was partial.");
-      fail(
+      throw new HostBoundaryError(
         outcome.error.code,
         `Credential-bound capture failed (${outcome.error.code}); sensitive details withheld.`,
+        false,
+        undefined,
+        referenceDiagnosticFields(outcome.error).referenceDiagnostic,
       );
     }
     return outcome.value;
+  } catch (error) {
+    throw operationDiagnostic(error, referenceDiagnostic?.mimeClass);
   } finally {
     await budget.close();
   }

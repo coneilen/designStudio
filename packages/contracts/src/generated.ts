@@ -870,6 +870,7 @@ export interface ContractCatalog {
   HandoffMetadata: HandoffMetadata;
   HandoffManifest: HandoffManifest;
   ErrorCode: ErrorCode;
+  ReferenceDiagnostic: ReferenceDiagnostic;
   ContractError: ContractError;
   Budget: Budget;
   AuthorizationContext: AuthorizationContext;
@@ -1743,6 +1744,7 @@ export interface CredentialReference {
 export interface FigmaCaptureManifest {
   schemaVersion: SchemaVersion;
   format: "figma-rest-capture-v1";
+  referenceDiagnostic?: ReferenceDiagnostic;
   policySha256: Sha256;
   captureId: StableId;
   projectId: StableId;
@@ -2008,6 +2010,41 @@ export interface FigmaCaptureManifest {
   };
 }
 /**
+ * Closed nonsecret observations only. Absence on legacy evidence means unknown, never a reconstructed diagnosis. A command diagnostic without a receipt is not durable proof.
+ *
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "ReferenceDiagnostic".
+ */
+export interface ReferenceDiagnostic {
+  stage: "mime" | "png" | "json" | "worker" | "operation" | "legacy";
+  reason:
+    | "validated"
+    | "mime-missing"
+    | "mime-rejected"
+    | "not-png"
+    | "png-malformed"
+    | "png-unsupported"
+    | "png-interlace"
+    | "png-animation"
+    | "png-critical"
+    | "png-color-unsupported"
+    | "png-color-conflict"
+    | "input-limit"
+    | "output-limit"
+    | "raster-limit"
+    | "node-limit"
+    | "depth-limit"
+    | "intermediate-limit"
+    | "json-malformed"
+    | "worker-protocol"
+    | "worker-unavailable"
+    | "cancelled"
+    | "deadline"
+    | "authority"
+    | "legacy-unknown";
+  mimeClass: "not-observed" | "png" | "generic-binary" | "missing" | "other";
+}
+/**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "FigmaCaptureResult".
  */
@@ -2018,6 +2055,7 @@ export interface FigmaCaptureResult {
   manifest: ArtifactReference;
   persistedBytes: number;
   errorCode?: ErrorCode;
+  referenceDiagnostic?: ReferenceDiagnostic;
   source?: ArtifactReference;
   completeness: "complete" | "partial" | "unavailable";
   referenceStatus: "complete" | "partial" | "unavailable";
@@ -2098,6 +2136,7 @@ export interface ContractError {
   retryable: boolean;
   retryAfter?: Timestamp;
   jobId?: StableId;
+  referenceDiagnostic?: ReferenceDiagnostic;
   diagnosticIds: StableId[];
 }
 /**
@@ -2339,6 +2378,7 @@ export interface FigmaReferenceRequest {
 export interface FigmaReferenceEvidence {
   schemaVersion: SchemaVersion;
   format: "figma-reference-evidence-v1";
+  referenceDiagnostic?: ReferenceDiagnostic;
   request: FigmaReferenceRequest;
   startedAt: Timestamp;
   endedAt: Timestamp;
@@ -2433,6 +2473,7 @@ export interface NativeReferenceEnvelope {
   operation: "reference-plan" | "reference-approve" | "reference-download" | "reference-inspect";
   projectId: StableId;
   requestId: StableId;
+  referenceDiagnostic?: ReferenceDiagnostic;
   status: "complete" | "partial" | "failed" | "interrupted" | "cancelled" | "unavailable";
   value?: {
     phase: "proposed" | "approved" | "admitted" | "completed";

@@ -124,6 +124,7 @@ export interface ContractTypes {
   HandoffMetadata: Types.HandoffMetadata;
   HandoffManifest: Types.HandoffManifest;
   ErrorCode: Types.ErrorCode;
+  ReferenceDiagnostic: Types.ReferenceDiagnostic;
   ContractError: Types.ContractError;
   Budget: Types.Budget;
   AuthorizationContext: Types.AuthorizationContext;
@@ -289,6 +290,7 @@ export const contractNames: readonly ContractName[] = [
   "HandoffMetadata",
   "HandoffManifest",
   "ErrorCode",
+  "ReferenceDiagnostic",
   "ContractError",
   "Budget",
   "AuthorizationContext",

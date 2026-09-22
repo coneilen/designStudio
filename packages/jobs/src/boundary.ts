@@ -3,6 +3,7 @@ import {
   type ErrorCode,
   type OperationContext,
   type Outcome,
+  referenceDiagnosticFields,
   validateContract,
 } from "@design-studio/contracts";
 import { HostBoundaryError } from "@design-studio/host";
@@ -63,7 +64,12 @@ export function failure<T>(
         : code === "CANCELLED"
           ? "cancelled"
           : "failed",
-    error: detail(code, error instanceof JobFailure && error.detail.retryable),
+    error: {
+      ...detail(code, error instanceof JobFailure && error.detail.retryable),
+      ...referenceDiagnosticFields(
+        error instanceof JobFailure ? error.detail : error,
+      ),
+    },
     diagnosticIds: [],
   };
 }

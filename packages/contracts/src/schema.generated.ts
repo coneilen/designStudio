@@ -3302,6 +3302,9 @@ export const foundationSchema = {
         "format": {
           "const": "figma-rest-capture-v1"
         },
+        "referenceDiagnostic": {
+          "$ref": "#/definitions/ReferenceDiagnostic"
+        },
         "policySha256": {
           "$ref": "#/definitions/Sha256"
         },
@@ -3603,6 +3606,9 @@ export const foundationSchema = {
         },
         "errorCode": {
           "$ref": "#/definitions/ErrorCode"
+        },
+        "referenceDiagnostic": {
+          "$ref": "#/definitions/ReferenceDiagnostic"
         },
         "source": {
           "$ref": "#/definitions/ArtifactReference"
@@ -4639,6 +4645,9 @@ export const foundationSchema = {
         "format": {
           "const": "figma-reference-evidence-v1"
         },
+        "referenceDiagnostic": {
+          "$ref": "#/definitions/ReferenceDiagnostic"
+        },
         "request": {
           "$ref": "#/definitions/FigmaReferenceRequest"
         },
@@ -4806,6 +4815,9 @@ export const foundationSchema = {
         },
         "requestId": {
           "$ref": "#/definitions/StableId"
+        },
+        "referenceDiagnostic": {
+          "$ref": "#/definitions/ReferenceDiagnostic"
         },
         "status": {
           "enum": [
@@ -7372,6 +7384,65 @@ export const foundationSchema = {
         "INTERNAL_ERROR"
       ]
     },
+    "ReferenceDiagnostic": {
+      "description": "Closed nonsecret observations only. Absence on legacy evidence means unknown, never a reconstructed diagnosis. A command diagnostic without a receipt is not durable proof.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stage",
+        "reason",
+        "mimeClass"
+      ],
+      "properties": {
+        "stage": {
+          "enum": [
+            "mime",
+            "png",
+            "json",
+            "worker",
+            "operation",
+            "legacy"
+          ]
+        },
+        "reason": {
+          "enum": [
+            "validated",
+            "mime-missing",
+            "mime-rejected",
+            "not-png",
+            "png-malformed",
+            "png-unsupported",
+            "png-interlace",
+            "png-animation",
+            "png-critical",
+            "png-color-unsupported",
+            "png-color-conflict",
+            "input-limit",
+            "output-limit",
+            "raster-limit",
+            "node-limit",
+            "depth-limit",
+            "intermediate-limit",
+            "json-malformed",
+            "worker-protocol",
+            "worker-unavailable",
+            "cancelled",
+            "deadline",
+            "authority",
+            "legacy-unknown"
+          ]
+        },
+        "mimeClass": {
+          "enum": [
+            "not-observed",
+            "png",
+            "generic-binary",
+            "missing",
+            "other"
+          ]
+        }
+      }
+    },
     "ContractError": {
       "type": "object",
       "additionalProperties": false,
@@ -7397,6 +7468,9 @@ export const foundationSchema = {
         },
         "jobId": {
           "$ref": "#/definitions/StableId"
+        },
+        "referenceDiagnostic": {
+          "$ref": "#/definitions/ReferenceDiagnostic"
         },
         "diagnosticIds": {
           "type": "array",

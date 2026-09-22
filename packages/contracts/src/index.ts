@@ -4,3 +4,4 @@ export { contractNames } from "./catalog.generated.js";
 export * from "./generated.js";
 export * from "./profile.js";
 export * from "./providers.js";
+export * from "./reference-diagnostic.js";

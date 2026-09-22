@@ -6,9 +6,13 @@ import type {
   FigmaReferenceRequest,
   NativeReferenceEnvelope,
   OperationContext,
+  ReferenceDiagnostic,
   ResourceSnapshot,
 } from "@design-studio/contracts";
-import { validateContract } from "@design-studio/contracts";
+import {
+  referenceDiagnosticFields,
+  validateContract,
+} from "@design-studio/contracts";
 import {
   canonicalBytes,
   canonicalDigest,
@@ -91,6 +95,8 @@ export class NativeReference {
   }
   private service: JobService | undefined;
   private primaryFailure: ErrorCode | undefined;
+  private immediateDiagnostic: ReferenceDiagnostic | undefined;
+  private immediateCode: ErrorCode | undefined;
   get operationFailure() {
     return this.primaryFailure;
   }
@@ -295,6 +301,8 @@ export class NativeReference {
       if (this.service || !this.work.referenceAuthority)
         throw new ApplicationError("FORBIDDEN");
       this.primaryFailure = undefined;
+      this.immediateDiagnostic = undefined;
+      this.immediateCode = undefined;
       const fields =
         input.operation === "reference-approve"
           ? ["origin", "expectedProof", "confirmation"]
@@ -484,6 +492,11 @@ export class NativeReference {
             throw new ApplicationError("ARTIFACT_INTEGRITY");
           return {
             ...base,
+            referenceDiagnostic: evidence.referenceDiagnostic ?? {
+              stage: "legacy",
+              reason: "legacy-unknown",
+              mimeClass: "not-observed",
+            },
             status:
               evidence.referenceStatus === "complete"
                 ? "complete"
@@ -692,6 +705,11 @@ export class NativeReference {
                 diagnosticIds: [],
               },
             };
+          } catch (error) {
+            this.immediateDiagnostic =
+              referenceDiagnosticFields(error).referenceDiagnostic;
+            this.immediateCode = safeError(error).code;
+            throw error;
           } finally {
             await budget.close();
           }
@@ -779,12 +797,20 @@ export class NativeReference {
       }
       await reader.close();
       reader = undefined;
+      if (this.immediateCode)
+        throw new ApplicationError(
+          this.immediateCode,
+          400,
+          undefined,
+          this.immediateDiagnostic,
+        );
       return this.execute(
         { operation: "reference-inspect", requestId: input.requestId },
         signal,
       ).then((result) => ({ ...result, operation: input.operation }));
     } catch (error) {
-      const code = safeError(error).code;
+      const safe = safeError(error);
+      const code = safe.code;
       return {
         ...base,
         status:
@@ -799,6 +825,13 @@ export class NativeReference {
             "Reference operation was not confirmed. Inspect the original request; no URL refresh, capture, or automatic retry is authorized.",
           retryable: false,
           diagnosticIds: [],
+          ...referenceDiagnosticFields(
+            safe.referenceDiagnostic
+              ? safe
+              : {
+                  referenceDiagnostic: this.immediateDiagnostic,
+                },
+          ),
         },
       };
     } finally {

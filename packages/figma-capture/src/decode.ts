@@ -1,7 +1,11 @@
 import { Worker } from "node:worker_threads";
 import type { JsonObject } from "@design-studio/contracts";
-import { HostBoundaryError } from "@design-studio/host";
 import type { ImageBudget } from "./boundary.js";
+import {
+  decoderReasons,
+  diagnosticError,
+  operationDiagnostic,
+} from "./diagnostic.js";
 
 type PngInfo = {
   width: number;
@@ -13,16 +17,17 @@ async function decode(
   bytes: Uint8Array,
   budget: ImageBudget,
 ): Promise<unknown> {
-  budget.check();
+  try {
+    budget.check();
+  } catch (error) {
+    throw operationDiagnostic(error);
+  }
   if (
     !(bytes instanceof Uint8Array) ||
     bytes.buffer instanceof SharedArrayBuffer ||
-    bytes.length > budget.context.budget.maxInputBytes
+    bytes.length > Math.min(26214400, budget.context.budget.maxInputBytes)
   )
-    throw new HostBoundaryError(
-      "INPUT_LIMIT",
-      "Capture decoder input exceeds its original bound.",
-    );
+    throw diagnosticError("INPUT_LIMIT", kind, "input-limit");
   const owned = Uint8Array.from(bytes);
   let worker: Worker;
   try {
@@ -32,11 +37,7 @@ async function decode(
         bytes: owned,
         maxInput: Math.min(26214400, budget.context.budget.maxInputBytes),
         maxOutput: Math.min(26214400, budget.context.budget.maxOutputBytes),
-        maxPixels: Math.min(
-          6553600,
-          budget.context.budget.maxRasterPixels,
-          Math.floor(budget.context.budget.maxOutputBytes / 4),
-        ),
+        maxPixels: Math.min(6553600, budget.context.budget.maxRasterPixels),
         maxNodes: Math.min(20000, budget.context.budget.maxExpandedNodes),
         maxDepth: Math.min(128, budget.context.budget.maxDepth),
       },
@@ -53,14 +54,16 @@ async function decode(
     });
   } catch {
     if (owned.byteLength) owned.fill(0);
-    throw new HostBoundaryError(
+    throw diagnosticError(
       "PROVIDER_UNAVAILABLE",
-      "Capture decoder worker could not start.",
+      "worker",
+      "worker-unavailable",
     );
   }
   let message: unknown;
   let messages = 0;
   let failed = false;
+  let protocolFailure = false;
   let termination: Promise<number> | undefined;
   const abort = () => {
     termination ??= worker.terminate();
@@ -73,6 +76,7 @@ async function decode(
   worker.on("message", (value: unknown) => {
     if (++messages !== 1) {
       failed = true;
+      protocolFailure = true;
       abort();
     } else message = value;
   });
@@ -83,6 +87,7 @@ async function decode(
       chunk.fill(0);
       if (diagnostics > 1024) {
         failed = true;
+        protocolFailure = true;
         abort();
       }
     });
@@ -99,15 +104,50 @@ async function decode(
       !message ||
       typeof message !== "object" ||
       !("ok" in message) ||
-      message.ok !== true ||
       !("kind" in message) ||
       message.kind !== kind
     )
-      throw new HostBoundaryError(
-        "INVALID_INPUT",
-        "Bounded capture decoding was unavailable or invalid.",
+      throw diagnosticError(
+        "PROVIDER_UNAVAILABLE",
+        "worker",
+        !protocolFailure && (failed || code !== 0)
+          ? "worker-unavailable"
+          : "worker-protocol",
+      );
+    if (
+      message.ok === false &&
+      Object.keys(message).length === 3 &&
+      "reason" in message &&
+      typeof message.reason === "string" &&
+      Object.hasOwn(decoderReasons, message.reason)
+    ) {
+      const reason = message.reason as keyof typeof decoderReasons;
+      const allowed =
+        kind === "json"
+          ? ["json-malformed", "node-limit", "depth-limit", "worker-protocol"]
+          : Object.keys(decoderReasons).filter(
+              (entry) => entry !== "json-malformed" && entry !== "depth-limit",
+            );
+      if (allowed.includes(reason))
+        throw diagnosticError(
+          decoderReasons[reason],
+          reason.startsWith("worker-") ? "worker" : kind,
+          reason,
+        );
+    }
+    if (
+      message.ok !== true ||
+      Object.keys(message).sort().join(",") !==
+        (kind === "png" ? "colorSpace,height,kind,ok,width" : "kind,ok,value")
+    )
+      throw diagnosticError(
+        "PROVIDER_UNAVAILABLE",
+        "worker",
+        "worker-protocol",
       );
     return message;
+  } catch (error) {
+    throw operationDiagnostic(error);
   } finally {
     budget.signal.removeEventListener("abort", abort);
     if (termination) await termination;
@@ -126,10 +166,7 @@ export async function parseCaptureJson(
     typeof result.value !== "object" ||
     Array.isArray(result.value)
   )
-    throw new HostBoundaryError(
-      "INVALID_INPUT",
-      "Capture JSON is not an object.",
-    );
+    throw diagnosticError("PROVIDER_UNAVAILABLE", "worker", "worker-protocol");
   return result.value as JsonObject;
 }
 export async function decodeReference(
@@ -142,15 +179,21 @@ export async function decodeReference(
     typeof result !== "object" ||
     !("width" in result) ||
     typeof result.width !== "number" ||
+    !Number.isSafeInteger(result.width) ||
+    result.width <= 0 ||
     !("height" in result) ||
     typeof result.height !== "number" ||
+    !Number.isSafeInteger(result.height) ||
+    result.height <= 0 ||
+    !Number.isSafeInteger(result.width * result.height) ||
+    result.width * result.height >
+      Math.min(6553600, budget.context.budget.maxRasterPixels) ||
+    result.width * result.height * 4 >
+      Math.min(26214400, budget.context.budget.maxOutputBytes) ||
     !("colorSpace" in result) ||
     (result.colorSpace !== "srgb" && result.colorSpace !== "unknown")
   )
-    throw new HostBoundaryError(
-      "INVALID_INPUT",
-      "Capture PNG metadata is invalid.",
-    );
+    throw diagnosticError("PROVIDER_UNAVAILABLE", "worker", "worker-protocol");
   return {
     width: result.width,
     height: result.height,

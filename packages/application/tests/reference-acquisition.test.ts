@@ -16,6 +16,12 @@ import type { CaptureProject, CaptureWork } from "@design-studio/project-host";
 import { LocalStore } from "@design-studio/storage";
 import { afterEach, expect, it, vi } from "vitest";
 import {
+  image as authoredPng,
+  chunk,
+  srgb,
+} from "../../assets/tests/png-fixtures.js";
+import * as referenceDecoder from "../../figma-capture/dist/decode.js";
+import {
   CaptureHttpError,
   FigmaHttpsTransport,
 } from "../../figma-capture/dist/transport.js";
@@ -402,6 +408,7 @@ it("requires exact explicit offline approval and attaches once without modifying
     },
     usage: { externalCalls: 1, dnsQueries: 1 },
   });
+
   expect(f.image).toHaveBeenCalledTimes(1);
   expect(f.api).not.toHaveBeenCalled();
   expect(f.vault).not.toHaveBeenCalled();
@@ -413,6 +420,147 @@ it("requires exact explicit offline approval and attaches once without modifying
   expect(f.image).toHaveBeenCalledTimes(1);
   const after = new Map(await f.blobs());
   for (const [name, bytes] of old) expect(after.get(name)).toEqual(bytes);
+});
+
+it.each([
+  ["image/png", "png", true],
+  ["application/octet-stream", "generic-binary", true],
+  ["binary/octet-stream", "generic-binary", true],
+  [undefined, "missing", false],
+  ["text/html", "other", false],
+  ["application/json", "other", false],
+] as const)(
+  "persists safe MIME %s evidence and original bytes without renewing consumed authority",
+  async (mediaType, mimeClass, accepted) => {
+    const f = await fixture();
+    const approval = await f.approve();
+    const before = await f.blobs();
+    const original = authoredPng(
+      6,
+      8,
+      Buffer.from([
+        0, 10, 20, 30, 255, 10, 20, 30, 255, 0, 10, 20, 30, 255, 10, 20, 30,
+        255,
+      ]),
+      [
+        srgb(),
+        chunk("tEXt", Buffer.from("Synthetic\0diagnostic-private-marker")),
+      ],
+      [],
+      2,
+      2,
+    );
+    f.image.mockImplementation(async (_url, budget) => {
+      budget.dnsQuery();
+      budget.receive(original.length + 100);
+      budget.decoded(original.length);
+      return {
+        status: 200,
+        bytes: Buffer.from(original),
+        ...(mediaType ? { mediaType } : {}),
+      };
+    });
+    const result = await f.download(approval);
+    expect(result.status, JSON.stringify(result)).toBe(
+      accepted ? "complete" : "unavailable",
+    );
+    expect(result.value?.evidence).toMatchObject({
+      statusCode: 200,
+      referenceDiagnostic: {
+        stage: accepted ? "png" : "mime",
+        reason: accepted
+          ? "validated"
+          : mediaType
+            ? "mime-rejected"
+            : "mime-missing",
+        mimeClass,
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain("diagnostic-private-marker");
+    const after = new Map(await f.blobs());
+    for (const [hash, bytes] of before) expect(after.get(hash)).toEqual(bytes);
+    if (accepted)
+      expect(
+        after.get(required(result.value?.evidence?.reference?.artifact.sha256)),
+      ).toEqual(original);
+    else {
+      expect(result.value?.receipt?.outputs).toHaveLength(1);
+      expect(result.value?.evidence?.errorCode).toBe("UNSUPPORTED_FEATURE");
+    }
+    await f.reopen();
+    expect((await f.download(approval)).value?.receipt).toEqual(
+      result.value?.receipt,
+    );
+    expect(f.image).toHaveBeenCalledTimes(1);
+    expect(f.api).not.toHaveBeenCalled();
+    expect(f.vault).not.toHaveBeenCalled();
+  },
+);
+it("returns terminal raster diagnostic without claiming a durable receipt or replaying", async () => {
+  const f = await fixture();
+  const approval = await f.approve();
+  const bytes = png(true, 1, 1);
+  const { header, signature } = await import(
+    "../../assets/tests/png-fixtures.js"
+  );
+  const oversized = Buffer.concat([
+    signature,
+    header(6, 8, 6553601),
+    bytes.subarray(33),
+  ]);
+  f.image.mockResolvedValue({
+    status: 200,
+    bytes: oversized,
+    mediaType: "image/png",
+  });
+  const result = await f.download(approval);
+  expect(result).toMatchObject({
+    status: "failed",
+    error: {
+      code: "RASTER_LIMIT",
+      referenceDiagnostic: {
+        stage: "png",
+        reason: "raster-limit",
+        mimeClass: "png",
+      },
+    },
+  });
+  expect(result.value?.receipt).toBeUndefined();
+  await f.download(approval);
+  expect(f.image).toHaveBeenCalledTimes(1);
+});
+it("reads legacy unknown HTTP200 decoder failure without rewriting its evidence or consumed slot", async () => {
+  const f = await fixture();
+  const approval = await f.approve();
+  const legacy = vi
+    .spyOn(referenceDecoder, "decodeReference")
+    .mockRejectedValue(
+      new HostBoundaryError(
+        "INVALID_INPUT",
+        "Synthetic legacy decoder collision.",
+      ),
+    );
+  const result = await f.download(approval);
+  legacy.mockRestore();
+  expect(result.status, JSON.stringify(result)).toBe("unavailable");
+  expect(result.value?.evidence).toMatchObject({
+    statusCode: 200,
+    errorCode: "INVALID_INPUT",
+    referenceStatus: "unavailable",
+  });
+  expect(result.value?.evidence?.referenceDiagnostic).toBeUndefined();
+  expect(result.referenceDiagnostic).toEqual({
+    stage: "legacy",
+    reason: "legacy-unknown",
+    mimeClass: "not-observed",
+  });
+  const before = await f.blobs();
+  await f.reopen();
+  const inspected = await f.download(approval);
+  expect(inspected.value?.receipt).toEqual(result.value?.receipt);
+  expect(inspected.value?.evidence).toEqual(result.value?.evidence);
+  expect(await f.blobs()).toEqual(before);
+  expect(f.image).toHaveBeenCalledTimes(1);
 });
 
 it("refuses old native capability and changed proof without network", async () => {

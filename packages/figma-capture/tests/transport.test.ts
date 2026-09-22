@@ -183,6 +183,38 @@ it("uses exact-host reference authority with no credentials, redirect following 
     },
   );
 });
+
+it.each([
+  ["image/png", "image/png"],
+  ["application/octet-stream", "application/octet-stream"],
+  ["binary/octet-stream", "binary/octet-stream"],
+  ["text/html; private=not-retained", "other"],
+  ["application/json", "application/json"],
+  ["application/octet-stream-suffix", "other"],
+  ["", undefined],
+] as const)(
+  "preserves only narrow HTTP200 MIME classes for %s",
+  async (header, expected) => {
+    await serverTest(
+      `HTTP/1.1 200 OK\r\nContent-Length: 2\r\n${header ? `Content-Type: ${header}\r\n` : ""}Connection: close\r\n\r\nxx`,
+      async (facts) => {
+        const requestBudget = budget();
+        try {
+          const response = await new FigmaHttpsTransport().image(
+            "https://images.capture.invalid/synthetic.png",
+            requestBudget,
+          );
+          expect(response.mediaType).toBe(expected);
+          expect(facts.credentialHeaders).toBe(0);
+          expect(facts.requests).toBe(1);
+          response.bytes.fill(0);
+        } finally {
+          await requestBudget.close();
+        }
+      },
+    );
+  },
+);
 it("rejects a private DNS answer for the fixed reference origin with proven no HTTP request", async () => {
   await serverTest("", async (facts) => {
     seam.answers = [{ address: "10.1.2.3", family: 4 }];

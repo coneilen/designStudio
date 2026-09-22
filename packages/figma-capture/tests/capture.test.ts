@@ -1,4 +1,5 @@
 import { expect, it, vi } from "vitest";
+import { chunk, image, srgb } from "../../assets/tests/png-fixtures.js";
 import { captureSelectedFrame } from "../src/capture.js";
 import { CaptureHttpError, FigmaHttpsTransport } from "../src/transport.js";
 import { captureFixture, nodes, PAT, png } from "./support.js";
@@ -48,6 +49,93 @@ function network() {
     },
   };
 }
+it.each([
+  ["image/png", "png", true],
+  ["application/octet-stream", "generic-binary", true],
+  ["binary/octet-stream", "generic-binary", true],
+  [undefined, "missing", false],
+  ["text/html", "other", false],
+  ["application/json", "other", false],
+  ["other", "other", false],
+] as const)(
+  "classifies HTTP200 reference MIME %s without URL-based acceptance",
+  async (mediaType, mimeClass, accepted) => {
+    const fixture = captureFixture(["https://images.capture.invalid"]);
+    const fake = network();
+    const original = image(6, 8, undefined, [
+      srgb(),
+      chunk("tEXt", Buffer.from("Synthetic\0private-text-marker")),
+    ]);
+    fake.image.mockResolvedValue({
+      status: 200,
+      bytes: Buffer.from(original),
+      ...(mediaType ? { mediaType } : {}),
+    });
+    try {
+      const prepared = await captureSelectedFrame(
+        fixture.request,
+        fixture.execution,
+        fixture,
+      );
+      expect(prepared.manifest.referenceDiagnostic).toEqual({
+        stage: accepted ? "png" : "mime",
+        reason: accepted
+          ? "validated"
+          : mediaType
+            ? "mime-rejected"
+            : "mime-missing",
+        mimeClass,
+      });
+      expect(prepared.result.referenceStatus).toBe(
+        accepted ? "complete" : "unavailable",
+      );
+      expect(JSON.stringify(prepared.manifest)).not.toContain(
+        "private-text-marker",
+      );
+      if (accepted) {
+        const hash = prepared.manifest.reference?.artifact.sha256;
+        expect(hash && fixture.blobs.get(hash)).toEqual(original);
+      } else {
+        expect(prepared.result.errorCode).toBe("UNSUPPORTED_FEATURE");
+        expect(
+          prepared.manifest.artifacts.some(
+            (entry) => entry.role === "reference",
+          ),
+        ).toBe(false);
+      }
+    } finally {
+      fake.close();
+    }
+  },
+);
+it("rejects HTML and malformed content even when MIME is recognized generic binary", async () => {
+  const fixture = captureFixture(["https://images.capture.invalid"]);
+  const fake = network();
+  fake.image.mockResolvedValue({
+    status: 200,
+    bytes: Buffer.from("<html>synthetic</html>"),
+    mediaType: "application/octet-stream",
+  });
+  try {
+    const prepared = await captureSelectedFrame(
+      fixture.request,
+      fixture.execution,
+      fixture,
+    );
+    expect(prepared.result).toMatchObject({
+      referenceStatus: "unavailable",
+      errorCode: "UNSUPPORTED_FEATURE",
+      referenceDiagnostic: {
+        stage: "png",
+        reason: "not-png",
+        mimeClass: "generic-binary",
+      },
+    });
+    expect(prepared.manifest.reference).toBeUndefined();
+  } finally {
+    fake.close();
+  }
+});
 it("captures three original pinned responses with truthful partial result before unapproved CDN contact", async () => {
   const fixture = captureFixture();
   const fake = network();

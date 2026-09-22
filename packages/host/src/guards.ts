@@ -8,6 +8,8 @@ import {
   type Operation,
   type OperationContext,
   type Outcome,
+  type ReferenceDiagnostic,
+  referenceDiagnosticFields,
   validateContract,
 } from "@design-studio/contracts";
 
@@ -17,6 +19,7 @@ export class HostBoundaryError extends Error {
     message: string,
     readonly unavailable = false,
     options?: ErrorOptions,
+    readonly referenceDiagnostic?: ReferenceDiagnostic,
   ) {
     super(message, options);
     this.name = "HostBoundaryError";
@@ -280,6 +283,7 @@ export async function boundary<T>(
       error: {
         code: error.code,
         message: error.message,
+        ...referenceDiagnosticFields(error),
         retryable: false,
         diagnosticIds: [],
       },

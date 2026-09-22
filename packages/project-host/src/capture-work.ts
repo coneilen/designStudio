@@ -3,7 +3,10 @@ import type {
   CredentialStore,
   OperationContext,
 } from "@design-studio/contracts";
-import { DEFAULT_BUDGETS } from "@design-studio/contracts";
+import {
+  DEFAULT_BUDGETS,
+  referenceDiagnosticFields,
+} from "@design-studio/contracts";
 import {
   type Authority,
   authorizeOperation,
@@ -235,6 +238,9 @@ export function acquireCaptureWork(project: CaptureProject): CaptureWork {
                 throw new HostBoundaryError(
                   result.error.code,
                   "Owned credential use did not complete.",
+                  false,
+                  undefined,
+                  referenceDiagnosticFields(result.error).referenceDiagnostic,
                 );
               return result.value;
             } finally {

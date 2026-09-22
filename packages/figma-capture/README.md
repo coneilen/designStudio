@@ -23,6 +23,33 @@ Persisted observations distinguish actual HTTP status from unknown effects and
 proven no-HTTP effects. Neither a successful GET nor a decoded PNG establishes
 font/image-fill rights, original capture completeness or renderer readiness.
 
+Both capture and reference acquisition require an observed PNG media type or
+the narrow S3 binary types `application/octet-stream` / `binary/octet-stream`.
+Generic binary is accepted **only after complete bounded PNG validation**,
+never from a URL suffix. Missing types, HTML, JSON and other media types are
+rejected even if the body looks like PNG. MIME essence is HTTP-normalized;
+raw headers are not retained. This does not identify the MIME or rejection
+cause of any historical live response.
+
+The decoder supports bounded noninterlaced PNG color/depth variants and
+ordinary ancillary text, including after IDAT; see the assets profile for
+16-bit precision and structural ICC limitations. Adam7/APNG remain explicitly
+unsupported. ICC/unknown color is retained as partial reference evidence, not
+silently promoted to sRGB or fidelity/readiness.
+
+Optional `referenceDiagnostic` carries only closed `stage`, `reason` and
+`mimeClass` enums through workers, capture results and reference evidence.
+Malformed assets, unsupported features, MIME refusal, worker protocol failure
+and resource limits have distinct boundary codes/reasons. No exception messages,
+stacks, header strings, chunk text, URLs or pixels enter that field. Worker
+responses require exactly one closed message, matching kind and finite positive
+bounded dimensions. Input/output/raster/node/depth limits and cancellation,
+deadline or authority loss remain terminal: they do not manufacture a receipt.
+An immediate command error can retain the safe diagnostic when persistence is
+not authorized/affordable; it is not durable proof. Old records without the field
+still validate unchanged; reference inspection labels the absent diagnostic
+`legacy-unknown` outside the original evidence, never rewriting its receipt.
+
 Version 0.1.0. Bounded, single-selected-FRAME REST capture core. This package
 does not implement a public native capture command, converter wrapper, Figma
 writes, fills/variables/libraries/history traversal, model/device actions, or

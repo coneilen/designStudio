@@ -75,8 +75,8 @@ commit, retention and deletion (including an interrupted write with no receipt).
 
 | Input | Implemented profile | Explicit limitations |
 | --- | --- | --- |
-| PNG | Signature, CRC/order/length checks; dimension/pixel/RGBA output preflight; capped zlib inflate with exact decoded stream length; actual pngjs decode; measured alpha | Only 8-bit noninterlaced RGB/RGBA. JPEG and WebP are signature-classified but have **no decoder support**. Palette/grayscale/16-bit/interlacing/APNG/tRNS/ICC and unknown chunks are rejected. |
-| Color | Explicit sRGB chunk is recorded as sRGB; absent sRGB remains `unknown`; standard gAMA and pHYs accepted without treating them as proof of primaries | No ICC conversion, EXIF orientation, wide gamut or color-fidelity promise. |
+| PNG | All standard noninterlaced grayscale, RGB, indexed, gray-alpha and RGBA depths; PLTE/tRNS; CRC, reserved bits, ordering, consecutive IDAT, exact zlib completion and scanline filters checked before pngjs | Adam7 and APNG explicitly unsupported; unknown critical/unsafe ancillary chunks rejected. JPEG/WebP have signature classification only. This is a bounded subset, not full PNG conformance. |
+| Color | Valid nonconflicting sRGB is evidence of sRGB; gAMA/cHRM alone, structurally validated ICC and unknown safe ancillary remain `unknown`. Conflicting sRGB/gAMA/cHRM/iCCP declarations fail closed | ICC v2/v4 structural checks are not color management, tag interpretation, profile attestation, EXIF orientation or a wide-gamut/fidelity promise. |
 | SVG | Strict UTF-8/XML reconstructed from allowed `svg`, `g`, `title`, `rect`, `circle`, `ellipse`, `line`; positive integer intrinsic width/height, bounded numeric geometry, hex colors and opacity; separate derivative hash | Fractional intrinsic dimensions are unsupported (never rounded); fractional child geometry remains supported. No paths/polygons/transforms, CSS, visible text, images, use/refs, gradients, masks, filters, animation, handlers, script, foreign content, entities/DTD/CDATA/comments/processing instructions. Unsupported features are rejected, not silently stripped. |
 | Fonts | Static standalone TrueType sfnt table checksums/ranges, head/maxp/loca bounds, actual Unicode names, OS/2 weight/style/fsType, cmap4/12 requested-code-point coverage | No WOFF/WOFF2/TTC/CFF/variable/color fonts, shaping, hint execution, glyph rasterization or font installation. This is a face/coverage inspector, **not a complete glyph-program sanitizer or browser font-use proof**. F06 retains engine font sanitization and actual-use checks. |
 | Remote | Allowlisted HTTPS origin and each redirect; all DNS answers public; address-pinned transport contract and actual-peer check; byte/time/call limits, cancellation, no auth-failure fallback | Only policy orchestration over injected DNS/transport was tested. No native transport is shipped and no real remote asset fetch was performed. |
@@ -88,6 +88,24 @@ Callers may approve validated alternatives; designs cannot authorize limits.
 Equal thresholds pass; over-limit diagnostics include measured and allowed.
 The output budget independently limits RGBA bytes and total staged bytes, so
 the default output cap can be stricter than the pixel/snapshot caps.
+
+PNG additionally fixes ceilings of 25 MiB encoded input, 25 MiB per decoded or
+intermediate allocation, 6,553,600 pixels and 20,000 chunks/profile tags; smaller
+caller bounds win. Scanline filter bytes count toward the intermediate cap.
+16-bit decoding preflights the 8-bytes-per-pixel intermediate before allocation,
+then normalizes channels with nearest-integer `sample * 255 / 65535`; this is
+an 8-bit inspection representation, not a lossless 16-bit derivative. Opacity
+is measured **before** quantization (65534 alpha is not opaque).
+Original encoded bytes, metadata and profile bytes are never rewritten.
+
+Repeatable tEXt/zTXt/iTXt metadata is permitted before/after the consecutive
+IDAT run. Text envelopes are checked but text/ compressed-text content is not
+interpreted, inflated or returned. ICC profile decompression has its own exact
+stream-completion/allocation check, declared-size/acsp/color-model checks, and
+bounded tag offsets/lengths; tag transforms and descriptive strings are never
+evaluated. These checks do not certify a profile's colorimetry. Unknown
+safe-to-copy ancillary data is retained but prevents sRGB attestation; unknown
+unsafe-to-copy chunks fail explicitly rather than ignoring possible semantics.
 
 All unique originals/notices are snapshotted after initial authorization and
 before subsequent awaits; derivatives join the same byte ledger. Final
