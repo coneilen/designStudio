@@ -9,11 +9,16 @@ reference origin receives no PAT, authorization header or cookies; redirects and
 automatic retries are forbidden. One DNS lookup and one GET are independently
 bounded by the new job's original 30-second deadline and approval expiry.
 
-Reference limits are 25 MiB aggregate logical private input plus received network
+Reference limits are 25 MiB aggregate physical private read reservations plus received network
 bytes, 25 MiB output including evidence, and 6,553,600 decoded pixels (also subject
-to the RGBA output bound). Storage/host verification reads retain their own
-existing finite budgets. Every admission uses one attempt. Recognized SigV4
+to the RGBA output bound). Repeated storage/host verification, publication reads
+and EOF probes are charged to the same invocation-wide allowance before reading,
+in addition to their existing finite per-operation budgets. Evidence's private
+counter covers preparation; subsequent verification cannot reset the meter.
+Every admission uses one attempt. Recognized SigV4
 expiry can deny locally; a 403 alone is reported as denial, not asserted expiry.
+Observed remote 401/403 responses retain their actual status and unavailable
+evidence, while local authority loss remains terminal without a denial receipt.
 Persisted observations distinguish actual HTTP status from unknown effects and
 proven no-HTTP effects. Neither a successful GET nor a decoded PNG establishes
 font/image-fill rights, original capture completeness or renderer readiness.

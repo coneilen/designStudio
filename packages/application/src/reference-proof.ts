@@ -25,6 +25,7 @@ import {
   REFERENCE_ORIGIN,
   referenceUrl,
 } from "../../figma-capture/dist/reference.js";
+import type { ReferenceInput } from "./reference-input.js";
 import { ApplicationError, unwrap } from "./response.js";
 
 export const ref = (value: ArtifactReference): ArtifactReference => ({
@@ -62,7 +63,9 @@ export function referenceIds(work: CaptureWork, requestId: string) {
   return { original, job, approval: `approval_${job}` };
 }
 export class ReferenceReader {
-  bytes = 0;
+  get bytes() {
+    return this.input.privateBytes;
+  }
   private readonly guard: OperationGuard;
   private readonly watch: ReturnType<OperationGuard["watch"]>;
   constructor(
@@ -70,6 +73,7 @@ export class ReferenceReader {
     readonly store: LocalStore,
     readonly files: ProjectFileSystem,
     readonly context: OperationContext,
+    readonly input: ReferenceInput,
   ) {
     this.guard = new OperationGuard(
       context,
@@ -96,35 +100,40 @@ export class ReferenceReader {
   }
   private async read(reference: ArtifactReference, maximum = 262144) {
     await this.check();
-    const artifact = unwrap(
-      await this.store.verify(ref(reference), this.context),
-    );
-    if (
-      artifact.byteLength > maximum ||
-      artifact.byteLength > REFERENCE_LIMITS.maxInputBytes - this.bytes
-    )
-      throw new ApplicationError("INPUT_LIMIT");
-    this.bytes += artifact.byteLength;
-    const bytes = unwrap(
-      await this.files.read(
-        {
-          artifactRootId: this.work.project.artifactRootId,
-          path: artifact.path,
-        },
-        this.context,
-      ),
-    );
+    const priorLimit = this.input.maximumFileBytes;
+    this.input.maximumFileBytes = maximum;
     try {
-      await this.check();
+      const artifact = unwrap(
+        await this.store.verify(ref(reference), this.context),
+      );
       if (
-        bytes.length !== artifact.byteLength ||
-        hashBytes(bytes) !== reference.sha256
+        artifact.byteLength > maximum ||
+        artifact.byteLength > REFERENCE_LIMITS.maxInputBytes - this.bytes
       )
-        throw new ApplicationError("ARTIFACT_INTEGRITY");
-      return bytes;
-    } catch (error) {
-      bytes.fill(0);
-      throw error;
+        throw new ApplicationError("INPUT_LIMIT");
+      const bytes = unwrap(
+        await this.files.read(
+          {
+            artifactRootId: this.work.project.artifactRootId,
+            path: artifact.path,
+          },
+          this.context,
+        ),
+      );
+      try {
+        await this.check();
+        if (
+          bytes.length !== artifact.byteLength ||
+          hashBytes(bytes) !== reference.sha256
+        )
+          throw new ApplicationError("ARTIFACT_INTEGRITY");
+        return bytes;
+      } catch (error) {
+        bytes.fill(0);
+        throw error;
+      }
+    } finally {
+      this.input.maximumFileBytes = priorLimit;
     }
   }
   async json(reference: ArtifactReference, maximum = 262144) {
@@ -251,7 +260,7 @@ export class ReferenceReader {
       manifest.policySha256 !== canonicalDigest(policy) ||
       !same(manifest.request, record.job.input) ||
       !same(manifest.selection, selected) ||
-      !same(result.source, manifest.source) ||
+      !same(result.source ?? null, manifest.source ?? null) ||
       result.completeness !== manifest.completeness ||
       result.referenceStatus !== manifest.referenceStatus ||
       record.job.outputState !==

@@ -54,6 +54,9 @@ export interface StoredArtifactBinding extends LogicalArtifactBinding {
 }
 
 export interface StorageOptions {
+  referenceInspection?: {
+    authorize(context: OperationContext): Promise<void>;
+  };
   captureRecovery?: {
     authorize(context: OperationContext): Promise<void>;
     verify(

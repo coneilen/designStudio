@@ -37,6 +37,28 @@ export function mutateOpenSyntheticCapture(
   );
 }
 
+export function removeSyntheticCaptureProtection(
+  store: object,
+  jobId: string,
+): void {
+  const db: unknown = Reflect.get(store, "db");
+  if (
+    !(db instanceof Database) ||
+    !/^capture-recovery-synthetic-[^\\]+\\state\.sqlite$/.test(
+      path.relative(tmpdir(), db.name),
+    )
+  )
+    throw new Error(
+      "Protection corruption requires the exact open temporary fixture database",
+    );
+  const result = db
+    .prepare(
+      "DELETE FROM artifact_refs WHERE owner_kind='job-input' AND owner_id=?",
+    )
+    .run(jobId);
+  if (!result.changes) throw new Error("Missing synthetic protected inputs");
+}
+
 export function corruptSyntheticCapture(
   filename: string,
   nativeBinding: string,

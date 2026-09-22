@@ -220,6 +220,15 @@ export async function assembleNativeCapture(
   try {
     await work.current();
     files = await ProjectFileSystem.create({
+      reserveRead: (bytes) => reference?.reserveRead(bytes),
+      referenceInspection: {
+        artifactRootId: project.artifactRootId,
+        outputRootId: policy.outputRoot,
+        authorize: async (stages, context) => {
+          if (!reference) throw new ApplicationError("FORBIDDEN");
+          await reference.authorizeInspection(context, stages);
+        },
+      },
       captureRecoveryInspection: {
         artifactRootId: project.artifactRootId,
         outputRootId: policy.outputRoot,
@@ -313,6 +322,12 @@ export async function assembleNativeCapture(
     };
     await work.current();
     store = await LocalStore.open({
+      referenceInspection: {
+        authorize: async (context) => {
+          if (!reference) throw new ApplicationError("FORBIDDEN");
+          await reference.authorizeInspection(context);
+        },
+      },
       captureRecovery: {
         authorize: async (context) => {
           if (!captureRecovery) throw new ApplicationError("FORBIDDEN");
@@ -671,6 +686,7 @@ export async function assembleNativeCapture(
           closed ||
           closing ||
           service ||
+          reference?.retainsService ||
           !reference
         )
           throw new ApplicationError("FORBIDDEN");
@@ -682,7 +698,7 @@ export async function assembleNativeCapture(
           );
           if (!validateContract("NativeReferenceEnvelope", result).success)
             throw new ApplicationError("INTERNAL_ERROR");
-          primaryFailure = result.error?.code;
+          primaryFailure = reference.operationFailure ?? result.error?.code;
           return result;
         } finally {
           active = false;
@@ -696,6 +712,7 @@ export async function assembleNativeCapture(
           closed ||
           closing ||
           service ||
+          reference?.retainsService ||
           !captureRecovery
         )
           throw new ApplicationError("FORBIDDEN");
@@ -717,7 +734,14 @@ export async function assembleNativeCapture(
       },
       async execute(input: NativeCaptureInput, signal: AbortSignal) {
         if (publications.size) throw new ApplicationError("INTERRUPTED");
-        if (this !== runtime || active || closed || closing || service)
+        if (
+          this !== runtime ||
+          active ||
+          closed ||
+          closing ||
+          service ||
+          reference?.retainsService
+        )
           throw new ApplicationError("FORBIDDEN");
         const owned = structuredClone(input);
         if (

@@ -25,13 +25,34 @@ records dimensions, bounds, scale, color knowledge, counters, errors and the
 exact original artifact/version relation. Dimension mismatch or unknown color
 remains partial. Conversion/renderer consumption is not part of this capability.
 
+Reference admission may preserve an earlier failed capture's known retained
+stage only when the completed successor's protected recovery grant proves the
+exact original failed row and historical filesystem digest. The candidate
+historical inventory is the protected closure of the remaining immutable jobs,
+not a timestamp or filename-prefix guess. Later valid conversion receipts and
+private exports remain in the fully checked current graph. Unknown, changed,
+foreign, pair-linked or ambiguously published stages still refuse; no stage is
+discarded, adopted or relabeled. Histories whose exact committed digest cannot
+be reconstructed from that bounded closure require review.
+
+All physical artifact reads, including repeated storage receipt verification,
+stage/publication verification and EOF probes, reserve from one invocation-wide
+25 MiB private-plus-network allowance before allocation or reads. Small control
+artifacts apply their per-read bound before storage verification. The meter stays
+owned while service cleanup is unconfirmed; it does not reset between internal
+inspection phases. Evidence records private reservations through its preparation;
+later publication and response verification remain subject to that same meter.
+
 Reopen is read-only for admitted jobs, including queued/interrupted jobs and
 unknown effects; it cannot redispatch network work. A known no-HTTP effect is
 distinct from a known denied response or unknown effect. Stages/orphan
-publications block new admission. In-process uncertain publication retains the
+publications without the exact historical proof block new admission.
+In-process uncertain publication retains the
 existing close-only owned recovery object; a crash does not prove publication or
 authorize cleanup/adoption. Failures remain actionable and nonretryable without
-printing private signed query strings.
+printing private signed query strings. Bounded service-stop failures retain the
+original operation cause separately from the cleanup code, block another
+operation, and allow only the original owner's close retry.
 
 F08 fresh synthetic-fixture foundation, based on coordinator-approved
 `6b079c7efb958d2946b506203f8866f095385908` plus reviewed storage, host and

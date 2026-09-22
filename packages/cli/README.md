@@ -27,8 +27,11 @@ The signed URL is loaded privately from the original authenticated committed
 render map. It is not printed. Expired URLs, 403, redirects, malformed images,
 unknown effects and publication uncertainty do not trigger refresh or recapture.
 Once admitted, the same acquisition can only be inspected/replayed read-only,
-not retried; completed replay still needs current local authority. Uncommitted
-stages or orphan publications require explicit review, not automatic adoption.
+not retried; completed replay still needs current local authority. A predecessor's
+retained stage can remain only under exact immutable recovery-grant and physical
+identity/hash proof. Unknown stages or orphan publications require explicit
+review, not automatic adoption. Existing validated conversion receipts and safe
+private exports need not be deleted.
 PNG and decoded geometry/color evidence have their own receipt. The original
 partial capture and unresolved rights remain unchanged; no rendering or
 implementation readiness is claimed.

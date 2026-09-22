@@ -11,6 +11,7 @@ import path from "node:path";
 import type { NativeReferenceEnvelope } from "@design-studio/contracts";
 import { fakeComplete } from "@design-studio/contracts/testing";
 import { HostBoundaryError, ProjectFileSystem } from "@design-studio/host";
+import { JobService } from "@design-studio/jobs";
 import type { CaptureProject, CaptureWork } from "@design-studio/project-host";
 import { LocalStore } from "@design-studio/storage";
 import { afterEach, expect, it, vi } from "vitest";
@@ -26,12 +27,42 @@ import {
   assembleNativeCapture,
   type NativeCaptureRuntime,
 } from "../src/capture-runtime-internal.js";
+import { ReferenceReader } from "../src/reference-proof.js";
 import {
   REFERENCE_APPROVAL_CONFIRMATION,
   REFERENCE_DOWNLOAD_CONFIRMATION,
 } from "../src/reference-runtime.js";
 
-const seam = vi.hoisted(() => ({ work: undefined as CaptureWork | undefined }));
+const seam = vi.hoisted(() => ({
+  work: undefined as CaptureWork | undefined,
+  physicalReads: 0,
+  measureReads: false,
+}));
+vi.mock("node:fs/promises", async (original) => {
+  const actual = await original<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    open: async (...args: Parameters<typeof actual.open>) => {
+      const handle = await actual.open(...args);
+      const read = handle.read;
+      Object.defineProperty(handle, "read", {
+        value: async (...input: unknown[]) => {
+          const result: unknown = await Reflect.apply(read, handle, input);
+          if (
+            seam.measureReads &&
+            result &&
+            typeof result === "object" &&
+            "bytesRead" in result &&
+            typeof result.bytesRead === "number"
+          )
+            seam.physicalReads += result.bytesRead;
+          return result;
+        },
+      });
+      return handle;
+    },
+  };
+});
 vi.mock("@design-studio/project-host", async (original) => ({
   ...(await original<typeof import("@design-studio/project-host")>()),
   acquireCaptureWork: () => {
@@ -52,6 +83,8 @@ afterEach(async () => {
   } finally {
     vi.restoreAllMocks();
     seam.work = undefined;
+    seam.measureReads = false;
+    seam.physicalReads = 0;
   }
 });
 const origin = "https://figma-alpha-api.s3.us-west-2.amazonaws.com";
@@ -97,9 +130,19 @@ async function fixture(
   let clockOffset = 0;
   const vault = vi.fn();
   const ready = vi.fn(async () => undefined);
+  const reads: { bytes: number; allowed: boolean }[] = [];
   const create = ProjectFileSystem.create.bind(ProjectFileSystem);
   vi.spyOn(ProjectFileSystem, "create").mockImplementation((o) =>
-    create({ ...o, publicationProfile: "portable-atomic" }),
+    create({
+      ...o,
+      publicationProfile: "portable-atomic",
+      reserveRead: (bytes, context) => {
+        const event = { bytes, allowed: false };
+        reads.push(event);
+        o.reserveRead?.(bytes, context);
+        event.allowed = true;
+      },
+    }),
   );
   vi.spyOn(
     ProjectFileSystem.prototype,
@@ -241,6 +284,9 @@ async function fixture(
   api.mockClear();
   vault.mockClear();
   ready.mockClear();
+  reads.length = 0;
+  seam.physicalReads = 0;
+  seam.measureReads = true;
   const run = (
     input: Parameters<NonNullable<NativeCaptureRuntime["reference"]>>[0],
     signal = new AbortController().signal,
@@ -289,6 +335,10 @@ async function fixture(
     api,
     vault,
     ready,
+    reads,
+    get runtime() {
+      return runtime;
+    },
     blobs,
     advanceClock: (milliseconds: number) => {
       clockOffset += milliseconds;
@@ -405,21 +455,27 @@ it.each([
     expect(f.image).not.toHaveBeenCalled();
   },
 );
-it("records denied response honestly and never refreshes or retries after reopen", async () => {
-  const f = await fixture();
-  const approval = await f.approve();
-  f.image.mockRejectedValue(new CaptureHttpError("PROVIDER_UNAVAILABLE", 403));
-  const result = await f.download(approval);
-  expect(result.status, JSON.stringify(result)).toBe("unavailable");
-  expect(result.value?.evidence).toMatchObject({
-    statusCode: 403,
-    referenceStatus: "unavailable",
-  });
-  await f.reopen();
-  expect((await f.download(approval)).status).toBe("unavailable");
-  expect(f.image).toHaveBeenCalledTimes(1);
-  expect(f.api).not.toHaveBeenCalled();
-});
+it.each([
+  [401, "AUTH_REQUIRED"],
+  [403, "FORBIDDEN"],
+] as const)(
+  "records remote %s honestly and never refreshes or retries after reopen",
+  async (status, code) => {
+    const f = await fixture();
+    const approval = await f.approve();
+    f.image.mockRejectedValue(new CaptureHttpError(code, status));
+    const result = await f.download(approval);
+    expect(result.status, JSON.stringify(result)).toBe("unavailable");
+    expect(result.value?.evidence).toMatchObject({
+      statusCode: status,
+      referenceStatus: "unavailable",
+    });
+    await f.reopen();
+    expect((await f.download(approval)).status).toBe("unavailable");
+    expect(f.image).toHaveBeenCalledTimes(1);
+    expect(f.api).not.toHaveBeenCalled();
+  },
+);
 it("never retries a job with an unresolved effect after reopen or a different request", async () => {
   const f = await fixture();
   const approval = await f.approve();
@@ -583,4 +639,160 @@ it("renews only an unused expired approval through a fresh explicit proof, and r
   expect((await f.plan()).value?.proposal?.approvalGeneration).toBe(1);
   expect((await f.download(renewed)).status).toBe("complete");
   expect(f.image).toHaveBeenCalledTimes(1);
+});
+
+it("meters repeated receipt verification at the physical pre-read boundary before exceeding 25 MiB", async () => {
+  const f = await fixture({ large: true });
+  const proposal = ReferenceReader.prototype.proposal;
+  vi.spyOn(ReferenceReader.prototype, "proposal").mockImplementation(
+    async function (this: ReferenceReader, requestId) {
+      const value = await proposal.call(this, requestId);
+      for (let index = 0; index < 100; index++) {
+        const receipt = await this.store.jobs.getJobReceipt(
+          value.proposal.binding.originalJobId,
+          this.context,
+        );
+        if (receipt.status !== "complete")
+          throw new HostBoundaryError(
+            receipt.error.code,
+            "Synthetic repeated verification refused.",
+          );
+      }
+      return value;
+    },
+  );
+  const result = await f.plan();
+  expect(result, JSON.stringify(f.reads)).toMatchObject({
+    status: "failed",
+    error: { code: "INPUT_LIMIT" },
+  });
+  const read = f.reads
+    .filter((event) => event.allowed)
+    .reduce((sum, event) => sum + event.bytes, 0);
+  expect(read).toBeLessThanOrEqual(26214400);
+  expect(seam.physicalReads).toBeLessThanOrEqual(read);
+  expect(seam.physicalReads).toBeGreaterThan(25000000);
+  expect(
+    f.reads.filter((event) => event.bytes >= 300000 && event.allowed).length,
+  ).toBeGreaterThanOrEqual(2);
+  expect(f.reads.some((event) => !event.allowed)).toBe(true);
+  expect(f.image).not.toHaveBeenCalled();
+});
+
+it("checks small control-artifact bounds before storage verification reads the body", async () => {
+  const f = await fixture({ large: true });
+  const proposal = ReferenceReader.prototype.proposal;
+  vi.spyOn(ReferenceReader.prototype, "proposal").mockImplementation(
+    async function (this: ReferenceReader, requestId) {
+      const value = await proposal.call(this, requestId);
+      f.reads.length = 0;
+      seam.physicalReads = 0;
+      await this.contract(
+        "FigmaReferenceApproval",
+        value.proposal.binding.nodes,
+      );
+      return value;
+    },
+  );
+  expect(await f.plan()).toMatchObject({
+    status: "failed",
+    error: { code: "INPUT_LIMIT" },
+  });
+  expect(f.reads).toHaveLength(1);
+  expect(f.reads[0]).toMatchObject({ allowed: false });
+  expect(f.reads[0]?.bytes).toBeGreaterThan(262144);
+  expect(seam.physicalReads).toBe(0);
+  expect(f.image).not.toHaveBeenCalled();
+});
+
+it("shares actual private-read charges with image allowance and does not turn local revocation into remote denial", async () => {
+  const f = await fixture();
+  const approved = await f.approve();
+  f.reads.length = 0;
+  f.image.mockImplementation(async (_url, budget) => {
+    const privateBytes = f.reads
+      .filter((entry) => entry.allowed)
+      .reduce((sum, entry) => sum + entry.bytes, 0);
+    expect(privateBytes).toBeGreaterThan(0);
+    expect(() => budget.receive(26214400 - privateBytes + 1)).toThrow();
+    f.deny();
+    throw new CaptureHttpError("FORBIDDEN");
+  });
+  const result = await f.download(approved);
+  expect(result.status).not.toBe("complete");
+  expect(result.value?.evidence).toBeUndefined();
+  expect(f.image).toHaveBeenCalledTimes(1);
+});
+
+it("does not treat an input limit accompanying HTTP 403 as a remote-denial exception", async () => {
+  const f = await fixture();
+  const approved = await f.approve();
+  f.image.mockRejectedValue(new CaptureHttpError("INPUT_LIMIT", 403));
+  const result = await f.download(approved);
+  expect(result.status).not.toBe("complete");
+  expect(result.value?.evidence).toBeUndefined();
+  expect(f.image).toHaveBeenCalledTimes(1);
+});
+
+it("retains uncooperative service ownership and original wait failure across stop timeout and close-only retry", async () => {
+  const f = await fixture();
+  const approved = await f.approve();
+  let enter: (() => void) | undefined;
+  let release: (() => void) | undefined;
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const stops = vi.spyOn(JobService.prototype, "stop");
+  const closeFiles = vi.spyOn(
+    ProjectFileSystem.prototype,
+    "closePreservingStages",
+  );
+  f.image.mockImplementation(async () => {
+    enter?.();
+    await released;
+    throw new CaptureHttpError("PROVIDER_UNAVAILABLE");
+  });
+  vi.spyOn(JobService.prototype, "waitForAttempt").mockImplementationOnce(
+    async () => {
+      await entered;
+      throw new HostBoundaryError(
+        "PROVIDER_UNAVAILABLE",
+        "Synthetic original wait failure",
+      );
+    },
+  );
+  const running = f.download(approved);
+  try {
+    await entered;
+    expect(await running).toMatchObject({
+      status: "interrupted",
+      error: { code: "INTERRUPTED" },
+    });
+    await expect(f.download(approved)).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+    await expect(
+      f.runtime.execute(
+        { operation: "inspect", requestId: "original" },
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(f.runtime.close()).rejects.toMatchObject({
+      operationCode: "PROVIDER_UNAVAILABLE",
+      cleanupCode: "INTERRUPTED",
+    });
+    expect(stops.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(closeFiles).not.toHaveBeenCalled();
+    release?.();
+    await f.runtime.close();
+    expect(closeFiles).toHaveBeenCalledTimes(1);
+    expect(f.image).toHaveBeenCalledTimes(1);
+  } finally {
+    release?.();
+    await running;
+    await f.runtime.close();
+  }
 });

@@ -1,5 +1,7 @@
 import type {
+  AuthorizationContext,
   CommitReceipt,
+  ErrorCode,
   FigmaReferenceApproval,
   FigmaReferenceRequest,
   NativeReferenceEnvelope,
@@ -12,7 +14,10 @@ import {
   canonicalDigest,
   hashBytes,
 } from "@design-studio/design-ir";
-import type { ProjectFileSystem } from "@design-studio/host";
+import type {
+  CaptureRecoveryStage,
+  ProjectFileSystem,
+} from "@design-studio/host";
 import {
   createJobService,
   type JobService,
@@ -33,6 +38,7 @@ import {
 } from "../../figma-capture/dist/reference.js";
 import { nativeCaptureResources } from "./capture-recovery.js";
 import type { RecoveryDecisions } from "./recovery.js";
+import { ReferenceInput } from "./reference-input.js";
 import {
   approvalKey,
   ReferenceReader,
@@ -41,6 +47,7 @@ import {
   renewalProposal,
   same,
 } from "./reference-proof.js";
+import { retainedReferenceStages } from "./reference-publications.js";
 import { ApplicationError, safeError, unwrap } from "./response.js";
 
 export const REFERENCE_APPROVAL_CONFIRMATION = "APPROVE-ONE-SELECTED-REFERENCE";
@@ -56,7 +63,40 @@ export interface NativeReferenceInput {
 }
 type Prepared = Awaited<ReturnType<typeof acquireReference>>;
 export class NativeReference {
+  private input: ReferenceInput | undefined;
+  reserveRead(bytes: number) {
+    this.input?.reserveRead(bytes);
+  }
+  private readonly inspections = new WeakMap<
+    AuthorizationContext,
+    { reader: ReferenceReader; stages: string | undefined }
+  >();
+  async authorizeInspection(
+    context: OperationContext,
+    stages?: readonly CaptureRecoveryStage[],
+  ) {
+    const proof = this.inspections.get(context.authorization);
+    if (
+      !proof ||
+      context.projectId !== proof.reader.context.projectId ||
+      context.jobId !== proof.reader.context.jobId ||
+      context.requestId !== proof.reader.context.requestId ||
+      context.signal !== proof.reader.context.signal ||
+      context.clock !== proof.reader.context.clock ||
+      context.deadline !== proof.reader.context.deadline ||
+      (stages !== undefined && proof.stages !== canonicalDigest(stages))
+    )
+      throw new ApplicationError("FORBIDDEN");
+    await proof.reader.check();
+  }
   private service: JobService | undefined;
+  private primaryFailure: ErrorCode | undefined;
+  get operationFailure() {
+    return this.primaryFailure;
+  }
+  get retainsService() {
+    return this.service !== undefined;
+  }
   private prepared:
     | { value: Prepared; context: OperationContext; record: StoredJob }
     | undefined;
@@ -134,27 +174,44 @@ export class NativeReference {
       ? unwrap(await this.store.jobs.get(jobId, context))
       : undefined;
   }
-  private async settledPublications(reader: ReferenceReader) {
-    const inventory = unwrap(
-      await this.files.inventory(
-        this.work.project.artifactRootId,
-        reader.context,
-        20000,
-      ),
-    );
-    if (inventory.stagedIds.length)
-      throw new ApplicationError("ACTION_REQUIRED");
-    for (const artifact of inventory.publishedArtifacts) {
-      reader.bytes += artifact.byteLength;
-      if (reader.bytes > REFERENCE_LIMITS.maxInputBytes)
-        throw new ApplicationError("INPUT_LIMIT");
-      const known = unwrap(
-        await this.store.verify(ref(artifact), reader.context),
+  private async settledPublications(
+    reader: ReferenceReader,
+    proposal: FigmaReferenceApproval["proposal"],
+  ) {
+    const proof = { reader, stages: undefined as string | undefined };
+    this.inspections.set(reader.context.authorization, proof);
+    try {
+      const state = unwrap(
+        await this.store.referencePublicationState(reader.context),
       );
-      if (!same(known, artifact))
-        throw new ApplicationError("ARTIFACT_INTEGRITY");
+      const descriptors = await retainedReferenceStages(
+        reader,
+        state,
+        proposal,
+      );
+      proof.stages = canonicalDigest(descriptors);
+      const inspected = unwrap(
+        await this.files.inspectReferencePublications(
+          descriptors,
+          reader.context,
+        ),
+      );
+      try {
+        if (!same(inspected.artifacts, state.artifacts))
+          throw new ApplicationError("ARTIFACT_INTEGRITY");
+        if (reader.bytes > REFERENCE_LIMITS.maxInputBytes)
+          throw new ApplicationError("INPUT_LIMIT");
+        const after = unwrap(
+          await this.store.referencePublicationState(reader.context),
+        );
+        if (!same(after, state)) throw new ApplicationError("CONFLICT");
+        await reader.check();
+      } finally {
+        for (const stage of inspected.stages) stage.bytes.fill(0);
+      }
+    } finally {
+      this.inspections.delete(reader.context.authorization);
     }
-    await reader.check();
   }
   private async cooldowns(
     context: OperationContext,
@@ -222,6 +279,9 @@ export class NativeReference {
     input: NativeReferenceInput,
     signal: AbortSignal,
   ): Promise<NativeReferenceEnvelope> {
+    const ownsInput = !this.input;
+    this.input ??= new ReferenceInput();
+    const inputBudget = this.input;
     const base = {
       schemaVersion: "1.0" as const,
       operation: input.operation,
@@ -234,6 +294,7 @@ export class NativeReference {
     try {
       if (this.service || !this.work.referenceAuthority)
         throw new ApplicationError("FORBIDDEN");
+      this.primaryFailure = undefined;
       const fields =
         input.operation === "reference-approve"
           ? ["origin", "expectedProof", "confirmation"]
@@ -271,9 +332,16 @@ export class NativeReference {
           ids.job,
           ...Array.from({ length: 32 }, (_, i) => approvalKey(ids.job, i)),
         ],
+        output: true,
         signal,
       });
-      reader = new ReferenceReader(this.work, this.store, this.files, context);
+      reader = new ReferenceReader(
+        this.work,
+        this.store,
+        this.files,
+        context,
+        inputBudget,
+      );
       const loaded = await reader.proposal(input.requestId);
       let proposal = loaded.proposal;
       const old = await this.existing(ids.job, context);
@@ -510,7 +578,7 @@ export class NativeReference {
           proposal.urlExpiresAt ? Date.parse(proposal.urlExpiresAt) : Infinity,
         );
         if (end <= now) throw new ApplicationError("ACTION_REQUIRED");
-        await this.settledPublications(reader);
+        await this.settledPublications(reader, proposal);
         const grant: FigmaReferenceApproval = {
           schemaVersion: "1.0",
           proposal,
@@ -558,7 +626,7 @@ export class NativeReference {
       if (context.clock.now() >= Date.parse(approval.expiresAt))
         throw new ApplicationError("ACTION_REQUIRED");
       await this.cooldowns(context, reader, proposal.binding.fileKey);
-      await this.settledPublications(reader);
+      await this.settledPublications(reader, proposal);
       const deadline = new Date(
         Math.min(Date.parse(context.deadline), Date.parse(approval.expiresAt)),
       ).toISOString();
@@ -599,6 +667,7 @@ export class NativeReference {
             this.work.project.artifactRootId,
             policy.verify,
             localInputBytes,
+            inputBudget,
           );
           try {
             const value = await acquireReference(
@@ -700,6 +769,11 @@ export class NativeReference {
         );
         unwrap(await this.service.start());
         unwrap(await this.service.waitForAttempt(ids.job, jobContext));
+      } catch (error) {
+        this.primaryFailure = signal.aborted
+          ? "CANCELLED"
+          : safeError(error).code;
+        throw error;
       } finally {
         await this.close();
       }
@@ -729,6 +803,7 @@ export class NativeReference {
       };
     } finally {
       await reader?.close();
+      if (ownsInput && !this.service) this.input = undefined;
     }
   }
 }

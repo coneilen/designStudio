@@ -45,6 +45,15 @@ export interface ProjectRoot {
   managedBlobs?: boolean;
 }
 export interface ProjectFileSystemOptions {
+  reserveRead?(bytes: number, context: OperationContext): void;
+  referenceInspection?: {
+    artifactRootId: string;
+    outputRootId: string;
+    authorize(
+      stages: readonly CaptureRecoveryStage[],
+      context: OperationContext,
+    ): Promise<void>;
+  };
   captureRecoveryInspection?: {
     artifactRootId: string;
     outputRootId: string;
@@ -262,19 +271,32 @@ export class ProjectFileSystem implements FileSystemBoundary {
     options: ProjectFileSystemOptions,
   ): Promise<ProjectFileSystem> {
     const inspection = options.captureRecoveryInspection;
-    if (
-      inspection &&
-      (!validateContract("StableId", inspection.artifactRootId).success ||
-        !validateContract("StableId", inspection.outputRootId).success ||
-        inspection.artifactRootId === inspection.outputRootId ||
-        typeof inspection.authorize !== "function")
-    )
-      throw new HostBoundaryError(
-        "INVALID_INPUT",
-        "Capture inspection requires fixed distinct roots and native admission.",
-      );
+    const referenceInspection = options.referenceInspection;
+    for (const entry of [inspection, referenceInspection]) {
+      if (
+        entry &&
+        (!validateContract("StableId", entry.artifactRootId).success ||
+          !validateContract("StableId", entry.outputRootId).success ||
+          entry.artifactRootId === entry.outputRootId ||
+          typeof entry.authorize !== "function")
+      )
+        throw new HostBoundaryError(
+          "INVALID_INPUT",
+          "Capture inspection requires fixed distinct roots and native admission.",
+        );
+    }
     const boundary = new ProjectFileSystem({
       ...options,
+      ...(referenceInspection
+        ? {
+            referenceInspection: Object.freeze({
+              artifactRootId: referenceInspection.artifactRootId,
+              outputRootId: referenceInspection.outputRootId,
+              authorize:
+                referenceInspection.authorize.bind(referenceInspection),
+            }),
+          }
+        : {}),
       ...(inspection
         ? {
             captureRecoveryInspection: Object.freeze({
@@ -452,6 +474,7 @@ export class ProjectFileSystem implements FileSystemBoundary {
             );
           guard.consume("input", before.size);
           guard.consume("output", before.size);
+          this.options.reserveRead?.(before.size, guard.context);
           bytes = new Uint8Array(before.size);
           let offset = 0;
           while (offset < bytes.byteLength) {
@@ -469,6 +492,7 @@ export class ProjectFileSystem implements FileSystemBoundary {
               );
             offset += bytesRead;
           }
+          this.options.reserveRead?.(1, guard.context);
           const probe = await handle.read(new Uint8Array(1), 0, 1, offset);
           const after = await handle.stat();
           if (
@@ -1179,9 +1203,24 @@ export class ProjectFileSystem implements FileSystemBoundary {
     input: readonly CaptureRecoveryStage[],
     context: OperationContext,
   ): Promise<Outcome<CaptureRecoveryInspection>> {
+    return this.inspectRetainedPublications(input, context, false);
+  }
+  inspectReferencePublications(
+    input: readonly CaptureRecoveryStage[],
+    context: OperationContext,
+  ): Promise<Outcome<CaptureRecoveryInspection>> {
+    return this.inspectRetainedPublications(input, context, true);
+  }
+  private inspectRetainedPublications(
+    input: readonly CaptureRecoveryStage[],
+    context: OperationContext,
+    reference: boolean,
+  ): Promise<Outcome<CaptureRecoveryInspection>> {
     const stages = structuredClone(input);
     return this.execute(context, async (context) => {
-      const config = this.options.captureRecoveryInspection;
+      const config = reference
+        ? this.options.referenceInspection
+        : this.options.captureRecoveryInspection;
       if (!config || stages.length > 128)
         throw new HostBoundaryError(
           "FORBIDDEN",
@@ -1294,6 +1333,20 @@ export class ProjectFileSystem implements FileSystemBoundary {
                   "PATH_FORBIDDEN",
                   "Capture staging directory changed.",
                 );
+            } else if (
+              reference &&
+              id === config.outputRootId &&
+              /^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$/.test(entry)
+            ) {
+              const absolute = await this.resolve(root, entry);
+              const stat = await io(() => lstat(absolute));
+              if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1)
+                throw new HostBoundaryError(
+                  "ARTIFACT_INTEGRITY",
+                  "Private export identity is ambiguous.",
+                );
+              const bytes = await this.readBytes(absolute, guard, stat);
+              bytes.fill(0);
             } else {
               throw new HostBoundaryError(
                 "ACTION_REQUIRED",

@@ -36,6 +36,9 @@ export const REFERENCE_LIMITATIONS = Object.freeze([
   "Signed URL freshness is unverified except for recognized explicit expiry metadata.",
 ] as const);
 export class ReferenceBudget implements ImageBudget {
+  get localInputBytes() {
+    return this.sharedInput?.privateBytes ?? this.initialLocalInputBytes;
+  }
   readonly context: OperationContext;
   readonly signal: AbortSignal;
   readonly policy = Object.freeze({
@@ -52,13 +55,17 @@ export class ReferenceBudget implements ImageBudget {
     sourceId: string,
     artifactRootId: string,
     authority: Authority,
-    readonly localInputBytes: number,
+    private readonly initialLocalInputBytes: number,
+    private readonly sharedInput?: {
+      readonly privateBytes: number;
+      reserveNetwork(bytes: number): void;
+    },
   ) {
     this.context = snapshotOperationContext(context);
     if (
-      !Number.isSafeInteger(localInputBytes) ||
-      localInputBytes < 0 ||
-      localInputBytes > this.context.budget.maxInputBytes ||
+      !Number.isSafeInteger(this.localInputBytes) ||
+      this.localInputBytes < 0 ||
+      this.localInputBytes > this.context.budget.maxInputBytes ||
       this.context.budget.maxExternalCalls !== 1 ||
       this.context.authorization.egress !== "explicit-grant-required" ||
       Date.parse(context.deadline) > context.clock.now() + 30000
@@ -113,6 +120,7 @@ export class ReferenceBudget implements ImageBudget {
         this.context.budget.maxInputBytes - this.localInputBytes - this.received
     )
       fail("INPUT_LIMIT", "Aggregate reference input budget exceeded.");
+    this.sharedInput?.reserveNetwork(bytes);
     this.received += bytes;
   }
   decoded(bytes: number) {
@@ -288,17 +296,22 @@ export async function acquireReference(
     evidence.referenceStatus = evidence.missing.length ? "partial" : "complete";
   } catch (error) {
     budget.check();
+    const remoteDenied =
+      error instanceof CaptureHttpError &&
+      ((error.status === 401 && error.code === "AUTH_REQUIRED") ||
+        (error.status === 403 && error.code === "FORBIDDEN"));
     if (
       !(error instanceof HostBoundaryError) ||
-      [
-        "INTERRUPTED",
-        "FORBIDDEN",
-        "AUTH_REQUIRED",
-        "CANCELLED",
-        "DEADLINE_EXCEEDED",
-        "INPUT_LIMIT",
-        "OUTPUT_LIMIT",
-      ].includes(error.code)
+      (!remoteDenied &&
+        [
+          "INTERRUPTED",
+          "FORBIDDEN",
+          "AUTH_REQUIRED",
+          "CANCELLED",
+          "DEADLINE_EXCEEDED",
+          "INPUT_LIMIT",
+          "OUTPUT_LIMIT",
+        ].includes(error.code))
     )
       throw error;
     evidence.errorCode = error.code;
@@ -319,6 +332,7 @@ export async function acquireReference(
     image?.bytes.fill(0);
   }
   evidence.endedAt = new Date(context.clock.now()).toISOString();
+  evidence.usage.localInputBytes = budget.localInputBytes;
   evidence.usage.dnsQueries = budget.dns;
   evidence.usage.networkReceivedBytes = budget.received;
   evidence.usage.networkBodyBytes = budget.body;
