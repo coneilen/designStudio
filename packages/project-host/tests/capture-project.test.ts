@@ -160,41 +160,44 @@ describe.skipIf(process.platform !== "win32")(
         { length: 1023 },
         (_, index) => `${String(index).padStart(4, "0")}.json`,
       );
-      beforeAll(() =>
-        fixture.prepare(async (installation) => {
-          project = await freshProject(installation);
-          const native = await loadNative();
-          const sid = captureProjectOwner(project).sid;
-          root = path.join(project.paths.temp, "credential-journal");
-          let previous = "";
-          for (let sequence = 0; sequence < 1023; sequence++) {
-            preparation.signal.throwIfAborted();
-            last = Buffer.from(
+      // Durable fixture preparation has its own measured allowance, not an operation latency guarantee.
+      beforeAll(
+        () =>
+          fixture.prepare(async (installation) => {
+            project = await freshProject(installation);
+            const native = await loadNative();
+            const sid = captureProjectOwner(project).sid;
+            root = path.join(project.paths.temp, "credential-journal");
+            let previous = "";
+            for (let sequence = 0; sequence < 1023; sequence++) {
+              preparation.signal.throwIfAborted();
+              last = Buffer.from(
+                JSON.stringify({
+                  sequence,
+                  previous,
+                  state: { reference: project.reference, state: "ready" },
+                }),
+              );
+              native.createFile(
+                path.join(root, `${String(sequence).padStart(4, "0")}.json`),
+                sid,
+                last,
+              );
+              previous = createHash("sha256").update(last).digest("hex");
+              // Permit the preparation deadline to cancel setup between bounded native batches.
+              if (sequence % 32 === 31) await setImmediate();
+            }
+            final = path.join(root, "1022.json");
+            next = Buffer.from(
               JSON.stringify({
-                sequence,
+                sequence: 1023,
                 previous,
                 state: { reference: project.reference, state: "ready" },
               }),
             );
-            native.createFile(
-              path.join(root, `${String(sequence).padStart(4, "0")}.json`),
-              sid,
-              last,
-            );
-            previous = createHash("sha256").update(last).digest("hex");
-            // Permit the original hook deadline to cancel setup between bounded native batches.
-            if (sequence % 32 === 31) await setImmediate();
-          }
-          final = path.join(root, "1022.json");
-          next = Buffer.from(
-            JSON.stringify({
-              sequence: 1023,
-              previous,
-              state: { reference: project.reference, state: "ready" },
-            }),
-          );
-          identity = await lstat(final, { bigint: true });
-        }),
+            identity = await lstat(final, { bigint: true });
+          }),
+        60_000,
       );
       afterAll(async () => {
         preparation.abort();

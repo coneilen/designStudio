@@ -51,8 +51,11 @@ export function deferred<T>() {
   return { promise, resolve };
 }
 const cleanup: Array<() => Promise<void>> = [];
+export function ownCleanup(close: () => Promise<void>) {
+  cleanup.push(close);
+}
 afterEach(async () => {
-  for (const close of cleanup.splice(0).reverse()) await close();
+  while (cleanup.length) await cleanup.pop()?.();
 });
 
 export async function fixture(
@@ -66,6 +69,13 @@ export async function fixture(
   const clock =
     options.clock ?? createFakeClock(Date.parse("2026-09-17T00:00:00Z"));
   const root = await mkdtemp(join(tmpdir(), "jobs service synthetic "));
+  let store: LocalStore | undefined;
+  let host: ProjectFileSystem | undefined;
+  ownCleanup(async () => {
+    store?.close();
+    if (host) await host.close();
+    await rm(root, { recursive: true, force: true });
+  });
   const artifactRootId = "artifacts";
   const actors = new Set(["actor", "supervisor"]);
   const jobs = new Set([
@@ -195,7 +205,6 @@ export async function fixture(
   };
   const disk = options.native ? undefined : await diskFixture(root);
   const artifactPath = join(root, "native-artifacts");
-  let host: ProjectFileSystem | undefined;
   if (options.native) {
     await mkdir(artifactPath);
     host = await ProjectFileSystem.create({
@@ -283,7 +292,7 @@ export async function fixture(
     },
     fault: (point) => fault?.(point),
   };
-  let store = await LocalStore.open(settings);
+  store = await LocalStore.open(settings);
   const input = {
     id: artifactId(inputBytes),
     sha256: createHash("sha256").update(inputBytes).digest("hex"),
@@ -293,16 +302,12 @@ export async function fixture(
     const inputStage = value(await store.stage(inputBytes, seedCtx));
     value(await store.commit([inputStage], seedCtx));
   }
-  cleanup.push(async () => {
-    store.close();
-    if (host) await host.close();
-    await rm(root, { recursive: true, force: true });
-  });
   return {
     clock,
     root,
     context,
     actors,
+    ownCleanup,
     authenticator,
     executionAuthority,
     recoveryAuthority,
@@ -311,12 +316,14 @@ export async function fixture(
       trustedBackups.add(sha256);
     },
     get store() {
+      if (!store) throw new Error("Fixture store was not initialized");
       return store;
     },
     setFault(callback: StorageOptions["fault"]) {
       fault = callback;
     },
     async reopen() {
+      if (!store) throw new Error("Fixture store was not initialized");
       store.close();
       store = await LocalStore.open(settings);
     },
