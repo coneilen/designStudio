@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 import { ApplicationError } from "@design-studio/application";
 import {
   CAPTURE_RECOVERY_CONFIRMATION,
+  DIAGNOSTIC_APPROVAL_CONFIRMATION,
+  DIAGNOSTIC_DOWNLOAD_CONFIRMATION,
   NativeCaptureCleanupRequired,
   type NativeCaptureInput,
   type NativeCaptureRecoveryInput,
@@ -22,6 +24,7 @@ import {
   validateContract,
 } from "@design-studio/contracts";
 import {
+  assertCaptureDiagnosticInstallation,
   assertCaptureRecoveryInstallation,
   assertCaptureReferenceInstallation,
   type CaptureInstallationLease,
@@ -64,6 +67,10 @@ const referenceOperations = [
   "reference-approve",
   "reference-download",
   "reference-inspect",
+  "reference-diagnostic-plan",
+  "reference-diagnostic-approve",
+  "reference-diagnostic-download",
+  "reference-diagnostic-inspect",
 ] as const;
 function isReference(
   input: NonNullable<NativeArguments["capture"]>,
@@ -114,10 +121,12 @@ export function parseCaptureArguments(
         ![
           "--project",
           "--request-id",
-          ...(verb === "reference-approve"
+          ...(verb === "reference-approve" ||
+          verb === "reference-diagnostic-approve"
             ? ["--origin", "--expected-proof", "--confirm"]
             : []),
-          ...(verb === "reference-download"
+          ...(verb === "reference-download" ||
+          verb === "reference-diagnostic-download"
             ? ["--expected-approval", "--confirm"]
             : []),
           ...(verb === "capture" ? ["--url"] : []),
@@ -154,18 +163,28 @@ export function parseCaptureArguments(
       (value) => value === verb,
     );
     if (referenceOperation) {
+      const diagnostic = referenceOperation.startsWith("reference-diagnostic-");
+      const operation = diagnostic
+        ? referenceOperation.replace("reference-diagnostic-", "reference-")
+        : referenceOperation;
       const origin = options.get("--origin");
       const expectedProof = options.get("--expected-proof");
       const expectedApproval = options.get("--expected-approval");
       const confirmation = options.get("--confirm");
       if (
-        (referenceOperation === "reference-approve" &&
+        (operation === "reference-approve" &&
           (origin !== "https://figma-alpha-api.s3.us-west-2.amazonaws.com" ||
             !validateContract("Sha256", expectedProof).success ||
-            confirmation !== REFERENCE_APPROVAL_CONFIRMATION)) ||
-        (referenceOperation === "reference-download" &&
+            confirmation !==
+              (diagnostic
+                ? DIAGNOSTIC_APPROVAL_CONFIRMATION
+                : REFERENCE_APPROVAL_CONFIRMATION))) ||
+        (operation === "reference-download" &&
           (!validateContract("Sha256", expectedApproval).success ||
-            confirmation !== REFERENCE_DOWNLOAD_CONFIRMATION))
+            confirmation !==
+              (diagnostic
+                ? DIAGNOSTIC_DOWNLOAD_CONFIRMATION
+                : REFERENCE_DOWNLOAD_CONFIRMATION)))
       )
         throw new ApplicationError("INVALID_INPUT");
       return {
@@ -381,6 +400,9 @@ export async function runCaptureCommand(args: readonly string[]) {
         "figma reference-plan|reference-inspect --project <ID> --request-id <original capture request>",
         "figma reference-approve --project <ID> --request-id <original capture request> --origin https://figma-alpha-api.s3.us-west-2.amazonaws.com --expected-proof <SHA256> --confirm APPROVE-ONE-SELECTED-REFERENCE",
         "figma reference-download --project <ID> --request-id <original capture request> --expected-approval <SHA256> --confirm DOWNLOAD-ONE-APPROVED-REFERENCE",
+        "figma reference-diagnostic-plan|reference-diagnostic-inspect --project <ID> --request-id <original capture request>",
+        "figma reference-diagnostic-approve --project <ID> --request-id <original capture request> --origin https://figma-alpha-api.s3.us-west-2.amazonaws.com --expected-proof <SHA256> --confirm APPROVE-ONE-DIAGNOSTIC-REFERENCE",
+        "figma reference-diagnostic-download --project <ID> --request-id <original capture request> --expected-approval <SHA256> --confirm DOWNLOAD-ONE-DIAGNOSTIC-REFERENCE",
       ],
       limitation:
         "Native entry needs an independently approved capture release. Setup/update display an app-owned masked Figma PAT dialog; status reads one owned vault entry; remove deletes only the explicitly confirmed entry. Capture allows at most four calls in 30 seconds. The default empty download-origin policy yields a partial result before CDN contact. Inspection is private metadata only; explicit artifact output stays in the owned private project. Conversion is an unapproved draft, never render-readiness. Recovery additionally requires the installed recovery supplement: it records one exact next-request authorization offline, not a retry, quota assertion, or capture result. Third requests remain blocked.",
@@ -409,6 +431,12 @@ export async function runCaptureCommand(args: readonly string[]) {
       assertCaptureRecoveryInstallation(installation);
     if (request.capture && isReference(request.capture))
       assertCaptureReferenceInstallation(installation);
+    if (
+      request.capture &&
+      isReference(request.capture) &&
+      request.capture.operation.startsWith("reference-diagnostic-")
+    )
+      assertCaptureDiagnosticInstallation(installation);
     if (abort.signal.aborted) throw new ApplicationError("CANCELLED");
     project = await openCaptureProject(
       installation,

@@ -2,6 +2,38 @@
 
 ## Native reference evidence
 
+The separate diagnostic-successor commands require the version-5 native
+diagnostic capability in addition to the reference capability. The server
+derives `diagnostic_<digest>` from a fixed domain, project, **original** reference
+job ID and its exact verified receipt digest; decoder version, policy version
+and caller request IDs cannot create another slot. The CLI still selects the
+original capture request, never an arbitrary acquisition ID or raw URL.
+
+Eligibility revalidates the original capture/source/URL binding, original
+reference request/grant, completed atomic receipt, unavailable HTTP200
+`INVALID_INPUT` evidence without a PNG, and exactly one settled known GET.
+The old grant may be expired and remains immutable; it cannot authorize the
+successor. The fresh proof includes predecessor record/receipt/approval/request/
+evidence identities and the separate diagnostic policy. New consent uses a
+distinct confirmation and fresh short-lived approval. Current origin, URL expiry,
+cooldowns, authority and the complete publication inventory are checked again
+before admission. The same physical-read meter, one GET/DNS, 30-second absolute
+deadline, 25-MiB byte bounds and pixel/decoder caps apply.
+
+The existing immutable job admission transaction consumes the server-derived
+slot once. The new job uses a separate handler/resource key; no original job,
+counter, grant, retained stage or receipt is rewritten. Failures also burn the
+slot. Historical reference inspection and the original policy hashes/namespaces
+remain unchanged; a successor cannot become another predecessor. Planning,
+approval and inspection never make an image request.
+
+For captures with a retained failed predecessor, historical filesystem
+membership excludes only the exact proof-bound original reference descendant,
+after validating its record/receipt hashes, handler, authority, source resource
+key, receipt scope and exact protected input/output/stage graph. The original
+capture-recovery validator remains unchanged; unrelated jobs, mutations and
+uncertain stages are not filtered by timestamps or name prefixes.
+
 The native capture facade separately exposes explicit reference planning,
 approval, download and inspection under the installation's closed reference
 supplement. Its dedicated read-only proof loader never calls original-capture

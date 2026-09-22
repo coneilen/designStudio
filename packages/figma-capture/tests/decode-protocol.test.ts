@@ -9,6 +9,7 @@ const seam = vi.hoisted(() => ({
   messages: [] as unknown[],
   exit: 0,
   crash: false,
+  heap: false,
 }));
 vi.mock("node:worker_threads", () => ({
   Worker: class extends EventEmitter {
@@ -18,7 +19,15 @@ vi.mock("node:worker_threads", () => ({
       super();
       setImmediate(() => {
         for (const message of seam.messages) this.emit("message", message);
-        if (seam.crash) this.emit("error", new Error("private worker failure"));
+        if (seam.heap)
+          this.emit(
+            "error",
+            Object.assign(new Error("private worker allocation"), {
+              code: "ERR_WORKER_OUT_OF_MEMORY",
+            }),
+          );
+        else if (seam.crash)
+          this.emit("error", new Error("private worker failure"));
         this.emit("exit", seam.exit);
       });
     }
@@ -31,6 +40,7 @@ afterEach(() => {
   seam.messages = [];
   seam.exit = 0;
   seam.crash = false;
+  seam.heap = false;
 });
 const budget = (): ImageBudget => {
   const context = syntheticContext();
@@ -79,6 +89,13 @@ it("does not serialize worker exception details", async () => {
   await expect(decodeReference(Buffer.of(1), budget())).rejects.toMatchObject({
     code: "PROVIDER_UNAVAILABLE",
     referenceDiagnostic: { reason: "worker-unavailable" },
+  });
+});
+it("keeps worker heap exhaustion terminal without exposing the worker exception", async () => {
+  seam.heap = true;
+  await expect(decodeReference(Buffer.of(1), budget())).rejects.toMatchObject({
+    code: "OUTPUT_LIMIT",
+    referenceDiagnostic: { stage: "worker", reason: "worker-limit" },
   });
 });
 it("accepts only bounded positive metadata", async () => {

@@ -74,6 +74,7 @@ export class ReferenceReader {
     readonly files: ProjectFileSystem,
     readonly context: OperationContext,
     readonly input: ReferenceInput,
+    readonly diagnostic = false,
   ) {
     this.guard = new OperationGuard(
       context,
@@ -95,6 +96,11 @@ export class ReferenceReader {
     this.guard.check();
     if (!this.work.referenceAuthority) throw new ApplicationError("FORBIDDEN");
     const digest = await this.work.referenceAuthority();
+    if (this.diagnostic) {
+      if (!this.work.diagnosticAuthority)
+        throw new ApplicationError("FORBIDDEN");
+      await this.work.diagnosticAuthority();
+    }
     this.guard.check();
     return digest;
   }

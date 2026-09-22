@@ -21,11 +21,13 @@ import {
   type NativeCapturePolicy,
   nativeCapturePolicy,
 } from "./capture-authority.js";
+import { CAPTURE_DIAGNOSTIC_POLICY_SHA256 } from "./capture-diagnostic-profile.js";
 import { CAPTURE_POLICY, CAPTURE_POLICY_SHA256 } from "./capture-profile.js";
 import { type CaptureProject, captureProjectOwner } from "./capture-project.js";
 import { CAPTURE_RECOVERY_POLICY_SHA256 } from "./capture-recovery-profile.js";
 import { CAPTURE_REFERENCE_POLICY_SHA256 } from "./capture-reference-profile.js";
 import {
+  assertCaptureDiagnosticInstallation,
   assertCaptureRecoveryInstallation,
   assertCaptureReferenceInstallation,
 } from "./installation.js";
@@ -48,6 +50,7 @@ export interface CaptureWork {
     credentialSha256: string;
   }>;
   referenceAuthority?(): Promise<string>;
+  diagnosticAuthority?(): Promise<string>;
   isCurrent(): boolean;
   attestDatabase(
     filename: string,
@@ -139,6 +142,11 @@ export function acquireCaptureWork(project: CaptureProject): CaptureWork {
       await current();
       assertCaptureReferenceInstallation(owner.installation);
       return CAPTURE_REFERENCE_POLICY_SHA256;
+    },
+    async diagnosticAuthority() {
+      await current();
+      assertCaptureDiagnosticInstallation(owner.installation);
+      return CAPTURE_DIAGNOSTIC_POLICY_SHA256;
     },
     async attestDatabase(
       filename: string,

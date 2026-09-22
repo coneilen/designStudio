@@ -64,13 +64,19 @@ async function decode(
   let messages = 0;
   let failed = false;
   let protocolFailure = false;
+  let resourceFailure = false;
   let termination: Promise<number> | undefined;
   const abort = () => {
     termination ??= worker.terminate();
   };
   const ended = new Promise<number>((resolve) => worker.once("exit", resolve));
-  worker.on("error", () => {
+  worker.on("error", (error: unknown) => {
     failed = true;
+    resourceFailure ||=
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "ERR_WORKER_OUT_OF_MEMORY";
     abort();
   });
   worker.on("message", (value: unknown) => {
@@ -97,6 +103,8 @@ async function decode(
     const code = await ended;
     if (termination) await termination;
     budget.check();
+    if (resourceFailure)
+      throw diagnosticError("OUTPUT_LIMIT", "worker", "worker-limit");
     if (
       failed ||
       code !== 0 ||

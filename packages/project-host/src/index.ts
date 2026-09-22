@@ -10,6 +10,7 @@ export {
   type CaptureWork,
 } from "./capture-work.js";
 export {
+  assertCaptureDiagnosticInstallation,
   assertCaptureRecoveryInstallation,
   assertCaptureReferenceInstallation,
   type CaptureInstallationLease,

@@ -89,6 +89,7 @@ export interface ContractTypes {
   FigmaReferenceBinding: Types.FigmaReferenceBinding;
   FigmaReferenceProposal: Types.FigmaReferenceProposal;
   FigmaReferenceApproval: Types.FigmaReferenceApproval;
+  FigmaDiagnosticPredecessor: Types.FigmaDiagnosticPredecessor;
   FigmaReferenceRequest: Types.FigmaReferenceRequest;
   FigmaReferenceEvidence: Types.FigmaReferenceEvidence;
   NativeReferenceEnvelope: Types.NativeReferenceEnvelope;
@@ -255,6 +256,7 @@ export const contractNames: readonly ContractName[] = [
   "FigmaReferenceBinding",
   "FigmaReferenceProposal",
   "FigmaReferenceApproval",
+  "FigmaDiagnosticPredecessor",
   "FigmaReferenceRequest",
   "FigmaReferenceEvidence",
   "NativeReferenceEnvelope",

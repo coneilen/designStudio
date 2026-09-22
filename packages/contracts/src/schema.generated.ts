@@ -4546,6 +4546,9 @@ export const foundationSchema = {
         "previousApproval": {
           "$ref": "#/definitions/ArtifactReference"
         },
+        "diagnosticPredecessor": {
+          "$ref": "#/definitions/FigmaDiagnosticPredecessor"
+        },
         "binding": {
           "$ref": "#/definitions/FigmaReferenceBinding"
         },
@@ -4592,13 +4595,52 @@ export const foundationSchema = {
           "$ref": "#/definitions/FigmaReferenceProposal"
         },
         "confirmation": {
-          "const": "APPROVE-ONE-SELECTED-REFERENCE"
+          "enum": [
+            "APPROVE-ONE-SELECTED-REFERENCE",
+            "APPROVE-ONE-DIAGNOSTIC-REFERENCE"
+          ]
         },
         "recordedAt": {
           "$ref": "#/definitions/Timestamp"
         },
         "expiresAt": {
           "$ref": "#/definitions/Timestamp"
+        }
+      }
+    },
+    "FigmaDiagnosticPredecessor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "jobId",
+        "recordSha256",
+        "receiptSha256",
+        "request",
+        "approval",
+        "evidence",
+        "policySha256"
+      ],
+      "properties": {
+        "jobId": {
+          "$ref": "#/definitions/StableId"
+        },
+        "recordSha256": {
+          "$ref": "#/definitions/Sha256"
+        },
+        "receiptSha256": {
+          "$ref": "#/definitions/Sha256"
+        },
+        "request": {
+          "$ref": "#/definitions/ArtifactReference"
+        },
+        "approval": {
+          "$ref": "#/definitions/ArtifactReference"
+        },
+        "evidence": {
+          "$ref": "#/definitions/ArtifactReference"
+        },
+        "policySha256": {
+          "$ref": "#/definitions/Sha256"
         }
       }
     },
@@ -4807,7 +4849,11 @@ export const foundationSchema = {
             "reference-plan",
             "reference-approve",
             "reference-download",
-            "reference-inspect"
+            "reference-inspect",
+            "reference-diagnostic-plan",
+            "reference-diagnostic-approve",
+            "reference-diagnostic-download",
+            "reference-diagnostic-inspect"
           ]
         },
         "projectId": {
@@ -7426,6 +7472,7 @@ export const foundationSchema = {
             "json-malformed",
             "worker-protocol",
             "worker-unavailable",
+            "worker-limit",
             "cancelled",
             "deadline",
             "authority",

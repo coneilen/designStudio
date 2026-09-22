@@ -2,6 +2,27 @@
 
 ## Explicit selected-reference attachment
 
+A separately inventory-bound version-5 diagnostic supplement also exposes:
+
+```text
+figma reference-diagnostic-plan --project <ID> --request-id <original capture request>
+figma reference-diagnostic-approve --project <ID> --request-id <original capture request> --origin https://figma-alpha-api.s3.us-west-2.amazonaws.com --expected-proof <proposal SHA256> --confirm APPROVE-ONE-DIAGNOSTIC-REFERENCE
+figma reference-diagnostic-download --project <ID> --request-id <original capture request> --expected-approval <approval artifact SHA256> --confirm DOWNLOAD-ONE-DIAGNOSTIC-REFERENCE
+figma reference-diagnostic-inspect --project <ID> --request-id <original capture request>
+```
+
+These commands do **not** retry or reset the original job. They derive one
+successor slot from the exact original reference job and verified immutable
+receipt, only for a completed unavailable HTTP-200 / `INVALID_INPUT` / no-PNG
+result with exactly one settled GET and no publication uncertainty. A legacy
+record's absent rejection phase stays unknown. There is no caller-selected
+predecessor/acquisition ID, URL, path, policy override or general retry switch.
+Fresh diagnostic approval and explicit download consent are required; an expired
+original approval is historical evidence only. Admission permanently consumes
+the sole successor slot, including failures and across decoder/policy updates.
+Inspection/repeated download of an admitted slot is read-only; successors cannot
+be chained. Code availability is not permission for a live invocation.
+
 An independently approved version-4 native capture installation exposes:
 
 ```text

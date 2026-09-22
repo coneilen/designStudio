@@ -114,7 +114,7 @@ it("keeps JSON malformed and structural bounds separate", async () => {
 });
 it("preserves the contract parser's exact hard-depth limit before the worker walk", async () => {
   const nested = (depth: number) =>
-    Buffer.from('{"private-key":'.repeat(depth) + "0" + "}".repeat(depth));
+    Buffer.from(`${'{"private-key":'.repeat(depth)}0${"}".repeat(depth)}`);
   await expect(
     parseCaptureJson(nested(128), decoderBudget()),
   ).resolves.toBeTypeOf("object");

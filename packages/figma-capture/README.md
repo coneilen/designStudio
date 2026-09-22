@@ -45,6 +45,8 @@ stacks, header strings, chunk text, URLs or pixels enter that field. Worker
 responses require exactly one closed message, matching kind and finite positive
 bounded dimensions. Input/output/raster/node/depth limits and cancellation,
 deadline or authority loss remain terminal: they do not manufacture a receipt.
+Node-reported worker heap exhaustion is a closed `worker-limit` / `OUTPUT_LIMIT`
+failure, not a generic provider-unavailable partial result.
 An immediate command error can retain the safe diagnostic when persistence is
 not authorized/affordable; it is not durable proof. Old records without the field
 still validate unchanged; reference inspection labels the absent diagnostic

@@ -66,7 +66,7 @@ export function nativeCapturePolicy(work: CaptureWork) {
       jobReads?: readonly string[];
       jobWrite?: boolean;
       network?: CapturePolicy;
-      reference?: { sourceId: string };
+      reference?: { sourceId: string; diagnostic?: true };
       source?: CapturePolicy;
       output?: boolean;
     }): Promise<OperationContext> {
@@ -86,6 +86,11 @@ export function nativeCapturePolicy(work: CaptureWork) {
         if (owned.network || owned.source || !work.referenceAuthority)
           throw new ApplicationError("FORBIDDEN");
         await work.referenceAuthority();
+        if (owned.reference.diagnostic) {
+          if (!work.diagnosticAuthority)
+            throw new ApplicationError("FORBIDDEN");
+          await work.diagnosticAuthority();
+        }
       }
       if (owned.jobReads.length > 1000)
         throw new ApplicationError("INPUT_LIMIT");

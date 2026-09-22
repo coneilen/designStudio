@@ -47,7 +47,12 @@ it("rejects an old or structural installation before project/runtime/vault effec
 it("denies reference actions before opening any project for a legacy or forged lease", async () => {
   seam.close.mockClear();
   seam.guard.mockClear();
-  for (const command of ["reference-plan", "reference-inspect"]) {
+  for (const command of [
+    "reference-plan",
+    "reference-inspect",
+    "reference-diagnostic-plan",
+    "reference-diagnostic-inspect",
+  ]) {
     expect(
       await runCaptureCommand([
         "figma",
@@ -64,6 +69,6 @@ it("denies reference actions before opening any project for a legacy or forged l
     });
   }
   expect(seam.project).not.toHaveBeenCalled();
-  expect(seam.close).toHaveBeenCalledTimes(2);
-  expect(seam.guard).toHaveBeenCalledTimes(2);
+  expect(seam.close).toHaveBeenCalledTimes(4);
+  expect(seam.guard).toHaveBeenCalledTimes(4);
 });

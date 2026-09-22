@@ -835,6 +835,7 @@ export interface ContractCatalog {
   FigmaReferenceBinding: FigmaReferenceBinding;
   FigmaReferenceProposal: FigmaReferenceProposal;
   FigmaReferenceApproval: FigmaReferenceApproval;
+  FigmaDiagnosticPredecessor: FigmaDiagnosticPredecessor;
   FigmaReferenceRequest: FigmaReferenceRequest;
   FigmaReferenceEvidence: FigmaReferenceEvidence;
   NativeReferenceEnvelope: NativeReferenceEnvelope;
@@ -2038,6 +2039,7 @@ export interface ReferenceDiagnostic {
     | "json-malformed"
     | "worker-protocol"
     | "worker-unavailable"
+    | "worker-limit"
     | "cancelled"
     | "deadline"
     | "authority"
@@ -2273,6 +2275,7 @@ export interface FigmaReferenceProposal {
   format: "figma-reference-proposal-v1";
   approvalGeneration: number;
   previousApproval?: ArtifactReference;
+  diagnosticPredecessor?: FigmaDiagnosticPredecessor;
   binding: FigmaReferenceBinding;
   capturePolicySha256: Sha256;
   referencePolicySha256: Sha256;
@@ -2336,6 +2339,19 @@ export interface FigmaReferenceProposal {
 }
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "FigmaDiagnosticPredecessor".
+ */
+export interface FigmaDiagnosticPredecessor {
+  jobId: StableId;
+  recordSha256: Sha256;
+  receiptSha256: Sha256;
+  request: ArtifactReference;
+  approval: ArtifactReference;
+  evidence: ArtifactReference;
+  policySha256: Sha256;
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "Budget".
  */
 export interface Budget {
@@ -2358,7 +2374,7 @@ export interface Budget {
 export interface FigmaReferenceApproval {
   schemaVersion: SchemaVersion;
   proposal: FigmaReferenceProposal;
-  confirmation: "APPROVE-ONE-SELECTED-REFERENCE";
+  confirmation: "APPROVE-ONE-SELECTED-REFERENCE" | "APPROVE-ONE-DIAGNOSTIC-REFERENCE";
   recordedAt: Timestamp;
   expiresAt: Timestamp;
 }
@@ -2470,7 +2486,15 @@ export interface FigmaReferenceEvidence {
  */
 export interface NativeReferenceEnvelope {
   schemaVersion: SchemaVersion;
-  operation: "reference-plan" | "reference-approve" | "reference-download" | "reference-inspect";
+  operation:
+    | "reference-plan"
+    | "reference-approve"
+    | "reference-download"
+    | "reference-inspect"
+    | "reference-diagnostic-plan"
+    | "reference-diagnostic-approve"
+    | "reference-diagnostic-download"
+    | "reference-diagnostic-inspect";
   projectId: StableId;
   requestId: StableId;
   referenceDiagnostic?: ReferenceDiagnostic;
