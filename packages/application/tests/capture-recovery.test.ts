@@ -1476,6 +1476,24 @@ it.each([
       new AbortController().signal,
     );
     expect(converted.status, JSON.stringify(converted)).toBe("partial");
+    const conversionEvidence = required(
+      converted.value?.artifacts.find(
+        (entry) => entry.role === "conversion-evidence",
+      ),
+    );
+    const currentProjection = validateContract(
+      "FigmaConversionEvidence",
+      JSON.parse(
+        await readFile(
+          path.join(f.artifacts, "blobs", conversionEvidence.artifact.sha256),
+          "utf8",
+        ),
+      ),
+    );
+    expect(currentProjection.success).toBe(true);
+    if (!currentProjection.success)
+      throw new Error("Invalid synthetic conversion evidence");
+    expect(currentProjection.value.adapter).toBe("figma-structure-fixed-v2");
     if (fault === "valid")
       expect(
         converted.value?.artifacts.find((entry) => entry.role === "report")

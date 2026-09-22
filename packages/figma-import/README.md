@@ -1,9 +1,11 @@
 # @design-studio/figma-import
 
-Pure converter, version 0.2.0; offline profile `figma-offline-fixed-v1` is unchanged.
+Pure converter with current `fixed-v2` policy (implementation revision 0.3.0)
+and explicitly selectable `fixed-v1` replay (revision 0.2.0).
 This is **not a live Figma importer, authorized intake host, renderer, or installed
 CLI feature**. It has no network, filesystem, credential, plugin, project-creation,
-job, or process capability. No real Albums Pivot source has been captured.
+job, or process capability. Package fidelity tests use independently synthetic
+sources, not private design captures.
 
 ## Public API
 
@@ -15,16 +17,21 @@ job, or process capability. No real Albums Pivot source has been captured.
   `Uint8Array` structure bytes, an untrusted `FigmaIntakeManifest`, logical
   project/design/intake/actor IDs, and a caller-declared local `observedAt`.
   Optional resources are canonical byte-pinned **declarations**, not grants.
+  `policy` is the caller's intended `"fixed-v1"` or `"fixed-v2"` policy;
+  omission selects current v2. Unknown policies fail.
 - `convertFigmaStructure(input, limits?): FigmaStructureConversion` shares the
   same semantic implementation, but returns **no SourceSnapshot/SourceIdentity**.
   Its explicit selected view can retain bounded extra API siblings in the
   original nodes envelope without converting them. Original hash and JSON
   pointers refer to the unmodified envelope, not rewritten selected-node JSON.
-  The `figma-structure-fixed-v1` projection is source-neutral, not a REST proof.
+  The `figma-structure-fixed-v2` projection is source-neutral, not a REST proof.
 - `verifyFigmaConversion(input, candidate, limits?): void` independently
   recomputes the output using separately retained original inputs and the pinned
   converter. Rejects changed projections, designs, reports, maps or original
   bytes. It is not a signature/authorship or rights verification.
+  Replay selects policy from the separately retained input, never from the
+  candidate's adapter. Legacy candidates require explicitly intended v1;
+  they cannot downgrade a current-policy verification.
 - `FigmaImportError.diagnostic` exposes typed conversion failures. The shared
   contracts parser can also throw `ContractBoundaryError` for malformed JSON.
 
@@ -42,10 +49,18 @@ the small ignored-metadata list is inventoried separately. Nodes-envelope shape
 support does not establish that the bytes came from Figma or are untruncated.
 Plugin `JSON_REST_V1` compatibility is **not** claimed.
 
+Loss counts are property occurrences plus node/validator findings, not distinct
+unsupported feature kinds. The source inventory visits descendants even when
+conversion must keep their parent opaque. Source-map/loss counts therefore do
+not establish projected-node coverage; each projected node also has multiple
+property evidence entries. V2 opens supported translated containers, but does
+not suppress the remaining property or subtree losses to meet a count target.
+
 Copied node names have property-level projections; the screen label derives
-from the projected root label. `absoluteRenderBounds` is not reconstructed by
-this fixed profile and produces an explicit loss rather than a silently dropped
-visual footprint. Loss evidence points to the exact existing source property,
+from the projected root label. V2 projects `absoluteRenderBounds` only when it
+is a closed, valid rectangle exactly equal to captured absolute layout bounds.
+Different, malformed or null render bounds remain explicit losses rather than
+a silently dropped or guessed visual footprint. Loss evidence points to the exact existing source property,
 including escaped JSON Pointer keys. A missing property instead references its
 containing source node, without inventing evidence at a nonexistent pointer.
 
@@ -58,13 +73,34 @@ containing source node, without inventing evidence at a nonexistent pointer.
 | Solid paint | One visible solid sRGB fill; supported uniform inside border, uniform radius, opacity and bounds/rounded clipping. |
 | Auto-layout | Fixed captured geometry only, with an **approximated** loss and blocked strict readiness; not editable auto-layout equivalence. |
 | Text | Explicit characters/pixel metrics, exact matching declared PostScript face/family/weight/style, UTF-16 mixed ranges. Missing/ambiguous fonts or unsupported text styles become raw-preserved unsupported nodes. Visible glyph strokes produce a blocking property loss, never a box border; empty/hidden strokes produce neither. |
-| Images, vectors, components/instances | Raw-preserved opaque nodes or blocked paint losses; no decoded asset, invented expansion, generated SVG or screenshot fallback. |
-| Transforms, hidden nodes, masks, effects, advanced/unknown paint or layout | Explicit node/property losses. Rotated/transformed/hidden nodes are opaque; no geometry reconstruction from axis-aligned bounds. |
+| Captured instances (v2) | Already-present children become a fixed absolute frame, with captured appearance/clipping and an explicit blocking **approximated** loss for editable component/override semantics. No component lookup, expansion or invented binding. Component properties and unknown fields retain their losses. Missing/malformed children fail; hidden, image-filled or unsupported-transform instances remain opaque. V1 keeps instances opaque. |
+| Images, vectors, component definitions | Raw-preserved opaque nodes or blocked paint losses; no decoded asset, invented expansion, generated SVG or screenshot fallback. |
+| Translation-only transforms (v2) | Exactly identity-linear, finite 2x3 matrices are admitted. Captured absolute bounds determine parent-relative fixed layout; translation is not applied twice. Nested supported containers are traversed. Transform handling has source-linked fixed-layout evidence. |
+| Other transforms, hidden nodes, masks, effects, advanced/unknown paint or layout | Explicit node/property losses. Rotated/scaled/reflected/skewed/malformed transforms and hidden nodes remain opaque; no geometry reconstruction from axis-aligned bounds. V1 retains its original presence-only transform rejection for replay. |
 
 This profile does not implement the larger milestone's semantic auto-layout,
 component expansion, image/crop conversion, resource decoder, or source-preview
 comparison. ABeeZee appears only in an original synthetic test that explicitly
 declares it; no source font is replaced by ABeeZee or a host font.
+
+V2 admits the following exact redundant/default values for its **fixed captured
+snapshot**, not editable auto-layout or scrolling equivalence. They remain in
+original bytes and replay inputs, not falsely labeled nonvisual metadata.
+
+| Predicate | Why it is neutral or represented |
+| --- | --- |
+| Closed `size: {x,y}` exactly matches captured width/height | Existing numeric fixed dimensions represent it; an explicit size-to-layout projection records the source pointer. |
+| Empty `fillGeometry`/`strokeGeometry` arrays | No additional paths exist to interpret. Any nonempty path collection remains a loss. |
+| `scrollBehavior: "SCROLLS"` | No fixed/sticky positioning override is requested; captured offsets remain unchanged. This does not implement a scroll interaction. |
+| `layoutAlign: "INHERIT"` | No child alignment override. Auto-layout still has its separate approximated loss. |
+| Numeric `layoutGrow: 0` | No growth is requested; captured dimensions remain fixed. |
+| `layoutWrap: "NO_WRAP"` | No wrap transition is requested; this does not remove the auto-layout loss. |
+| Closed `constraints: {horizontal:"LEFT",vertical:"TOP"}` | Parent-relative absolute offsets preserve those anchors; an explicit constraints-to-offset projection records the source pointer. |
+
+Extra keys, malformed types and every other value retain losses. In particular,
+nonempty geometry, STRETCH, nonzero growth, WRAP and other constraints are not
+silently made equivalent. Sizing modes, background aliases, variable bindings,
+styles and unknown fields have not been blanket-allowlisted.
 
 ## Authority and evidence
 
@@ -87,6 +123,12 @@ IDs derive from logical project/design/intake and source-node coordinates, not
 names, order, or pixel/content hashes. Replays within that intake preserve IDs;
 independent asserted intakes do not silently merge. A persisted authoritative
 identity registry and verified cross-capture reconciliation remain later work.
+V2 additionally binds derived artifact scope to its policy descriptor and node
+identity to its adapter. Explicit v1 retains the original identity formulas and
+byte-reproducible outputs; changing policy does not overwrite a prior conversion.
+The offline source declaration's ID is also policy-bound because its diagnostic
+references are derived; its original content digest, artifact bytes and asserted
+source identity remain unchanged.
 
 Original bytes are never canonicalized or replaced. Derived resources are
 canonical-byte locked. Conversion projections identify a raw node pointer,
@@ -101,6 +143,9 @@ capture receipt and exact original artifacts before invoking the neutral API.
 It binds the returned source map to the physical committed REST SourceSnapshot;
 callers cannot supply JSON, hashes or callbacks to issue that binding. Native
 capture completeness still grants no fonts, image-fill rights or render readiness.
+The wrapper binds the current converter policy to both new design identity and
+the immutable conversion operation key. Reopening an already converted capture
+can create a distinct v2 result without replacing its old v1 receipt or artifacts.
 Source artifact IDs cannot alias the generated projection artifact; evidence
 dispatch requires both the artifact ID and digest, rejecting unknown identities.
 
@@ -133,7 +178,10 @@ pnpm typecheck
 
 Original synthetic tests cover authority separation, loss regressions,
 provenance replay tampering, fonts/ranges, byte integrity, identity, budgets,
-and clean-process package consumption. They are not real-source fidelity proof.
+and clean-process package consumption. Numerical nested translation and pure
+layout/CSS tests cover parent offsets, paint order, clipping, borders and declared
+text appearance without launching a browser. These are not pixel, font-rights
+or real-source fidelity proof, and fewer losses do not establish readiness.
 
 Public REST nodes/property documentation was reread on 2026-09-18:
 [file endpoints](https://developers.figma.com/docs/rest-api/file-endpoints/),
