@@ -86,7 +86,14 @@ it("bounds decoded pixels and observes actual worker termination before cancella
   try {
     await expect(
       decodeReference(png(true, 2, 1), limited),
-    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    ).rejects.toMatchObject({
+      code: "RASTER_LIMIT",
+      referenceDiagnostic: {
+        stage: "png",
+        reason: "raster-limit",
+        mimeClass: "not-observed",
+      },
+    });
   } finally {
     await limited.close();
   }
