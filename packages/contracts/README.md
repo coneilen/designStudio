@@ -2,6 +2,10 @@
 
 Version 1.4.0; artifact schema version 1.0; JSON Schema draft-07.
 
+Validation reuses compiled immutable schema functions, not payloads, acceptance
+results or authority. Every input is checked again, including mutations after a
+successful validation, accessors, cycles, depth and non-finite/non-JSON values.
+
 ## Native capture integration (package 1.4.0)
 
 `NativeCaptureEnvelope` is the closed, native-only result for capture, inspect,

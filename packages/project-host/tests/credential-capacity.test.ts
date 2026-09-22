@@ -11,6 +11,32 @@ import {
   credentialStateWrite,
 } from "../src/credential-capacity.js";
 
+it("preserves one terminal slot for status and pending removal while normal changes require eight", () => {
+  for (const state of [
+    "ready",
+    "pending-remove",
+    "uncertain",
+    "absent",
+  ] as const)
+    expect(() => admitCredentialCapacity("status", 1023, state)).not.toThrow();
+  expect(() =>
+    admitCredentialCapacity("remove", 1023, "pending-remove"),
+  ).not.toThrow();
+  expect(() => admitCredentialCapacity("remove", 1023, "ready")).toThrow(
+    /capacity/,
+  );
+  for (const action of ["setup", "update"] as const) {
+    expect(() => admitCredentialCapacity(action, 1016, "ready")).not.toThrow();
+    expect(() => admitCredentialCapacity(action, 1017, "ready")).toThrow(
+      /capacity/,
+    );
+  }
+  for (const action of ["setup", "update", "status", "remove"] as const)
+    expect(() =>
+      admitCredentialCapacity(action, 1024, "pending-remove"),
+    ).toThrow(/capacity/);
+});
+
 it("denies setup/update before any effect at exact 1023-record capacity", () => {
   for (const action of ["setup", "update"] as const)
     expect(() => admitCredentialCapacity(action, 1023, "ready", 1024)).toThrow(

@@ -69,6 +69,13 @@ pending/ready/absent/uncertain state and declared expiry/scopes. Torn or gapped
 history refuses further work and requires explicit reconciliation; it is never
 silently adopted, rewritten or filled with plaintext credentials.
 
+Credential admission rejects impossible capacity from the exact bounded filename
+inventory before reading record bodies: setup/update require eight slots and no
+action is admitted at full capacity. If capacity might allow the action, the
+entire chained history is still authenticated before any vault access. Cancellation
+interrupts this read-only admission without skipping verification on a successful
+path or changing the original native operation deadline.
+
 ### Capacity and durable cleanup reserve
 
 The total remains **1024 records**, with no rollover, pruning, second index or

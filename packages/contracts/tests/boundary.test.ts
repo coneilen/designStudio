@@ -8,6 +8,39 @@ import {
   validateContract,
 } from "../src/index.js";
 
+it("reuses compiled schemas without trusting previously validated mutable input", () => {
+  const value: Record<string, unknown> = { ...DEFAULT_BUDGETS };
+  expect(validateContract("Budget", value).success).toBe(true);
+  value.maxAttempts = -1;
+  expect(validateContract("Budget", value).success).toBe(false);
+  let invoked = false;
+  Object.defineProperty(value, "maxAttempts", {
+    enumerable: true,
+    get() {
+      invoked = true;
+      return 1;
+    },
+  });
+  expect(validateContract("Budget", value).success).toBe(false);
+  expect(invoked).toBe(false);
+  const cycle: Record<string, unknown> = {};
+  expect(validateContract("JsonValue", cycle).success).toBe(true);
+  cycle.self = cycle;
+  expect(validateContract("JsonValue", cycle).success).toBe(false);
+  for (const primitive of [null, true, false, "stable_id", 0, 1])
+    expect(validateContract("JsonValue", primitive).success).toBe(true);
+  for (const primitive of [
+    NaN,
+    Infinity,
+    -Infinity,
+    undefined,
+    1n,
+    Symbol("invalid"),
+    () => {},
+  ])
+    expect(validateContract("JsonValue", primitive).success).toBe(false);
+});
+
 export const minimalDesign = () => ({
   schemaVersion: "1.0",
   projectId: "project_synthetic",

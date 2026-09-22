@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { vi } from "vitest";
+import { onTestFinished, vi } from "vitest";
 import {
   CAPTURE_POLICY_SHA256,
   CAPTURE_PROFILE,
@@ -23,6 +23,7 @@ interface CaptureFixtureBytes {
   helper?: Buffer;
   sqlite?: Buffer;
 }
+let captureFixtureActive = false;
 export async function captureCandidate(
   root: string,
   fixture: CaptureFixtureBytes = {},
@@ -79,57 +80,76 @@ export async function withCaptureInstallation(
   ) => Promise<void>,
   fixture: CaptureFixtureBytes = {},
 ) {
-  await ownedTest(async (root) => {
-    const native = await loadNative();
-    const folder = vi.spyOn(native, "localAppData").mockReturnValue(root);
-    const entries: { entry: InstallationEntry; directory: boolean }[] = [];
-    const create = native.createInstallationEntry.bind(native);
-    const tracking = vi
-      .spyOn(native, "createInstallationEntry")
-      .mockImplementation((...args) => {
-        const entry = create(...args);
-        entries.push({ entry, directory: args[1] });
-        return entry;
-      });
-    let installation:
-      | Awaited<ReturnType<typeof verifyCaptureInstalledRoot>>
-      | undefined;
-    const errors: unknown[] = [];
+  if (captureFixtureActive)
+    throw new Error(
+      "Prior capture fixture still owns native overrides; refuse overlapping admission.",
+    );
+  captureFixtureActive = true;
+  const pending = run();
+  onTestFinished(() => pending);
+  return pending;
+  async function run() {
+    let releaseOverrides: (() => void) | undefined;
+    let quiesced = true;
     try {
-      const candidate = await captureCandidate(root, fixture);
-      const launch = await installCandidate(
-        candidate.source,
-        candidate.manifest,
-        candidate.bootstrap,
-      );
-      installation = await verifyCaptureInstalledRoot(
-        path.dirname(path.dirname(launch)),
-      );
-      await work(installation, root);
-    } catch (error) {
-      errors.push(error);
-    } finally {
-      tracking.mockRestore();
-      folder.mockRestore();
-      try {
-        await installation?.close();
-      } catch (error) {
-        errors.push(error);
-      }
-      for (const { entry } of entries) {
+      await ownedTest(async (root) => {
+        const native = await loadNative();
+        const folder = vi.spyOn(native, "localAppData").mockReturnValue(root);
+        const entries: { entry: InstallationEntry; directory: boolean }[] = [];
+        const create = native.createInstallationEntry.bind(native);
+        const tracking = vi
+          .spyOn(native, "createInstallationEntry")
+          .mockImplementation((...args) => {
+            const entry = create(...args);
+            entries.push({ entry, directory: args[1] });
+            return entry;
+          });
+        quiesced = false;
+        releaseOverrides = () => {
+          tracking.mockRestore();
+          folder.mockRestore();
+        };
+        let installation:
+          | Awaited<ReturnType<typeof verifyCaptureInstalledRoot>>
+          | undefined;
+        const errors: unknown[] = [];
         try {
-          entry.close();
-          await weakenTestAcl(root, entry.identity.path, false, true);
+          const candidate = await captureCandidate(root, fixture);
+          const launch = await installCandidate(
+            candidate.source,
+            candidate.manifest,
+            candidate.bootstrap,
+          );
+          installation = await verifyCaptureInstalledRoot(
+            path.dirname(path.dirname(launch)),
+          );
+          await work(installation, root);
         } catch (error) {
           errors.push(error);
+        } finally {
+          try {
+            await installation?.close();
+            for (const { entry } of entries) {
+              entry.close();
+              await weakenTestAcl(root, entry.identity.path, false, true);
+            }
+            quiesced = true;
+          } catch (error) {
+            errors.push(error);
+          }
         }
+        if (errors.length)
+          throw new AggregateError(
+            errors,
+            "Capture fixture operation/cleanup failed.",
+            { cause: errors[0] },
+          );
+      });
+    } finally {
+      if (quiesced) {
+        releaseOverrides?.();
+        captureFixtureActive = false;
       }
     }
-    if (errors.length)
-      throw new AggregateError(
-        errors,
-        "Capture fixture operation/cleanup failed.",
-        { cause: errors[0] },
-      );
-  });
+  }
 }
