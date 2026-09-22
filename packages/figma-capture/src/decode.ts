@@ -124,7 +124,13 @@ async function decode(
       const reason = message.reason as keyof typeof decoderReasons;
       const allowed =
         kind === "json"
-          ? ["json-malformed", "node-limit", "depth-limit", "worker-protocol"]
+          ? [
+              "json-malformed",
+              "input-limit",
+              "node-limit",
+              "depth-limit",
+              "worker-protocol",
+            ]
           : Object.keys(decoderReasons).filter(
               (entry) => entry !== "json-malformed" && entry !== "depth-limit",
             );

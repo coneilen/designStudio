@@ -249,12 +249,7 @@ export function validatePng(b: Buffer, limits: Budget) {
       } else if (["tEXt", "zTXt", "iTXt"].includes(type)) {
         textEnvelope(type, data);
       } else {
-        if (((name[3] ?? 0) & 32) === 0)
-          fail(
-            "PNG_UNSUPPORTED",
-            "Unknown unsafe-to-copy ancillary PNG chunk.",
-          );
-        // Unknown ancillary semantics cannot attest sRGB, even if safe to retain.
+        // Copy safety constrains editors, not decoding unchanged originals.
         unknownColor = true;
       }
     }

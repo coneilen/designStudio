@@ -17,6 +17,18 @@ import {
 const limits = { ...DEFAULT_BUDGETS };
 const decode = (bytes: Buffer) => decodeRaster(bytes, limits);
 describe("independently authored bounded PNG compatibility", () => {
+  it.each(["vpAg", "vpAG", "cICP"])(
+    "retains unknown ancillary %s regardless of editor copy bit without color attestation",
+    (type) => {
+      const bytes = image(6, 8, undefined, [
+        srgb(),
+        chunk(type, Buffer.of(1, 2, 3, 4)),
+      ]);
+      const original = Buffer.from(bytes);
+      expect(decode(bytes).colorSpace).toBe("unknown");
+      expect(bytes).toEqual(original);
+    },
+  );
   it.each([
     [0, [10, 20, 30, 40, 50, 60], [15, 25, 35, 45, 55, 65]],
     [1, [10, 20, 30, 30, 30, 30], [15, 25, 35, 30, 30, 30]],

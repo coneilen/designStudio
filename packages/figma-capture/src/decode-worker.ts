@@ -1,6 +1,10 @@
 import { parentPort, workerData } from "node:worker_threads";
 import { AssetError, decodeRaster } from "@design-studio/assets";
-import { DEFAULT_BUDGETS, parseContract } from "@design-studio/contracts";
+import {
+  ContractBoundaryError,
+  DEFAULT_BUDGETS,
+  parseContract,
+} from "@design-studio/contracts";
 import { assetReasons, type DecoderReason } from "./diagnostic.js";
 
 if (parentPort) {
@@ -97,6 +101,12 @@ if (parentPort) {
   } catch (error) {
     if (error instanceof AssetError)
       reason = assetReasons[error.diagnostic.code] ?? "worker-protocol";
+    else if (error instanceof ContractBoundaryError && kind === "json") {
+      if (error.issues.some((issue) => issue.code === "DEPTH_LIMIT"))
+        reason = "depth-limit";
+      else if (error.issues.some((issue) => issue.code === "INPUT_LIMIT"))
+        reason = "input-limit";
+    }
     port.postMessage({ ok: false, kind, reason });
   } finally {
     bytes?.fill(0);

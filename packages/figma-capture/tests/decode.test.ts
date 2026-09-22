@@ -112,6 +112,30 @@ it("keeps JSON malformed and structural bounds separate", async () => {
     referenceDiagnostic: { reason: "depth-limit" },
   });
 });
+it("preserves the contract parser's exact hard-depth limit before the worker walk", async () => {
+  const nested = (depth: number) =>
+    Buffer.from('{"private-key":'.repeat(depth) + "0" + "}".repeat(depth));
+  await expect(
+    parseCaptureJson(nested(128), decoderBudget()),
+  ).resolves.toBeTypeOf("object");
+  for (const depth of [129, 130])
+    await expect(
+      parseCaptureJson(nested(depth), decoderBudget()),
+    ).rejects.toMatchObject({
+      code: "DEPTH_LIMIT",
+      referenceDiagnostic: {
+        stage: "json",
+        reason: "depth-limit",
+        mimeClass: "not-observed",
+      },
+    });
+  await expect(
+    parseCaptureJson(nested(129).subarray(0, -1), decoderBudget()),
+  ).rejects.toMatchObject({
+    code: "INVALID_INPUT",
+    referenceDiagnostic: { reason: "json-malformed" },
+  });
+});
 it("does not return text metadata and preserves original encoded bytes", async () => {
   const bytes = image(6, 8, undefined, [
     chunk("tEXt", Buffer.from("Synthetic\0private fixture text")),
