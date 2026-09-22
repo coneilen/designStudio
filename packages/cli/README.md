@@ -1,5 +1,41 @@
 # @design-studio/cli
 
+## Explicit selected-reference attachment
+
+An independently approved version-4 native capture installation exposes:
+
+```text
+figma reference-plan --project <ID> --request-id <original capture request>
+figma reference-approve --project <ID> --request-id <original capture request> --origin https://figma-alpha-api.s3.us-west-2.amazonaws.com --expected-proof <proposal SHA256> --confirm APPROVE-ONE-SELECTED-REFERENCE
+figma reference-download --project <ID> --request-id <original capture request> --expected-approval <approval artifact SHA256> --confirm DOWNLOAD-ONE-APPROVED-REFERENCE
+figma reference-inspect --project <ID> --request-id <original capture request>
+```
+
+Planning and inspection are read-only. Approval records the displayed original
+capture/selection/version, PNG intent, exact origin and limits offline; it does
+not download. Only the separately acknowledged download command can admit the
+single bounded acquisition. There is no URL/path/token argument or origin
+allow-list editor. Existing inspect/convert commands do not fetch references.
+Approval expires after at most five minutes and is not silently renewed.
+If it expires before any acquisition is admitted, request a fresh plan and
+explicitly approve its new proof. The immutable renewal links the prior expired
+approval; replaying the old approval command does not extend it. At most 32
+approval generations are retained. Any admitted job permanently forbids renewal,
+even when its HTTP effect was absent or unknown.
+
+The signed URL is loaded privately from the original authenticated committed
+render map. It is not printed. Expired URLs, 403, redirects, malformed images,
+unknown effects and publication uncertainty do not trigger refresh or recapture.
+Once admitted, the same acquisition can only be inspected/replayed read-only,
+not retried; completed replay still needs current local authority. A predecessor's
+retained stage can remain only under exact immutable recovery-grant and physical
+identity/hash proof. Unknown stages or orphan publications require explicit
+review, not automatic adoption. Existing validated conversion receipts and safe
+private exports need not be deleted.
+PNG and decoded geometry/color evidence have their own receipt. The original
+partial capture and unresolved rights remain unchanged; no rendering or
+implementation readiness is claimed.
+
 F08 `designctl` implements one command dispatcher over the shared native
 application facade or authenticated loopback API. The shipped launcher and
 local fixture initialization are wired to the reviewed offline installation

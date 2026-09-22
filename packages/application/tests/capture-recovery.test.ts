@@ -21,6 +21,7 @@ import {
   CAPTURE_HANDLER_ID,
   CAPTURE_HANDLER_VERSION,
 } from "@design-studio/figma-capture";
+import * as figmaImport from "@design-studio/figma-import";
 import { parseFigmaSelection } from "@design-studio/figma-import";
 import { HostBoundaryError, ProjectFileSystem } from "@design-studio/host";
 import { JobService } from "@design-studio/jobs";
@@ -36,13 +37,16 @@ import {
   CaptureHttpError,
   FigmaHttpsTransport,
 } from "../../figma-capture/dist/transport.js";
+import { png } from "../../figma-capture/tests/support.js";
 import { nativeCapturePolicy } from "../../project-host/dist/capture-authority.js";
 import { CAPTURE_RECOVERY_POLICY_SHA256 } from "../../project-host/src/capture-recovery-profile.js";
+import { CAPTURE_REFERENCE_POLICY_SHA256 } from "../../project-host/src/capture-reference-profile.js";
 import {
   addSyntheticStoppedCaptures,
   corruptSyntheticCapture,
   corruptSyntheticCaptureStage,
   mutateOpenSyntheticCapture,
+  removeSyntheticCaptureProtection,
 } from "../../storage/tests/capture-recovery-corruption.js";
 import {
   CAPTURE_RECOVERY_CONFIRMATION,
@@ -53,6 +57,10 @@ import {
   type NativeCaptureRuntime,
 } from "../src/capture-runtime-internal.js";
 import { RecoveryDecisions } from "../src/recovery.js";
+import {
+  REFERENCE_APPROVAL_CONFIRMATION,
+  REFERENCE_DOWNLOAD_CONFIRMATION,
+} from "../src/reference-runtime.js";
 
 const seam = vi.hoisted(() => ({ work: undefined as CaptureWork | undefined }));
 vi.mock("@design-studio/project-host", async (original) => ({
@@ -203,6 +211,7 @@ async function fixture(
           throw new HostBoundaryError("FORBIDDEN", "Closed synthetic work");
       },
       readyCredential: ready,
+      referenceAuthority: async () => CAPTURE_REFERENCE_POLICY_SHA256,
       recoveryAuthority: async () => {
         if (!admitted)
           throw new HostBoundaryError(
@@ -1339,3 +1348,282 @@ it("keeps unsupported generation histories refused and accepts independent resou
     (await f.runtime.recover(f.input, new AbortController().signal)).status,
   ).toBe("failed");
 });
+
+it.each([
+  "valid",
+  "unknown-stage",
+  "changed-stage",
+  "pair-link",
+  "foreign-stage",
+  "changed-original",
+  "unrelated-protection",
+  "missing-protection",
+  "timestamp-tie-unrelated",
+] as const)(
+  "authenticates retained predecessor stages after successor conversion and private exports: %s",
+  async (fault) => {
+    const f = await fixture(true, undefined, { repaired: true });
+    const beforeRecord = await f.record();
+    const beforeStages = await f.stages();
+    const stage = required(beforeStages[0]);
+    const directories = (await readdir(f.artifacts)).filter((name) =>
+      name.startsWith(".host-"),
+    );
+    const matching = (
+      await Promise.all(
+        directories.map(async (directory) =>
+          (
+            await readdir(path.join(f.artifacts, directory))
+          ).includes(stage.stagingId)
+            ? directory
+            : undefined,
+        ),
+      )
+    ).filter((entry) => entry !== undefined);
+    expect(matching).toHaveLength(1);
+    const stagePath = path.join(
+      f.artifacts,
+      required(matching[0]),
+      stage.stagingId,
+    );
+    const beforeBytes = await readFile(stagePath);
+    if (fault === "timestamp-tie-unrelated") {
+      const now = f.policy.clock.now();
+      vi.spyOn(f.policy.clock, "now").mockReturnValue(now);
+      value(await f.ordinaryReceipt("unrelated_before_grant"));
+    }
+    const proof = await f.propose();
+    expect(
+      (
+        await f.runtime.recover(
+          {
+            ...f.input,
+            expectedProof: proof.proofSha256,
+            confirmation: CAPTURE_RECOVERY_CONFIRMATION,
+          },
+          new AbortController().signal,
+        )
+      ).status,
+    ).toBe("complete");
+    f.allowCapture();
+    const origin = "https://figma-alpha-api.s3.us-west-2.amazonaws.com";
+    const api = vi
+      .spyOn(FigmaHttpsTransport.prototype, "api")
+      .mockImplementation(async (operation) => ({
+        status: 200,
+        mediaType: "application/json",
+        bytes: Buffer.from(
+          JSON.stringify(
+            operation === "metadata"
+              ? { file: { version: "v1" } }
+              : operation === "nodes"
+                ? {
+                    version: "v1",
+                    nodes: {
+                      "1:2": {
+                        document: {
+                          id: "1:2",
+                          type: "FRAME",
+                          name: "Synthetic recovered frame",
+                          absoluteBoundingBox: {
+                            x: 0,
+                            y: 0,
+                            width: 2,
+                            height: 2,
+                          },
+                          children: [],
+                        },
+                      },
+                    },
+                  }
+                : {
+                    images: {
+                      "1:2": `${origin}/synthetic.png?private=synthetic`,
+                    },
+                  },
+          ),
+        ),
+      }));
+    const requestId = f.input.nextRequestId;
+    const next = await f.runtime.execute(
+      { operation: "capture", requestId, url: f.url },
+      new AbortController().signal,
+    );
+    expect(next.status, JSON.stringify(next)).toBe("partial");
+    expect(next.value?.jobStatus).toBe("completed");
+    if (fault === "valid") {
+      const convert = figmaImport.convertFigmaStructure;
+      vi.spyOn(figmaImport, "convertFigmaStructure").mockImplementation(
+        (...args) => {
+          const result = convert(...args);
+          result.report.diagnostics.push({
+            schemaVersion: "1.0",
+            id: "synthetic_large_report",
+            code: "ACTION_REQUIRED",
+            severity: "warning",
+            message: "x".repeat(4500000),
+            operations: [],
+            nodeIds: [],
+            evidenceIds: [],
+            recovery: "Synthetic report-size regression only.",
+          });
+          return result;
+        },
+      );
+    }
+    const converted = await f.runtime.execute(
+      { operation: "convert", requestId },
+      new AbortController().signal,
+    );
+    expect(converted.status, JSON.stringify(converted)).toBe("partial");
+    const conversionEvidence = required(
+      converted.value?.artifacts.find(
+        (entry) => entry.role === "conversion-evidence",
+      ),
+    );
+    const currentProjection = validateContract(
+      "FigmaConversionEvidence",
+      JSON.parse(
+        await readFile(
+          path.join(f.artifacts, "blobs", conversionEvidence.artifact.sha256),
+          "utf8",
+        ),
+      ),
+    );
+    expect(currentProjection.success).toBe(true);
+    if (!currentProjection.success)
+      throw new Error("Invalid synthetic conversion evidence");
+    expect(currentProjection.value.adapter).toBe("figma-structure-fixed-v2");
+    if (fault === "valid")
+      expect(
+        converted.value?.artifacts.find((entry) => entry.role === "report")
+          ?.artifact.byteLength,
+      ).toBeGreaterThanOrEqual(4500000);
+    for (const role of ["nodes", "report"] as const)
+      expect(
+        (
+          await f.runtime.execute(
+            {
+              operation: "artifact",
+              requestId,
+              role,
+              outputRelative: `${role}.json`,
+            },
+            new AbortController().signal,
+          )
+        ).status,
+      ).toBe("partial");
+    const priorFiles = await Promise.all(
+      (await readdir(path.join(f.artifacts, "blobs"))).map(
+        async (name) =>
+          [
+            name,
+            await readFile(path.join(f.artifacts, "blobs", name)),
+          ] as const,
+      ),
+    );
+    const exports = await Promise.all(
+      ["nodes.json", "report.json"].map(
+        async (name) =>
+          [name, await readFile(path.join(f.outputs, name))] as const,
+      ),
+    );
+    f.ready.mockClear();
+    f.vault.mockClear();
+    api.mockClear();
+    // Any reference-time credential/recovery authority access is a regression.
+    required(seam.work).recoveryAuthority = async () => {
+      throw new Error("Reference must not inspect the credential journal");
+    };
+    const image = vi
+      .spyOn(FigmaHttpsTransport.prototype, "image")
+      .mockImplementation(async (_url, budget) => {
+        budget.dnsQuery();
+        const bytes = png(true, 2, 2);
+        budget.receive(bytes.length);
+        budget.decoded(bytes.length);
+        return { status: 200, mediaType: "image/png", bytes };
+      });
+    if (fault === "unknown-stage") {
+      const directory = path.join(
+        f.artifacts,
+        ".host-11111111-1111-4111-8111-111111111111",
+      );
+      await mkdir(directory);
+      await writeFile(
+        path.join(directory, "22222222-2222-4222-8222-222222222222"),
+        beforeBytes,
+      );
+    }
+    if (fault === "changed-stage")
+      await writeFile(stagePath, Buffer.from("synthetic changed"));
+    if (fault === "pair-link")
+      await link(stagePath, path.join(f.outputs, "paired.json"));
+    if (fault === "foreign-stage")
+      await f.mutateStage((entry) => {
+        entry.requestId = "foreign";
+      });
+    if (fault === "changed-original")
+      await f.mutate((record) => {
+        record.rowVersion++;
+      });
+    if (fault === "unrelated-protection") {
+      const context = await f.policy.issue({
+        jobId: "unrelated",
+        requestId: "unrelated",
+        signal: new AbortController().signal,
+      });
+      value(
+        await f.store.stage(Buffer.from("uncommitted private bytes"), context),
+      );
+    }
+    if (fault === "missing-protection")
+      removeSyntheticCaptureProtection(f.store, f.initial.job.id);
+    const run = required(f.runtime.reference).bind(f.runtime);
+    const planned = await run(
+      { operation: "reference-plan", requestId },
+      new AbortController().signal,
+    );
+    expect(planned.status, JSON.stringify(planned)).toBe("complete");
+    const approved = await run(
+      {
+        operation: "reference-approve",
+        requestId,
+        origin,
+        expectedProof: required(planned.value?.proposal?.proofSha256),
+        confirmation: REFERENCE_APPROVAL_CONFIRMATION,
+      },
+      new AbortController().signal,
+    );
+    if (fault !== "valid") {
+      expect(approved.status, JSON.stringify(approved)).toBe("failed");
+      expect(image).not.toHaveBeenCalled();
+      return;
+    }
+    expect(approved.status, JSON.stringify(approved)).toBe("complete");
+    const result = await run(
+      {
+        operation: "reference-download",
+        requestId,
+        expectedApproval: required(approved.value?.approval?.sha256),
+        confirmation: REFERENCE_DOWNLOAD_CONFIRMATION,
+      },
+      new AbortController().signal,
+    );
+    expect(result.status, JSON.stringify(result)).toBe("complete");
+    expect(image).toHaveBeenCalledTimes(1);
+    expect(f.ready).not.toHaveBeenCalled();
+    expect(f.vault).not.toHaveBeenCalled();
+    expect(api).not.toHaveBeenCalled();
+    expect(await f.record()).toEqual(beforeRecord);
+    expect(await f.stages()).toEqual(beforeStages);
+    expect(await readFile(stagePath)).toEqual(beforeBytes);
+    for (const [name, bytes] of priorFiles)
+      expect(await readFile(path.join(f.artifacts, "blobs", name))).toEqual(
+        bytes,
+      );
+    for (const [name, bytes] of exports)
+      expect(await readFile(path.join(f.outputs, name))).toEqual(bytes);
+  },
+  60000,
+);

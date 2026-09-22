@@ -18,6 +18,30 @@ const identity = {
   },
 };
 
+it.each([
+  "figma-offline-fixed-v1",
+  "figma-structure-fixed-v1",
+  "figma-offline-fixed-v2",
+  "figma-structure-fixed-v2",
+])("accepts the explicitly versioned conversion adapter %s", (adapter) => {
+  const evidence = {
+    schemaVersion: "1.0",
+    adapter,
+    source: { id: "raw_synthetic", sha256: "a".repeat(64) },
+    entries: [],
+    ignoredProperties: [],
+  };
+  expect(validateContract("FigmaConversionEvidence", evidence).success).toBe(
+    true,
+  );
+  expect(
+    validateContract("FigmaConversionEvidence", {
+      ...evidence,
+      adapter: "figma-structure-fixed-unrecognized",
+    }).success,
+  ).toBe(false);
+});
+
 it("represents unknown-version offline evidence without inventing a provider identity", () => {
   expect(validateContract("SourceIdentity", identity).success).toBe(true);
   expect(

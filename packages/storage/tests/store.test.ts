@@ -10,17 +10,19 @@ import type {
   StagedArtifact,
 } from "@design-studio/contracts";
 import Database from "better-sqlite3";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, aroundEach, describe, expect, test } from "vitest";
 import {
   decodeBackup,
   encodeBackup,
   LocalStore,
   type StorageOptions,
 } from "../src/index.js";
+import { closeSettledStores, inStorageTest } from "./lifetime.js";
 import { bytes, context, diskFixture, hash, revision } from "./support.js";
 
 const roots: string[] = [];
 const stores: LocalStore[] = [];
+aroundEach((run, context) => inStorageTest(context.signal, run));
 async function proofBoundary(root: string) {
   const disk = await diskFixture(root);
   const proofs = new Set<string>();
@@ -54,7 +56,7 @@ function gate() {
   return { promise, resolve };
 }
 afterEach(async () => {
-  for (const store of stores.splice(0)) store.close();
+  await closeSettledStores(stores);
   for (const root of roots.splice(0))
     await rm(root, { recursive: true, force: true });
 });

@@ -31,11 +31,21 @@ import {
   limits,
   shape,
 } from "./boundary.js";
+import {
+  equalRenderBounds,
+  equalSize,
+  leftTopConstraints,
+  neutralFixedProperty,
+  translationOnly,
+} from "./geometry.js";
+import { type FigmaConversionPolicy, figmaConversionPolicy } from "./policy.js";
 import { parseFigmaSelection } from "./selection.js";
 import { parseSource, type SourceNode } from "./source.js";
 import { textStyle } from "./text.js";
 
 export interface FigmaConversionInput {
+  /** Caller-selected replay policy; candidate evidence never chooses this value. */
+  policy?: FigmaConversionPolicy;
   manifest: unknown;
   structureBytes: Uint8Array;
   projectId: string;
@@ -135,8 +145,10 @@ function convertShared(
   options: ConversionLimits,
   mode: "offline" | "structure",
 ): FigmaStructureConversion & { source?: SourceSnapshot } {
+  const policy = figmaConversionPolicy(input.policy);
+  const legacy = policy.version === "0.2.0";
   const profile =
-    mode === "offline" ? "figma-offline-fixed-v1" : "figma-structure-fixed-v1";
+    mode === "offline" ? policy.offlineAdapter : policy.structureAdapter;
   const budget = limits(options);
   const manifest = structuredClone(
     shape("FigmaIntakeManifest", input.manifest),
@@ -154,6 +166,7 @@ function convertShared(
     input.projectId,
     input.designId,
     input.intakeId,
+    ...(!legacy ? [policy] : []),
   ]);
   if (
     !(input.structureBytes instanceof Uint8Array) ||
@@ -408,6 +421,20 @@ function convertShared(
       }
       if (handled.has(key)) continue;
       const value = node.raw[key];
+      if (!legacy && key === "relativeTransform" && translationOnly(value))
+        continue;
+      if (
+        !legacy &&
+        key === "absoluteRenderBounds" &&
+        equalRenderBounds(value, node.bounds)
+      )
+        continue;
+      if (
+        !legacy &&
+        ((key === "size" && equalSize(value, node.bounds)) ||
+          neutralFixedProperty(key, value))
+      )
+        continue;
       if (
         (key === "visible" && value === true) ||
         (key === "blendMode" &&
@@ -463,7 +490,31 @@ function convertShared(
       },
     };
     projection(node, "/layout", common.layout, "fixed-layout");
+    if (!legacy && equalSize(node.raw.size, bounds))
+      projection(
+        node,
+        "/layout",
+        common.layout,
+        "fixed-layout",
+        `${node.pointer}/size`,
+      );
+    if (!legacy && leftTopConstraints(node.raw.constraints))
+      projection(
+        node,
+        "/layout/offset",
+        common.layout.offset,
+        "fixed-layout",
+        `${node.pointer}/constraints`,
+      );
     projection(node, "/metadata/sourceAbsoluteBounds", bounds, "identity");
+    if (!legacy && equalRenderBounds(node.raw.absoluteRenderBounds, bounds))
+      projection(
+        node,
+        "/metadata/sourceAbsoluteBounds",
+        bounds,
+        "fixed-layout",
+        `${node.pointer}/absoluteRenderBounds`,
+      );
     if (common.name !== undefined)
       projection(
         node,
@@ -483,7 +534,8 @@ function convertShared(
       evidenceStatus: "raw-preserved",
     });
     if (
-      node.raw.relativeTransform !== undefined ||
+      (node.raw.relativeTransform !== undefined &&
+        (legacy || !translationOnly(node.raw.relativeTransform))) ||
       (node.raw.rotation !== undefined && node.raw.rotation !== 0) ||
       (node.raw.visible !== undefined && node.raw.visible !== true)
     ) {
@@ -494,6 +546,15 @@ function convertShared(
       );
       return opaque("Unsupported source geometry or visibility.");
     }
+    if (!legacy && node.raw.relativeTransform !== undefined)
+      // Captured absolute bounds already include translation; applying it again moves children twice.
+      projection(
+        node,
+        "/layout/offset",
+        common.layout.offset,
+        "fixed-layout",
+        `${node.pointer}/relativeTransform`,
+      );
     if (
       Array.isArray(node.raw.fills) &&
       node.raw.fills.some(
@@ -516,7 +577,15 @@ function convertShared(
       );
     }
     let result: DesignNode;
-    if (node.type === "FRAME" || node.type === "GROUP") {
+    const capturedInstance = !legacy && node.type === "INSTANCE";
+    if (node.type === "FRAME" || node.type === "GROUP" || capturedInstance) {
+      if (capturedInstance)
+        loss(
+          node,
+          "type",
+          "Captured instance children are retained as a fixed frame, not editable component or override semantics.",
+          "approximated",
+        );
       if (node.raw.layoutMode !== undefined && node.raw.layoutMode !== "NONE")
         loss(
           node,
@@ -531,7 +600,7 @@ function convertShared(
         children.push(converted);
       }
       result =
-        node.type === "FRAME"
+        node.type === "FRAME" || capturedInstance
           ? {
               ...common,
               type: "frame",
@@ -693,7 +762,11 @@ function convertShared(
     mode === "offline"
       ? {
           schemaVersion: "1.0",
-          id: `source_${canonicalDigest([input.intakeId, raw.sha256])}`,
+          id: `source_${canonicalDigest([
+            input.intakeId,
+            raw.sha256,
+            ...(!legacy ? [policy] : []),
+          ])}`,
           projectId: input.projectId,
           identity: {
             transport: "figma-offline",

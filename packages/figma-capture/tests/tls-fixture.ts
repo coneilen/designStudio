@@ -69,6 +69,10 @@ export function syntheticCertificate() {
             seq(
               der(130, Buffer.from("api.figma.com")),
               der(130, Buffer.from("images.capture.invalid")),
+              der(
+                130,
+                Buffer.from("figma-alpha-api.s3.us-west-2.amazonaws.com"),
+              ),
             ),
           ),
         ),

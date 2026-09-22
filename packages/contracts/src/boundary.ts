@@ -1,4 +1,4 @@
-import { Ajv } from "ajv";
+import { Ajv, type ValidateFunction } from "ajv";
 import { isAlias, isScalar, parseDocument, visit } from "yaml";
 import type { ContractName, ContractTypes } from "./catalog.generated.js";
 import { contractNames } from "./catalog.generated.js";
@@ -53,6 +53,7 @@ ajv.addFormat("date-time", {
   },
 });
 ajv.addSchema(foundationSchema);
+const validators = new Map<string, ValidateFunction<unknown>>();
 
 function issue(
   code: BoundaryIssue["code"],
@@ -70,6 +71,13 @@ function inspectJson(
   value: unknown,
   maxDepth: number,
 ): BoundaryIssue | undefined {
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "boolean" ||
+    (typeof value === "number" && Number.isFinite(value))
+  )
+    return undefined;
   const ancestors = new Set<object>();
   const stack: Array<{
     value: unknown;
@@ -195,9 +203,13 @@ export function validateContract(
       ],
     };
   }
-  const validate = ajv.getSchema<unknown>(
-    `${foundationSchema.$id}#/definitions/${name}`,
-  );
+  let validate = validators.get(name);
+  if (!validate) {
+    validate = ajv.getSchema<unknown>(
+      `${foundationSchema.$id}#/definitions/${name}`,
+    );
+    if (validate) validators.set(name, validate);
+  }
   if (!validate) throw new Error(`Missing compiled contract: ${name}`);
   if (validate(input))
     return { success: true, stage: "schema-valid", value: input };

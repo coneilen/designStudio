@@ -86,6 +86,12 @@ export interface ContractTypes {
   FigmaSourceMap: Types.FigmaSourceMap;
   FigmaConversionEvidence: Types.FigmaConversionEvidence;
   SourceStatus: Types.SourceStatus;
+  FigmaReferenceBinding: Types.FigmaReferenceBinding;
+  FigmaReferenceProposal: Types.FigmaReferenceProposal;
+  FigmaReferenceApproval: Types.FigmaReferenceApproval;
+  FigmaReferenceRequest: Types.FigmaReferenceRequest;
+  FigmaReferenceEvidence: Types.FigmaReferenceEvidence;
+  NativeReferenceEnvelope: Types.NativeReferenceEnvelope;
   Operation: Types.Operation;
   Diagnostic: Types.Diagnostic;
   Loss: Types.Loss;
@@ -245,6 +251,12 @@ export const contractNames: readonly ContractName[] = [
   "FigmaSourceMap",
   "FigmaConversionEvidence",
   "SourceStatus",
+  "FigmaReferenceBinding",
+  "FigmaReferenceProposal",
+  "FigmaReferenceApproval",
+  "FigmaReferenceRequest",
+  "FigmaReferenceEvidence",
+  "NativeReferenceEnvelope",
   "Operation",
   "Diagnostic",
   "Loss",

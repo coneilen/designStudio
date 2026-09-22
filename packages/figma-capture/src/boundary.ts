@@ -131,7 +131,17 @@ export function ownRequest(
   request.selectionUrl = `https://www.figma.com/design/${selected.fileKey}/selection?node-id=${selected.nodeId.replace(":", "-")}`;
   return request;
 }
-export class CaptureBudget {
+export interface ImageBudget {
+  readonly context: OperationContext;
+  readonly signal: AbortSignal;
+  readonly policy: { readonly imageOrigins: readonly string[] };
+  readonly body: number;
+  check(): void;
+  dnsQuery(): void;
+  receive(bytes: number): void;
+  decoded(bytes: number): void;
+}
+export class CaptureBudget implements ImageBudget {
   readonly context: OperationContext;
   readonly signal: AbortSignal;
   readonly deadline: number;

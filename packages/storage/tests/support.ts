@@ -16,6 +16,7 @@ import {
   type Outcome,
   type Revision,
 } from "@design-studio/contracts";
+import { storageTestSignal } from "./lifetime.js";
 
 export const hash = (bytes: Uint8Array | string) =>
   createHash("sha256").update(bytes).digest("hex");
@@ -41,7 +42,7 @@ export function context(id = "request1"): OperationContext {
       now: () => Date.parse("2026-09-17T00:00:00.000Z"),
       sleep: async () => {},
     },
-    signal: new AbortController().signal,
+    signal: storageTestSignal(),
   };
 }
 export function complete<T>(value: T, ctx: OperationContext): Outcome<T> {

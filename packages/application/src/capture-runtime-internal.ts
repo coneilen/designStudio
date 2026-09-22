@@ -6,6 +6,7 @@ import type {
   FigmaCaptureRequest,
   NativeCaptureEnvelope,
   NativeCaptureRecoveryEnvelope,
+  NativeReferenceEnvelope,
   OperationContext,
   StagedArtifact,
 } from "@design-studio/contracts";
@@ -40,11 +41,20 @@ import {
 } from "@design-studio/project-host";
 import { LocalStore, type StoredJob } from "@design-studio/storage";
 import {
+  captureConversionEntries,
+  captureConversionIdentity,
+  persistCaptureConversion,
+} from "./capture-conversion.js";
+import {
   CaptureRecovery,
   type NativeCaptureRecoveryInput,
   nativeCaptureResources,
 } from "./capture-recovery.js";
 import { RecoveryDecisions } from "./recovery.js";
+import {
+  NativeReference,
+  type NativeReferenceInput,
+} from "./reference-runtime.js";
 import { ApplicationError, safeError, unwrap } from "./response.js";
 
 type Operation = "capture" | "inspect" | "convert" | "artifact";
@@ -57,6 +67,10 @@ export interface NativeCaptureInput {
   outputRelative?: string;
 }
 export interface NativeCaptureRuntime {
+  reference?(
+    input: NativeReferenceInput,
+    signal: AbortSignal,
+  ): Promise<NativeReferenceEnvelope>;
   recover(
     input: NativeCaptureRecoveryInput,
     signal: AbortSignal,
@@ -105,6 +119,7 @@ export async function assembleNativeCapture(
   let service: JobService | undefined;
   let capture: ReturnType<typeof createFigmaCaptureJobs> | undefined;
   let captureRecovery: CaptureRecovery | undefined;
+  let reference: NativeReference | undefined;
   let active = false;
   let closing = false;
   let closed = false;
@@ -133,6 +148,7 @@ export async function assembleNativeCapture(
       unwrap(await service.stop());
       service = undefined;
     }
+    await reference?.close();
     for (const [pending, original] of publications) {
       await policy.check();
       const context = await policy.issue({
@@ -209,6 +225,15 @@ export async function assembleNativeCapture(
   try {
     await work.current();
     files = await ProjectFileSystem.create({
+      reserveRead: (bytes) => reference?.reserveRead(bytes),
+      referenceInspection: {
+        artifactRootId: project.artifactRootId,
+        outputRootId: policy.outputRoot,
+        authorize: async (stages, context) => {
+          if (!reference) throw new ApplicationError("FORBIDDEN");
+          await reference.authorizeInspection(context, stages);
+        },
+      },
       captureRecoveryInspection: {
         artifactRootId: project.artifactRootId,
         outputRootId: policy.outputRoot,
@@ -302,6 +327,12 @@ export async function assembleNativeCapture(
     };
     await work.current();
     store = await LocalStore.open({
+      referenceInspection: {
+        authorize: async (context) => {
+          if (!reference) throw new ApplicationError("FORBIDDEN");
+          await reference.authorizeInspection(context);
+        },
+      },
       captureRecovery: {
         authorize: async (context) => {
           if (!captureRecovery) throw new ApplicationError("FORBIDDEN");
@@ -382,6 +413,11 @@ export async function assembleNativeCapture(
           },
         },
         verifyCompletion: async (...args) => {
+          if (args[0].job.operation === "reference-download") {
+            if (!reference) throw new ApplicationError("FORBIDDEN");
+            await reference.verifyCompletion(...args);
+            return;
+          }
           if (!capture) throw new ApplicationError("FORBIDDEN");
           await policy.check();
           await capture.verifyCompletion(...args);
@@ -393,6 +429,7 @@ export async function assembleNativeCapture(
     });
     await work.current();
     const db = store;
+    reference = new NativeReference(work, fs, db, recovery);
     const read = async (
       reference: ArtifactReference,
       ctx: OperationContext,
@@ -646,6 +683,32 @@ export async function assembleNativeCapture(
       return checked.value;
     };
     const runtime: NativeCaptureRuntime = Object.freeze({
+      async reference(input: NativeReferenceInput, signal: AbortSignal) {
+        if (publications.size) throw new ApplicationError("INTERRUPTED");
+        if (
+          this !== runtime ||
+          active ||
+          closed ||
+          closing ||
+          service ||
+          reference?.retainsService ||
+          !reference
+        )
+          throw new ApplicationError("FORBIDDEN");
+        active = true;
+        try {
+          const result = await reference.execute(
+            structuredClone(input),
+            signal,
+          );
+          if (!validateContract("NativeReferenceEnvelope", result).success)
+            throw new ApplicationError("INTERNAL_ERROR");
+          primaryFailure = reference.operationFailure ?? result.error?.code;
+          return result;
+        } finally {
+          active = false;
+        }
+      },
       async recover(input: NativeCaptureRecoveryInput, signal: AbortSignal) {
         if (publications.size) throw new ApplicationError("INTERRUPTED");
         if (
@@ -654,6 +717,7 @@ export async function assembleNativeCapture(
           closed ||
           closing ||
           service ||
+          reference?.retainsService ||
           !captureRecovery
         )
           throw new ApplicationError("FORBIDDEN");
@@ -675,7 +739,14 @@ export async function assembleNativeCapture(
       },
       async execute(input: NativeCaptureInput, signal: AbortSignal) {
         if (publications.size) throw new ApplicationError("INTERRUPTED");
-        if (this !== runtime || active || closed || closing || service)
+        if (
+          this !== runtime ||
+          active ||
+          closed ||
+          closing ||
+          service ||
+          reference?.retainsService
+        )
           throw new ApplicationError("FORBIDDEN");
         const owned = structuredClone(input);
         if (
@@ -1049,13 +1120,19 @@ export async function assembleNativeCapture(
             },
             policy.verify,
           );
+        const conversion = captureConversionIdentity(
+          request.captureId,
+          manifest,
+          nodes,
+        );
         const converted = convertFigmaStructure(
           {
+            policy: conversion.policy,
             selection: manifest.selection,
             structure: nodes,
             structureBytes: raw.bytes,
             projectId: project.projectId,
-            designId: `design_${canonicalDigest([request.captureId, nodes.sha256])}`,
+            designId: conversion.designId,
             intakeId: request.captureId,
             actorId: work.actorId,
             observedAt: manifest.endedAt,
@@ -1072,72 +1149,20 @@ export async function assembleNativeCapture(
         try {
           if (hashBytes(converted.originalBytes) !== nodes.sha256)
             throw new ApplicationError("ARTIFACT_INTEGRITY");
-          converted.sourceMap.snapshot = ref(sourceArtifact);
-          const projection = canonicalBytes(converted.conversionEvidence);
-          const projectionRef = {
-            id: `sha256_${hashBytes(projection)}`,
-            sha256: hashBytes(projection),
-          };
-          for (const evidence of converted.provenance.evidence)
-            if (evidence.artifact.sha256 === projectionRef.sha256)
-              evidence.artifact = { ...projectionRef };
-          const resourceBytes = canonicalBytes(converted.resources);
-          const entries = [
-            ...(converted.design
-              ? [
-                  {
-                    role: "design" as const,
-                    bytes: canonicalBytes(converted.design),
-                  },
-                ]
-              : []),
-            { role: "resources" as const, bytes: resourceBytes },
-            {
-              role: "source-map" as const,
-              bytes: canonicalBytes(converted.sourceMap),
-            },
-            { role: "conversion-evidence" as const, bytes: projection },
-            {
-              role: "provenance" as const,
-              bytes: canonicalBytes(converted.provenance),
-            },
-            {
-              role: "report" as const,
-              bytes: canonicalBytes(converted.report),
-            },
-          ];
-          if (
-            entries.reduce((sum, entry) => sum + entry.bytes.length, 0) >
-            CAPTURE_LIMITS.maxOutputBytes
-          )
-            throw new ApplicationError("INPUT_LIMIT");
-          const key = `convert_${canonicalDigest([request.captureId, manifest, "figma-structure-fixed-v1", "0.2.0"])}`;
+          const entries = captureConversionEntries(converted, sourceArtifact);
+          const key = conversion.operationId;
           const ctx = await policy.issue({
             jobId: key,
             requestId: key,
             signal: context.signal,
             deadline: context.deadline,
           });
-          let receipt = unwrap(await db.getReceipt(key, ctx));
-          if (!receipt) {
-            const staged = [];
-            for (const entry of entries) {
+          artifacts.push(
+            ...(await persistCaptureConversion(entries, db, ctx, async () => {
               await policy.check();
               check();
-              staged.push(unwrap(await db.stage(entry.bytes, ctx)));
-            }
-            await policy.check();
-            check();
-            receipt = unwrap(await db.commit(staged, ctx));
-          }
-          if (receipt.outputs.length !== entries.length)
-            throw new ApplicationError("ARTIFACT_INTEGRITY");
-          for (const [index, entry] of entries.entries()) {
-            const artifact = receipt.outputs[index];
-            if (!artifact || artifact.sha256 !== hashBytes(entry.bytes))
-              throw new ApplicationError("ARTIFACT_INTEGRITY");
-            artifacts.push({ role: entry.role, artifact });
-          }
+            })),
+          );
           return converted.report.readiness === "blocked"
             ? ("blocked" as const)
             : ("needs-review" as const);

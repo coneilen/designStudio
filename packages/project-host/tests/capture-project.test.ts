@@ -17,6 +17,17 @@ import { verifyInstalledRoot } from "../src/installation.js";
 import { loadNative } from "../src/native.js";
 import { withCaptureInstallation } from "./capture-support.js";
 
+// This module mock outlives individual test spies and late timeout cleanup.
+vi.mock("@napi-rs/keyring", () => ({
+  AsyncEntry: class {
+    constructor() {
+      throw new Error(
+        "Capture project tests forbid real credential backend access",
+      );
+    }
+  },
+}));
+
 it("requires a runtime-owned capture installation before native project access", async () => {
   await expect(
     openCaptureProject(
@@ -115,10 +126,12 @@ it.skipIf(process.platform !== "win32")(
 
 it.skipIf(process.platform !== "win32")(
   "denies exact 1023/full/malformed journal admission before any native credential lookup",
-  async () => {
+  async ({ signal }) => {
     const lookup = vi
       .spyOn(OwnedFigmaCredentialAdapter.prototype, "read")
       .mockRejectedValue(new Error("Synthetic backend must not be called"));
+    const native = await loadNative();
+    const inspect = vi.spyOn(native, "inspect");
     try {
       await withCaptureInstallation(async (installation) => {
         const project = await openCaptureProject(installation);
@@ -130,6 +143,7 @@ it.skipIf(process.platform !== "win32")(
           let previous = "";
           let last = Buffer.alloc(0);
           for (let sequence = 0; sequence < 1023; sequence++) {
+            signal.throwIfAborted();
             last = Buffer.from(
               JSON.stringify({
                 sequence,
@@ -144,7 +158,14 @@ it.skipIf(process.platform !== "win32")(
             );
             previous = createHash("sha256").update(last).digest("hex");
           }
-          const signal = new AbortController().signal;
+          const journalFileInspections = () =>
+            inspect.mock.calls.filter(
+              ([filename, directory]) =>
+                !directory &&
+                path.dirname(filename) === root &&
+                filename.endsWith(".json"),
+            ).length;
+          const beforeUpdate = journalFileInspections();
           await expect(
             credentials.execute(
               "update",
@@ -154,12 +175,15 @@ it.skipIf(process.platform !== "win32")(
             ),
           ).rejects.toThrow(/capacity/);
           expect(lookup).not.toHaveBeenCalled();
+          expect(journalFileInspections()).toBe(beforeUpdate);
           const final = path.join(root, "1022.json");
           await writeFile(final, Buffer.from("{"));
           await expect(
             credentials.execute("status", project.reference.id, signal),
           ).rejects.toThrow(/torn/);
           expect(lookup).not.toHaveBeenCalled();
+          expect(journalFileInspections() - beforeUpdate).toBe(1023);
+          const beforeFull = journalFileInspections();
           await writeFile(final, last);
           native.createFile(
             path.join(root, "1023.json"),
@@ -176,6 +200,7 @@ it.skipIf(process.platform !== "win32")(
             credentials.execute("status", project.reference.id, signal),
           ).rejects.toThrow(/capacity/);
           expect(lookup).not.toHaveBeenCalled();
+          expect(journalFileInspections()).toBe(beforeFull);
         } finally {
           credentials.close();
           await project.close();
@@ -183,6 +208,7 @@ it.skipIf(process.platform !== "win32")(
       });
     } finally {
       lookup.mockRestore();
+      inspect.mockRestore();
     }
   },
   30_000,
@@ -190,7 +216,7 @@ it.skipIf(process.platform !== "win32")(
 
 it.skipIf(process.platform !== "win32")(
   "composes native authority with a synthetic fixed-entry adapter, never a real vault lookup",
-  async () => {
+  async ({ signal }) => {
     const stored: { bytes?: Uint8Array } = {};
     const read = vi
       .spyOn(OwnedFigmaCredentialAdapter.prototype, "read")
@@ -221,7 +247,6 @@ it.skipIf(process.platform !== "win32")(
             /live native/,
           );
           await expect(project.close()).rejects.toThrow(/credential owners/);
-          const signal = new AbortController().signal;
           await expect(
             credentials.execute("status", "wrong", signal),
           ).rejects.toThrow();
@@ -278,9 +303,37 @@ it.skipIf(process.platform !== "win32")(
           "credential-journal",
           "0000.json",
         );
+
         const original = await readFile(filename);
         await writeFile(filename, original.subarray(0, 12));
         await expect(owner.journal.read()).rejects.toThrow();
+      } finally {
+        await project.close();
+      }
+    });
+  },
+);
+
+it.skipIf(process.platform !== "win32")(
+  "refuses overlapping fixture admission and cancelled journal reads without losing owned scope",
+  async () => {
+    await withCaptureInstallation(async (installation, root) => {
+      const native = await loadNative();
+      const entry = native.createInstallationEntry;
+      const work = vi.fn(async () => {});
+      await expect(withCaptureInstallation(work)).rejects.toThrow(
+        /still owns native overrides/,
+      );
+      expect(work).not.toHaveBeenCalled();
+      expect(native.createInstallationEntry).toBe(entry);
+      expect(native.localAppData()).toBe(root);
+      const project = await openCaptureProject(installation);
+      try {
+        const abort = new AbortController();
+        abort.abort();
+        await expect(
+          captureProjectOwner(project).journal.begin("status", abort.signal),
+        ).rejects.toMatchObject({ code: "CANCELLED" });
       } finally {
         await project.close();
       }

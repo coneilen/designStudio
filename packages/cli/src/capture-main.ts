@@ -9,16 +9,21 @@ import {
   type NativeCaptureRecoveryInput,
   type NativeCaptureRuntime,
   NativeCaptureStartupCleanupRequired,
+  type NativeReferenceInput,
   openNativeCapture,
+  REFERENCE_APPROVAL_CONFIRMATION,
+  REFERENCE_DOWNLOAD_CONFIRMATION,
 } from "@design-studio/application/capture";
 import {
   type ErrorCode,
   type NativeCaptureEnvelope,
   type NativeCaptureRecoveryEnvelope,
+  type NativeReferenceEnvelope,
   validateContract,
 } from "@design-studio/contracts";
 import {
   assertCaptureRecoveryInstallation,
+  assertCaptureReferenceInstallation,
   type CaptureInstallationLease,
   type CaptureProject,
   CaptureStartupCleanupRequired,
@@ -31,7 +36,10 @@ import {
 } from "@design-studio/project-host";
 
 type Action = "setup" | "status" | "update" | "remove";
-type NativeEnvelope = NativeCaptureEnvelope | NativeCaptureRecoveryEnvelope;
+type NativeEnvelope =
+  | NativeCaptureEnvelope
+  | NativeCaptureRecoveryEnvelope
+  | NativeReferenceEnvelope;
 interface NativeArguments {
   command:
     | "help"
@@ -41,11 +49,33 @@ interface NativeArguments {
     | "figma-inspect"
     | "figma-convert"
     | "figma-artifact"
-    | "figma-recover";
+    | "figma-recover"
+    | `figma-${NativeReferenceInput["operation"]}`;
   project?: string;
   reference?: string;
   expires?: string;
-  capture?: NativeCaptureInput | NativeCaptureRecoveryInput;
+  capture?:
+    | NativeCaptureInput
+    | NativeCaptureRecoveryInput
+    | NativeReferenceInput;
+}
+const referenceOperations = [
+  "reference-plan",
+  "reference-approve",
+  "reference-download",
+  "reference-inspect",
+] as const;
+function isReference(
+  input: NonNullable<NativeArguments["capture"]>,
+): input is NativeReferenceInput {
+  return referenceOperations.some((value) => value === input.operation);
+}
+function envelopeKind(input: NonNullable<NativeArguments["capture"]>) {
+  return isReference(input)
+    ? ("NativeReferenceEnvelope" as const)
+    : input.operation === "recover"
+      ? ("NativeCaptureRecoveryEnvelope" as const)
+      : ("NativeCaptureEnvelope" as const);
 }
 export function parseCaptureArguments(
   argv: readonly string[],
@@ -62,7 +92,14 @@ export function parseCaptureArguments(
   if (area === "figma") {
     if (
       !verb ||
-      !["capture", "inspect", "convert", "artifact", "recover"].includes(verb)
+      ![
+        "capture",
+        "inspect",
+        "convert",
+        "artifact",
+        "recover",
+        ...referenceOperations,
+      ].includes(verb)
     )
       throw new ApplicationError("INVALID_INPUT");
     const options = new Map<string, string>();
@@ -77,6 +114,12 @@ export function parseCaptureArguments(
         ![
           "--project",
           "--request-id",
+          ...(verb === "reference-approve"
+            ? ["--origin", "--expected-proof", "--confirm"]
+            : []),
+          ...(verb === "reference-download"
+            ? ["--expected-approval", "--confirm"]
+            : []),
           ...(verb === "capture" ? ["--url"] : []),
           ...(verb === "artifact" ? ["--role", "--output"] : []),
           ...(verb === "recover"
@@ -107,6 +150,37 @@ export function parseCaptureArguments(
     )
       throw new ApplicationError("INVALID_INPUT");
     const role = options.get("--role");
+    const referenceOperation = referenceOperations.find(
+      (value) => value === verb,
+    );
+    if (referenceOperation) {
+      const origin = options.get("--origin");
+      const expectedProof = options.get("--expected-proof");
+      const expectedApproval = options.get("--expected-approval");
+      const confirmation = options.get("--confirm");
+      if (
+        (referenceOperation === "reference-approve" &&
+          (origin !== "https://figma-alpha-api.s3.us-west-2.amazonaws.com" ||
+            !validateContract("Sha256", expectedProof).success ||
+            confirmation !== REFERENCE_APPROVAL_CONFIRMATION)) ||
+        (referenceOperation === "reference-download" &&
+          (!validateContract("Sha256", expectedApproval).success ||
+            confirmation !== REFERENCE_DOWNLOAD_CONFIRMATION))
+      )
+        throw new ApplicationError("INVALID_INPUT");
+      return {
+        command: `figma-${referenceOperation}`,
+        project,
+        capture: {
+          operation: referenceOperation,
+          requestId,
+          ...(origin ? { origin } : {}),
+          ...(expectedProof ? { expectedProof } : {}),
+          ...(expectedApproval ? { expectedApproval } : {}),
+          ...(confirmation ? { confirmation } : {}),
+        },
+      };
+    }
     if (verb === "recover") {
       const failedJobId = options.get("--failed-job-id");
       const nextRequestId = options.get("--next-request-id");
@@ -304,6 +378,9 @@ export async function runCaptureCommand(args: readonly string[]) {
         "figma inspect|convert --project <ID> --request-id <logical ID>",
         "figma artifact --project <ID> --request-id <logical ID> --role <artifact role> --output <private filename>",
         "figma recover --project <ID> --request-id <failed request> --failed-job-id <failed job> --next-request-id <next request> [--expected-proof <SHA256> --confirm AUTHORIZE-ONE-CAPTURE-WITH-UNKNOWN-RESPONSE-AND-QUOTA]",
+        "figma reference-plan|reference-inspect --project <ID> --request-id <original capture request>",
+        "figma reference-approve --project <ID> --request-id <original capture request> --origin https://figma-alpha-api.s3.us-west-2.amazonaws.com --expected-proof <SHA256> --confirm APPROVE-ONE-SELECTED-REFERENCE",
+        "figma reference-download --project <ID> --request-id <original capture request> --expected-approval <SHA256> --confirm DOWNLOAD-ONE-APPROVED-REFERENCE",
       ],
       limitation:
         "Native entry needs an independently approved capture release. Setup/update display an app-owned masked Figma PAT dialog; status reads one owned vault entry; remove deletes only the explicitly confirmed entry. Capture allows at most four calls in 30 seconds. The default empty download-origin policy yields a partial result before CDN contact. Inspection is private metadata only; explicit artifact output stays in the owned private project. Conversion is an unapproved draft, never render-readiness. Recovery additionally requires the installed recovery supplement: it records one exact next-request authorization offline, not a retry, quota assertion, or capture result. Third requests remain blocked.",
@@ -330,6 +407,8 @@ export async function runCaptureCommand(args: readonly string[]) {
     guard = registerCaptureInstallationGuards(installation);
     if (request.command === "figma-recover")
       assertCaptureRecoveryInstallation(installation);
+    if (request.capture && isReference(request.capture))
+      assertCaptureReferenceInstallation(installation);
     if (abort.signal.aborted) throw new ApplicationError("CANCELLED");
     project = await openCaptureProject(
       installation,
@@ -345,8 +424,13 @@ export async function runCaptureCommand(args: readonly string[]) {
       };
     } else if (request.capture) {
       runtime = await openNativeCapture(project);
-      result =
-        request.capture.operation === "recover"
+      result = isReference(request.capture)
+        ? runtime.reference
+          ? await runtime.reference(request.capture, abort.signal)
+          : (() => {
+              throw new ApplicationError("FORBIDDEN");
+            })()
+        : request.capture.operation === "recover"
           ? await runtime.recover(request.capture, abort.signal)
           : await runtime.execute(request.capture, abort.signal);
     } else {
@@ -406,12 +490,7 @@ export async function runCaptureCommand(args: readonly string[]) {
       try {
         await release();
       } catch (error) {
-        const prior = validateContract(
-          request.capture.operation === "recover"
-            ? "NativeCaptureRecoveryEnvelope"
-            : "NativeCaptureEnvelope",
-          result,
-        );
+        const prior = validateContract(envelopeKind(request.capture), result);
         const operationCode =
           primary ??
           (error instanceof NativeCaptureCleanupRequired
@@ -487,30 +566,25 @@ export async function runCaptureCommand(args: readonly string[]) {
   }
   if (cleanupFailure) throw cleanupFailure;
   if (primary && request.capture && request.project) {
-    const checked = validateContract(
-      request.capture.operation === "recover"
-        ? "NativeCaptureRecoveryEnvelope"
-        : "NativeCaptureEnvelope",
-      {
-        schemaVersion: "1.0",
-        operation: request.capture.operation,
-        projectId: request.project,
-        requestId: request.capture.requestId,
-        status:
-          primary === "CANCELLED"
-            ? "cancelled"
-            : primary === "INTERRUPTED"
-              ? "interrupted"
-              : "failed",
-        error: {
-          code: primary,
-          message:
-            "Native capture or cleanup did not complete. Inspect the logical request before any retry.",
-          retryable: false,
-          diagnosticIds: [],
-        },
+    const checked = validateContract(envelopeKind(request.capture), {
+      schemaVersion: "1.0",
+      operation: request.capture.operation,
+      projectId: request.project,
+      requestId: request.capture.requestId,
+      status:
+        primary === "CANCELLED"
+          ? "cancelled"
+          : primary === "INTERRUPTED"
+            ? "interrupted"
+            : "failed",
+      error: {
+        code: primary,
+        message:
+          "Native capture or cleanup did not complete. Inspect the logical request before any retry.",
+        retryable: false,
+        diagnosticIds: [],
       },
-    );
+    });
     if (!checked.success) throw new ApplicationError("INTERNAL_ERROR");
     return checked.value;
   }

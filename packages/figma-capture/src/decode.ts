@@ -1,7 +1,7 @@
 import { Worker } from "node:worker_threads";
 import type { JsonObject } from "@design-studio/contracts";
 import { HostBoundaryError } from "@design-studio/host";
-import type { CaptureBudget } from "./boundary.js";
+import type { ImageBudget } from "./boundary.js";
 
 type PngInfo = {
   width: number;
@@ -11,7 +11,7 @@ type PngInfo = {
 async function decode(
   kind: "json" | "png",
   bytes: Uint8Array,
-  budget: CaptureBudget,
+  budget: ImageBudget,
 ): Promise<unknown> {
   budget.check();
   if (
@@ -115,7 +115,7 @@ async function decode(
 }
 export async function parseCaptureJson(
   bytes: Uint8Array,
-  budget: CaptureBudget,
+  budget: ImageBudget,
 ): Promise<JsonObject> {
   const result = await decode("json", bytes, budget);
   if (
@@ -134,7 +134,7 @@ export async function parseCaptureJson(
 }
 export async function decodeReference(
   bytes: Uint8Array,
-  budget: CaptureBudget,
+  budget: ImageBudget,
 ): Promise<PngInfo> {
   const result = await decode("png", bytes, budget);
   if (

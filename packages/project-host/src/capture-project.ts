@@ -44,7 +44,7 @@ interface Owned {
   registry: FixtureProjectRegistry;
   sid: string;
   journal: CredentialAdminJournal & {
-    begin(action: CredentialAdminAction): Promise<void>;
+    begin(action: CredentialAdminAction, signal?: AbortSignal): Promise<void>;
   };
   live: boolean;
   users: number;
@@ -136,10 +136,22 @@ export async function openCaptureProject(
       if (closed || closing || native.principal() !== sid)
         refuse("Capture principal changed during checkpoint.");
     };
-    const readRecords = async () => {
+    const readRecords = async (
+      action?: CredentialAdminAction,
+      signal?: AbortSignal,
+    ) => {
+      const cancelled = () => {
+        if (signal?.aborted)
+          throw new HostBoundaryError(
+            "CANCELLED",
+            "Credential journal admission cancelled.",
+          );
+      };
+      cancelled();
       await check();
       const names: string[] = [];
       for await (const entry of await opendir(journalRoot)) {
+        cancelled();
         if (names.length === CREDENTIAL_JOURNAL_RECORDS)
           refuse("Credential journal exceeds its bounded sequence.");
         names.push(entry.name);
@@ -154,13 +166,22 @@ export async function openCaptureProject(
         refuse(
           "Credential journal is incomplete or outside its bounded sequence; reconciliation required.",
         );
+      if (
+        action &&
+        (names.length === CREDENTIAL_JOURNAL_RECORDS ||
+          action === "setup" ||
+          action === "update")
+      )
+        admitCredentialCapacity(action, names.length, undefined);
       let state: CredentialAdminState | undefined;
       let previous = "";
       for (const [index, name] of names.entries()) {
+        cancelled();
         const filename = path.join(journalRoot, name);
         const pin = native.inspect(filename, false, sid);
         try {
           const bytes = await boundedFile(filename, 8192);
+          cancelled();
           let value: unknown;
           try {
             value = JSON.parse(bytes.toString("utf8"));
@@ -190,6 +211,7 @@ export async function openCaptureProject(
         }
       }
       await check();
+      cancelled();
       return { state, previous, count: names.length };
     };
     let queue: Promise<unknown> = Promise.resolve();
@@ -202,9 +224,9 @@ export async function openCaptureProject(
       return pending;
     };
     const journal: Owned["journal"] = {
-      begin: (action) =>
+      begin: (action, signal) =>
         serial(async () => {
-          const prior = await readRecords();
+          const prior = await readRecords(action, signal);
           admitCredentialCapacity(action, prior.count, prior.state?.state);
         }),
       read: () => serial(async () => (await readRecords()).state),
@@ -246,7 +268,7 @@ export async function openCaptureProject(
       helpers: 0,
       work: 0,
       async journalFingerprint() {
-        const record = await serial(readRecords);
+        const record = await serial(() => readRecords());
         return createHash("sha256")
           .update(
             JSON.stringify({ count: record.count, previous: record.previous }),

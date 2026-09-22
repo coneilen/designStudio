@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { HostBoundaryError } from "@design-studio/host";
 import { CAPTURE_POLICY_SHA256, CAPTURE_PROFILE } from "./capture-profile.js";
 import { CAPTURE_RECOVERY_POLICY_SHA256 } from "./capture-recovery-profile.js";
+import { CAPTURE_REFERENCE_POLICY_SHA256 } from "./capture-reference-profile.js";
 import {
   type InstallationTrace,
   traceInstallation,
@@ -67,11 +68,12 @@ interface FixtureReleasePolicy {
   catalogSha256: string;
 }
 interface CaptureReleasePolicy {
-  version: 2 | 3;
+  version: 2 | 3 | 4;
   kind: typeof CAPTURE_PROFILE;
   manifestSha256: string;
   capturePolicySha256: string;
   captureRecoveryPolicySha256?: string;
+  captureReferencePolicySha256?: string;
 }
 type ReleasePolicy = FixtureReleasePolicy | CaptureReleasePolicy;
 interface Metadata {
@@ -103,6 +105,7 @@ const active = new WeakMap<
     guards: number;
     profile: "fixture" | typeof CAPTURE_PROFILE;
     recovery: boolean;
+    reference: boolean;
   }
 >();
 let bootstrapOrigin: string | undefined;
@@ -161,14 +164,17 @@ export function decodeReleasePolicy(policyBytes: Buffer): ReleasePolicy {
     refuse("Trusted bootstrap policy exceeds its bound.");
   const policy: ReleasePolicy = JSON.parse(policyBytes.toString("utf8"));
   if (
-    ![1, 2, 3].includes(policy?.version) ||
+    ![1, 2, 3, 4].includes(policy?.version) ||
     !/^[a-f0-9]{64}$/.test(policy.manifestSha256) ||
     (policy.version === 1
       ? !/^[a-f0-9]{64}$/.test(policy.catalogSha256)
       : policy.kind !== CAPTURE_PROFILE ||
         policy.capturePolicySha256 !== CAPTURE_POLICY_SHA256) ||
-    (policy.version === 3 &&
+    ((policy.version === 3 || policy.version === 4) &&
       policy.captureRecoveryPolicySha256 !== CAPTURE_RECOVERY_POLICY_SHA256) ||
+    (policy.version === 4 &&
+      policy.captureReferencePolicySha256 !==
+        CAPTURE_REFERENCE_POLICY_SHA256) ||
     !policyBytes.equals(
       Buffer.from(
         JSON.stringify(
@@ -183,10 +189,16 @@ export function decodeReleasePolicy(policyBytes: Buffer): ReleasePolicy {
                 kind: CAPTURE_PROFILE,
                 manifestSha256: policy.manifestSha256,
                 capturePolicySha256: policy.capturePolicySha256,
-                ...(policy.version === 3
+                ...(policy.version === 3 || policy.version === 4
                   ? {
                       captureRecoveryPolicySha256:
                         CAPTURE_RECOVERY_POLICY_SHA256,
+                    }
+                  : {}),
+                ...(policy.version === 4
+                  ? {
+                      captureReferencePolicySha256:
+                        CAPTURE_REFERENCE_POLICY_SHA256,
                     }
                   : {}),
               },
@@ -393,12 +405,20 @@ function required(meta: Metadata): void {
   )
     refuse("Release capture policy differs from the closed native profile.");
   if (
-    meta.policy.version === 3 &&
+    (meta.policy.version === 3 || meta.policy.version === 4) &&
     files.get("capture-recovery-policy.json")?.sha256 !==
       CAPTURE_RECOVERY_POLICY_SHA256
   )
     refuse(
       "Release recovery supplement differs from the closed native profile.",
+    );
+  if (
+    meta.policy.version === 4 &&
+    files.get("capture-reference-policy.json")?.sha256 !==
+      CAPTURE_REFERENCE_POLICY_SHA256
+  )
+    refuse(
+      "Release reference supplement differs from the closed native profile.",
     );
   const bootstrapFiles = new Set(meta.bootstrapFiles.map((file) => file.path));
   for (const name of [
@@ -713,7 +733,8 @@ async function verifyProfileRoot(
       live: true,
       guards: 0,
       profile,
-      recovery: meta.policy.version === 3,
+      recovery: meta.policy.version === 3 || meta.policy.version === 4,
+      reference: meta.policy.version === 4,
     };
     const checkpoint = async (hashBytes: boolean): Promise<void> => {
       const trace = traceInstallation(hashBytes);
@@ -857,6 +878,13 @@ export function assertCaptureRecoveryInstallation(
   assertCaptureInstallation(lease);
   if (!active.get(lease)?.recovery)
     refuse("This installed release does not authorize capture recovery.");
+}
+export function assertCaptureReferenceInstallation(
+  lease: CaptureInstallationLease,
+): void {
+  assertCaptureInstallation(lease);
+  if (!active.get(lease)?.reference)
+    refuse("This installed release does not authorize reference acquisition.");
 }
 function registerGuards(lease: InstallationLease): { close(): void } {
   const state = active.get(lease);

@@ -458,6 +458,35 @@ export type JobStatus =
   | "interrupted";
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "Job".
+ */
+export type Job = {
+  [k: string]: unknown;
+} & {
+  schemaVersion: SchemaVersion;
+  id: StableId;
+  projectId: StableId;
+  actorId: StableId;
+  operation: Operation;
+  status: JobStatus;
+  input: ArtifactReference;
+  resources: ResourceLock;
+  idempotency: IdempotencyScope;
+  attempt: number;
+  deadline: Timestamp;
+  budget: Budget;
+  lease?: Lease;
+  nextEligibleAttempt?: Timestamp;
+  progress: number;
+  outputState?: "complete" | "partial-inspection";
+  receipt?: CommitReceipt;
+  error?: ContractError;
+  comparisonVerdict?: "pass" | "fail" | "inconclusive";
+  sourceStatus?: SourceStatus;
+  diagnosticIds: StableId[];
+};
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "Operation".
  */
 export type Operation =
@@ -468,6 +497,7 @@ export type Operation =
   | "editable-export"
   | "implement"
   | "capture"
+  | "reference-download"
   | "compare"
   | "read"
   | "write"
@@ -595,35 +625,6 @@ export type HandoffManifest = {
       path?: string;
     })[];
   };
-};
-/**
- * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "Job".
- */
-export type Job = {
-  [k: string]: unknown;
-} & {
-  schemaVersion: SchemaVersion;
-  id: StableId;
-  projectId: StableId;
-  actorId: StableId;
-  operation: Operation;
-  status: JobStatus;
-  input: ArtifactReference;
-  resources: ResourceLock;
-  idempotency: IdempotencyScope;
-  attempt: number;
-  deadline: Timestamp;
-  budget: Budget;
-  lease?: Lease;
-  nextEligibleAttempt?: Timestamp;
-  progress: number;
-  outputState?: "complete" | "partial-inspection";
-  receipt?: CommitReceipt;
-  error?: ContractError;
-  comparisonVerdict?: "pass" | "fail" | "inconclusive";
-  sourceStatus?: SourceStatus;
-  diagnosticIds: StableId[];
 };
 /**
  * Authoritative stored job row version, not a client counter or artifact schema version.
@@ -831,6 +832,12 @@ export interface ContractCatalog {
   FigmaSourceMap: FigmaSourceMap;
   FigmaConversionEvidence: FigmaConversionEvidence;
   SourceStatus: SourceStatus;
+  FigmaReferenceBinding: FigmaReferenceBinding;
+  FigmaReferenceProposal: FigmaReferenceProposal;
+  FigmaReferenceApproval: FigmaReferenceApproval;
+  FigmaReferenceRequest: FigmaReferenceRequest;
+  FigmaReferenceEvidence: FigmaReferenceEvidence;
+  NativeReferenceEnvelope: NativeReferenceEnvelope;
   Operation: Operation;
   Diagnostic: Diagnostic;
   Loss: Loss;
@@ -2161,7 +2168,8 @@ export interface FigmaSourceMap {
  */
 export interface FigmaConversionEvidence {
   schemaVersion: SchemaVersion;
-  adapter: "figma-offline-fixed-v1" | "figma-structure-fixed-v1";
+  adapter:
+    "figma-offline-fixed-v1" | "figma-structure-fixed-v1" | "figma-offline-fixed-v2" | "figma-structure-fixed-v2";
   source: ArtifactReference;
   /**
    * @maxItems 200000
@@ -2191,6 +2199,290 @@ export interface SourceStatus {
   status: "unchanged" | "changed" | "node-removed" | "access-unavailable" | "unknown" | "not-checked";
   observedVersion?: Version;
   diagnosticIds: StableId[];
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "FigmaReferenceBinding".
+ */
+export interface FigmaReferenceBinding {
+  projectId: StableId;
+  actorId: StableId;
+  originalRequestId: StableId;
+  originalJobId: StableId;
+  originalRecordSha256: Sha256;
+  originalReceiptSha256: Sha256;
+  request: ArtifactReference;
+  source: ArtifactReference;
+  manifest: ArtifactReference;
+  result: ArtifactReference;
+  nodes: ArtifactReference;
+  renderMap: ArtifactReference;
+  fileKey: string;
+  nodeId: string;
+  sourceVersion: Version;
+  bounds: Bounds;
+  scale: 1;
+  origin: "https://figma-alpha-api.s3.us-west-2.amazonaws.com";
+  acquisitionId: StableId;
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "FigmaReferenceProposal".
+ */
+export interface FigmaReferenceProposal {
+  schemaVersion: SchemaVersion;
+  format: "figma-reference-proposal-v1";
+  approvalGeneration: number;
+  previousApproval?: ArtifactReference;
+  binding: FigmaReferenceBinding;
+  capturePolicySha256: Sha256;
+  referencePolicySha256: Sha256;
+  limits: Budget;
+  proofSha256: Sha256;
+  urlExpiresAt?: Timestamp;
+  /**
+   * @maxItems 16
+   */
+  limitations:
+    | []
+    | [string]
+    | [string, string]
+    | [string, string, string]
+    | [string, string, string, string]
+    | [string, string, string, string, string]
+    | [string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string, string, string, string, string]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ];
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "Budget".
+ */
+export interface Budget {
+  maxInputBytes: number;
+  maxRasterPixels: number;
+  maxExpandedNodes: number;
+  maxDepth: number;
+  maxSnapshotAssetBytes: number;
+  maxAttempts: number;
+  maxExternalCalls: number;
+  maxOutputBytes: number;
+  maxDurationMs: number;
+  maxModelTokens: number;
+  maxCostMicros: number;
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "FigmaReferenceApproval".
+ */
+export interface FigmaReferenceApproval {
+  schemaVersion: SchemaVersion;
+  proposal: FigmaReferenceProposal;
+  confirmation: "APPROVE-ONE-SELECTED-REFERENCE";
+  recordedAt: Timestamp;
+  expiresAt: Timestamp;
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "FigmaReferenceRequest".
+ */
+export interface FigmaReferenceRequest {
+  schemaVersion: SchemaVersion;
+  binding: FigmaReferenceBinding;
+  approval: ArtifactReference;
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "FigmaReferenceEvidence".
+ */
+export interface FigmaReferenceEvidence {
+  schemaVersion: SchemaVersion;
+  format: "figma-reference-evidence-v1";
+  request: FigmaReferenceRequest;
+  startedAt: Timestamp;
+  endedAt: Timestamp;
+  deadline: Timestamp;
+  referenceStatus: "complete" | "partial" | "unavailable";
+  readiness: "not-evaluated";
+  reference?: {
+    artifact: ArtifactReference;
+    bounds: Bounds;
+    scale: 1;
+    pixelWidth: number;
+    pixelHeight: number;
+    colorSpace: "srgb" | "unknown";
+  };
+  statusCode?: number;
+  errorCode?: ErrorCode;
+  nextEligibleAt?: Timestamp;
+  retry?: "explicit-action-required" | "retry-after-unknown";
+  usage: {
+    localInputBytes: number;
+    externalCalls: number;
+    dnsQueries: number;
+    networkReceivedBytes: number;
+    networkBodyBytes: number;
+    persistedBytes: number;
+  };
+  /**
+   * @maxItems 32
+   */
+  missing: string[];
+  /**
+   * @maxItems 16
+   */
+  limitations:
+    | []
+    | [string]
+    | [string, string]
+    | [string, string, string]
+    | [string, string, string, string]
+    | [string, string, string, string, string]
+    | [string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string, string, string, string, string]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ];
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "NativeReferenceEnvelope".
+ */
+export interface NativeReferenceEnvelope {
+  schemaVersion: SchemaVersion;
+  operation: "reference-plan" | "reference-approve" | "reference-download" | "reference-inspect";
+  projectId: StableId;
+  requestId: StableId;
+  status: "complete" | "partial" | "failed" | "interrupted" | "cancelled" | "unavailable";
+  value?: {
+    phase: "proposed" | "approved" | "admitted" | "completed";
+    consumed: boolean;
+    proposal?: FigmaReferenceProposal;
+    approval?: ArtifactReference;
+    expiresAt?: Timestamp;
+    job?: Job;
+    evidence?: FigmaReferenceEvidence;
+    receipt?: CommitReceipt;
+  };
+  error?: ContractError;
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "IdempotencyScope".
+ */
+export interface IdempotencyScope {
+  key: StableId;
+  projectId: StableId;
+  actorId: StableId;
+  operation: Operation;
+  payloadSha256: Sha256;
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "Lease".
+ */
+export interface Lease {
+  id: StableId;
+  ownerId: StableId;
+  resourceId: StableId;
+  fencingToken: number;
+  heartbeatAt: Timestamp;
+  expiresAt: Timestamp;
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "CommitReceipt".
+ */
+export interface CommitReceipt {
+  schemaVersion: SchemaVersion;
+  id: StableId;
+  projectId: StableId;
+  jobId: StableId;
+  idempotency: IdempotencyScope;
+  committedAt: Timestamp;
+  outputs: Artifact[];
+  integrity: "verified";
+  publication: "atomic";
 }
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
@@ -2706,23 +2998,6 @@ export interface HandoffMetadata {
 }
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "Budget".
- */
-export interface Budget {
-  maxInputBytes: number;
-  maxRasterPixels: number;
-  maxExpandedNodes: number;
-  maxDepth: number;
-  maxSnapshotAssetBytes: number;
-  maxAttempts: number;
-  maxExternalCalls: number;
-  maxOutputBytes: number;
-  maxDurationMs: number;
-  maxModelTokens: number;
-  maxCostMicros: number;
-}
-/**
- * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "AuthorizationContext".
  */
 export interface AuthorizationContext {
@@ -2741,44 +3016,6 @@ export interface AuthorizationContext {
     operations: [Operation, ...Operation[]];
   }[];
   egress: "deny" | "explicit-grant-required";
-}
-/**
- * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "IdempotencyScope".
- */
-export interface IdempotencyScope {
-  key: StableId;
-  projectId: StableId;
-  actorId: StableId;
-  operation: Operation;
-  payloadSha256: Sha256;
-}
-/**
- * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "Lease".
- */
-export interface Lease {
-  id: StableId;
-  ownerId: StableId;
-  resourceId: StableId;
-  fencingToken: number;
-  heartbeatAt: Timestamp;
-  expiresAt: Timestamp;
-}
-/**
- * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "CommitReceipt".
- */
-export interface CommitReceipt {
-  schemaVersion: SchemaVersion;
-  id: StableId;
-  projectId: StableId;
-  jobId: StableId;
-  idempotency: IdempotencyScope;
-  committedAt: Timestamp;
-  outputs: Artifact[];
-  integrity: "verified";
-  publication: "atomic";
 }
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema

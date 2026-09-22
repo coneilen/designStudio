@@ -8,7 +8,7 @@ import {
   validateContract,
 } from "@design-studio/contracts";
 import Database from "better-sqlite3";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, aroundEach, expect, test } from "vitest";
 import {
   decodeBackup,
   encodeBackup,
@@ -23,10 +23,12 @@ import type {
   JobWorkerExpected,
   StoredJob,
 } from "../src/job-types.js";
+import { closeSettledStores, inStorageTest } from "./lifetime.js";
 import { bytes, context, diskFixture, hash, revision } from "./support.js";
 
 const roots: string[] = [];
 const stores: LocalStore[] = [];
+aroundEach((run, context) => inStorageTest(context.signal, run));
 const nativeBinding = resolve(
   ".tools\\sqlite-prebuild\\build\\Release\\better_sqlite3.node",
 );
@@ -37,7 +39,7 @@ const error = {
   diagnosticIds: [],
 };
 afterEach(async () => {
-  for (const store of stores.splice(0)) store.close();
+  await closeSettledStores(stores);
   for (const root of roots.splice(0))
     await rm(root, { recursive: true, force: true });
 });
@@ -1166,6 +1168,46 @@ test("cancel admission is bounded and snapshots control identity before queueing
   ).toEqual(record);
   expect(record.job.budget).toEqual(first.record.job.budget);
   expect(record.usage).toEqual(first.record.usage);
+});
+
+test("fixture cancellation stays bound to its original async scope and cleanup joins SQLite work", async () => {
+  const f = await setup();
+  const old = new AbortController();
+  const next = new AbortController();
+  let entered: (() => void) | undefined;
+  let release: (() => void) | undefined;
+  const reading = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const ready = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const read = f.disk.fs.read;
+  f.disk.fs.read = async (...args) => {
+    entered?.();
+    await ready;
+    expect(context("late-original").signal).toBe(old.signal);
+    return read(...args);
+  };
+  const pending = inStorageTest(old.signal, () =>
+    f.store.verify(f.submission().input, f.ctx()),
+  );
+  await reading;
+  old.abort();
+  let closed = false;
+  const closing = closeSettledStores([f.store]).then(() => {
+    closed = true;
+  });
+  await Promise.resolve();
+  expect(closed).toBe(false);
+  expect(inStorageTest(next.signal, () => context("next").signal)).toBe(
+    next.signal,
+  );
+  release?.();
+  expect(await pending).toMatchObject({ status: "cancelled" });
+  await closing;
+  expect(closed).toBe(true);
+  expect(next.signal.aborted).toBe(false);
 });
 
 test.each([

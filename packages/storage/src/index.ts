@@ -917,6 +917,22 @@ export class LocalStore implements ArtifactStore {
       return this.recoveryState();
     });
   }
+  referencePublicationState(
+    context: OperationContext,
+  ): Promise<Outcome<CaptureRecoveryState>> {
+    return this.run(context, "read", async (context) => {
+      const admission = this.options.referenceInspection;
+      if (!admission)
+        throw new StorageError(
+          "AUTHORIZATION_CHANGED",
+          "Reference inspection is not admitted.",
+        );
+      await admission.authorize(context);
+      const state = this.recoveryState();
+      await admission.authorize(context);
+      return state;
+    });
+  }
   private async captureRecoveryEvidence(
     originalJobId: string,
     context: OperationContext,

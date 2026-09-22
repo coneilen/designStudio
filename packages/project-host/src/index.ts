@@ -11,6 +11,7 @@ export {
 } from "./capture-work.js";
 export {
   assertCaptureRecoveryInstallation,
+  assertCaptureReferenceInstallation,
   type CaptureInstallationLease,
   type FixtureInstallationLease,
   type FixtureInstallationPaths,
