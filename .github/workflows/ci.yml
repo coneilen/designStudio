@@ -17,7 +17,7 @@ jobs:
   verify:
     name: Bootstrap (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -53,7 +53,11 @@ jobs:
         run: pnpm fixtures:check
       - name: Check application OpenAPI and browser inventory drift
         run: pnpm --filter @design-studio/application openapi:check
-      - name: Unit tests
-        run: pnpm test:unit
+      - name: Check exact unit phase membership
+        run: pnpm test:partition
+      - name: Portable unit and SQLite composition tests
+        run: pnpm test:portable
+      - name: Owned hardware-native integration tests
+        run: pnpm test:native
       - name: Offline package smoke
         run: pnpm test:smoke

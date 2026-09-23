@@ -81,8 +81,23 @@ prefix each command with `npx --yes pnpm@11.26.0` as in the README.
 | `pnpm typecheck` | Check TypeScript source, tests, and Vitest configuration without emitting; run after `build` so public cross-package declarations exist. |
 | `pnpm contracts:generate` / `contracts:check` | Generate or read-only drift-check public contracts from the single JSON Schema source. |
 | `pnpm fixtures:check` | Read-only check of the five authored synthetic foundation cases and byte manifests. |
-| `pnpm test` / `pnpm test:unit` | Run deterministic source-level unit tests once, without a watcher. |
+| `pnpm test` / `pnpm test:unit` | Check complete membership, then run portable unit/SQLite tests and hardware-native integration tests in separate failure-gated phases. |
+| `pnpm test:partition` | Verify actual Vitest discovery is a disjoint, complete partition of the original default-unit file set; no test modules execute. |
+| `pnpm test:portable` | Run the `unit` project with two workers. New test files default here. |
+| `pnpm test:native` | Run the exact reviewed `native` project inventory one file at a time, with existing operation deadlines and platform predicates. |
 | `pnpm test:smoke` | Import built output in a separate Node process; run after `build`. |
+
+The exact hardware list is `tests/unit-partition.ts`. It covers real temporary
+Windows ACL/NTFS fixtures, native process/Job containment and platform storage
+drivers; mixed files stay intact. At introduction, the original 171 unit files
+plus partition-check and owned-probe regression files form
+**146 portable + 27 native = 173 files**.
+Do not run both Vitest projects concurrently when evaluating this isolation
+profile: use the default `pnpm test:unit` orchestration. CI uses the same checker
+and two named sequential phases. No tests are removed or duplicated, and smoke
+and explicitly opted-in installed/live probes remain separate.
+The CI job has a 25-minute overall watchdog to include both measured phases and
+setup/build/smoke overhead; this does not extend individual test or product limits.
 
 F01's exact package-local dependencies are Ajv `8.17.1` (strict draft-07 shape
 validation), YAML `2.8.1` (bounded YAML authoring/duplicate-key detection), and

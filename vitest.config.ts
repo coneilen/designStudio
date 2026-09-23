@@ -1,4 +1,5 @@
 import { configDefaults, defineConfig } from "vitest/config";
+import { nativeUnitFiles } from "./tests/unit-partition.js";
 
 export default defineConfig({
   test: {
@@ -9,7 +10,22 @@ export default defineConfig({
           name: "unit",
           environment: "node",
           include: ["packages/**/*.test.ts"],
+          exclude: [
+            ...configDefaults.exclude,
+            "packages/**/*.smoke.test.ts",
+            ...nativeUnitFiles,
+          ],
+          maxWorkers: 2,
+        },
+      },
+      {
+        test: {
+          name: "native",
+          environment: "node",
+          include: nativeUnitFiles,
           exclude: [...configDefaults.exclude, "packages/**/*.smoke.test.ts"],
+          maxWorkers: 1,
+          fileParallelism: false,
         },
       },
       {
