@@ -731,6 +731,50 @@ export class StoredJobs implements JobRepository {
       return record;
     });
   }
+  async referenceMetadata(id: string, context: OperationContext) {
+    await this.authorize(id, context, "read");
+    // Bound encoded metadata before parsing; this path never reads artifact bodies.
+    const size = this.host.db
+      .prepare<[string], { bytes: number }>(
+        "SELECT length(CAST(data AS BLOB)) AS bytes FROM jobs WHERE id=?",
+      )
+      .get(id);
+    if (!size) return null;
+    const stageSize = this.host.db
+      .prepare<[string], { count: number; bytes: number }>(
+        "SELECT count(*) AS count,COALESCE(sum(length(CAST(data AS BLOB))),0) AS bytes FROM job_stages WHERE job=?",
+      )
+      .get(id);
+    if (
+      size.bytes > 262144 ||
+      !stageSize ||
+      stageSize.count > 2 ||
+      stageSize.bytes > 262144
+    )
+      throw new StorageError("LIMIT", "Reference metadata exceeds its bound.");
+    const record = this.load(id);
+    if (
+      record.job.id !== id ||
+      record.job.projectId !== context.projectId ||
+      record.job.actorId !== context.authorization.actorId
+    )
+      throw new StorageError(
+        "AUTHORIZATION_CHANGED",
+        "Foreign reference metadata.",
+      );
+    await this.authorizeInput(record, context);
+    const receiptSize = this.host.db
+      .prepare<[string], { bytes: number }>(
+        "SELECT length(CAST(data AS BLOB)) AS bytes FROM receipts WHERE scope=?",
+      )
+      .get(this.receiptScope(record));
+    if (receiptSize && receiptSize.bytes > 262144)
+      throw new StorageError(
+        "LIMIT",
+        "Reference receipt metadata exceeds its bound.",
+      );
+    return { record, receipt: this.receipt(record), stages: this.stages(id) };
+  }
   getJobReceipt(
     id: string,
     context: OperationContext,

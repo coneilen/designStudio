@@ -3,6 +3,73 @@ import { referenceDiagnosticFields, validateContract } from "../src/index.js";
 import { DEFAULT_BUDGETS } from "../src/profile.js";
 
 const artifact = { id: `sha256_${"a".repeat(64)}`, sha256: "a".repeat(64) };
+it("closes diagnostic job metadata and input accounting against payloads and oversized projections", () => {
+  const usage = {
+    inputBytes: 0,
+    outputBytes: 128,
+    externalCalls: 1,
+    modelTokens: 0,
+    costMicros: 0,
+  };
+  const effect = {
+    id: "reference-image-get",
+    state: "unknown",
+    reserved: usage,
+  };
+  const stage = {
+    sha256: artifact.sha256,
+    byteLength: 128,
+    disposition: "retained",
+  };
+  const metadata = {
+    verification: "metadata-only",
+    jobId: "diagnostic_synthetic",
+    jobSha256: artifact.sha256,
+    status: "interrupted",
+    attempt: 1,
+    errorCode: "INPUT_LIMIT",
+    usage,
+    effects: [effect],
+    stages: [stage],
+    receiptPresent: false,
+  };
+  expect(validateContract("ReferenceJobMetadata", metadata).success).toBe(true);
+  for (const bad of [
+    { ...metadata, url: "private" },
+    { ...metadata, attempt: 2 },
+    { ...metadata, effects: [effect, effect] },
+    { ...metadata, stages: [stage, stage, stage] },
+    { ...metadata, usage: { ...usage, networkBody: "private" } },
+    { ...metadata, effects: [{ ...effect, response: "private" }] },
+    { ...metadata, effects: [{ ...effect, id: "private-effect-name" }] },
+    { ...metadata, stages: [{ ...stage, path: "private" }] },
+    { ...metadata, stages: [{ ...stage, byteLength: 26214401 }] },
+  ])
+    expect(validateContract("ReferenceJobMetadata", bad).success).toBe(false);
+  const accounting = {
+    limitBytes: 26214400,
+    privateBytes: 26214400,
+    networkBytes: 0,
+    phase: "inspection",
+    rejected: {
+      kind: "private",
+      bytes: 1,
+      limit: "aggregate",
+      phase: "commit",
+    },
+  };
+  expect(validateContract("ReferenceInputAccounting", accounting).success).toBe(
+    true,
+  );
+  for (const bad of [
+    { ...accounting, privateBytes: 26214401 },
+    { ...accounting, phase: "private-path" },
+    { ...accounting, rejected: { ...accounting.rejected, text: "private" } },
+  ])
+    expect(validateContract("ReferenceInputAccounting", bad).success).toBe(
+      false,
+    );
+});
 it("accepts only closed nonsecret diagnostics and leaves legacy absence untouched", () => {
   const legacy = {
     code: "INVALID_INPUT",

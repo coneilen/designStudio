@@ -121,6 +121,7 @@ export function parseCaptureArguments(
         ![
           "--project",
           "--request-id",
+          ...(verb === "reference-diagnostic-inspect" ? ["--inspection"] : []),
           ...(verb === "reference-approve" ||
           verb === "reference-diagnostic-approve"
             ? ["--origin", "--expected-proof", "--confirm"]
@@ -171,7 +172,9 @@ export function parseCaptureArguments(
       const expectedProof = options.get("--expected-proof");
       const expectedApproval = options.get("--expected-approval");
       const confirmation = options.get("--confirm");
+      const inspection = options.get("--inspection");
       if (
+        (inspection !== undefined && inspection !== "metadata-only") ||
         (operation === "reference-approve" &&
           (origin !== "https://figma-alpha-api.s3.us-west-2.amazonaws.com" ||
             !validateContract("Sha256", expectedProof).success ||
@@ -197,6 +200,7 @@ export function parseCaptureArguments(
           ...(expectedProof ? { expectedProof } : {}),
           ...(expectedApproval ? { expectedApproval } : {}),
           ...(confirmation ? { confirmation } : {}),
+          ...(inspection === "metadata-only" ? { inspection } : {}),
         },
       };
     }
@@ -401,6 +405,7 @@ export async function runCaptureCommand(args: readonly string[]) {
         "figma reference-approve --project <ID> --request-id <original capture request> --origin https://figma-alpha-api.s3.us-west-2.amazonaws.com --expected-proof <SHA256> --confirm APPROVE-ONE-SELECTED-REFERENCE",
         "figma reference-download --project <ID> --request-id <original capture request> --expected-approval <SHA256> --confirm DOWNLOAD-ONE-APPROVED-REFERENCE",
         "figma reference-diagnostic-plan|reference-diagnostic-inspect --project <ID> --request-id <original capture request>",
+        "figma reference-diagnostic-inspect --project <ID> --request-id <original capture request> --inspection metadata-only",
         "figma reference-diagnostic-approve --project <ID> --request-id <original capture request> --origin https://figma-alpha-api.s3.us-west-2.amazonaws.com --expected-proof <SHA256> --confirm APPROVE-ONE-DIAGNOSTIC-REFERENCE",
         "figma reference-diagnostic-download --project <ID> --request-id <original capture request> --expected-approval <SHA256> --confirm DOWNLOAD-ONE-DIAGNOSTIC-REFERENCE",
       ],

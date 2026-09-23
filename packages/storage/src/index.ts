@@ -591,16 +591,21 @@ export class LocalStore implements ArtifactStore {
         context,
       ),
     );
-    this.checkpoint(context);
-    if (
-      bytes.byteLength !== artifact.byteLength ||
-      hash(bytes) !== artifact.sha256
-    )
-      throw new StorageError(
-        "INTEGRITY",
-        "Artifact byte length or SHA-256 mismatch.",
-      );
-    return bytes;
+    try {
+      this.checkpoint(context);
+      if (
+        bytes.byteLength !== artifact.byteLength ||
+        hash(bytes) !== artifact.sha256
+      )
+        throw new StorageError(
+          "INTEGRITY",
+          "Artifact byte length or SHA-256 mismatch.",
+        );
+      return bytes;
+    } catch (error) {
+      bytes.fill(0);
+      throw error;
+    }
   }
   private refs(
     kind: string,
@@ -691,6 +696,20 @@ export class LocalStore implements ArtifactStore {
         const artifact = this.artifact(reference);
         await this.read(artifact, context);
         return artifact;
+      }),
+    );
+  }
+
+  readVerified(
+    reference: ArtifactReference,
+    context: OperationContext,
+  ): Promise<Outcome<{ artifact: Artifact; bytes: Uint8Array }>> {
+    return this.snapshot(reference, context, "read", (reference) =>
+      this.run(context, "read", async (context) => {
+        check("ArtifactReference", reference);
+        await this.authorizeReference(reference, context, true);
+        const artifact = this.artifact(reference);
+        return { artifact, bytes: await this.read(artifact, context) };
       }),
     );
   }
@@ -931,6 +950,20 @@ export class LocalStore implements ArtifactStore {
       const state = this.recoveryState();
       await admission.authorize(context);
       return state;
+    });
+  }
+  referenceJobMetadata(id: string, context: OperationContext) {
+    return this.run(context, "read", async (context) => {
+      const admission = this.options.referenceInspection;
+      if (!admission)
+        throw new StorageError(
+          "AUTHORIZATION_CHANGED",
+          "Reference inspection is not admitted.",
+        );
+      await admission.authorize(context);
+      const metadata = await this.jobStore.referenceMetadata(id, context);
+      await admission.authorize(context);
+      return metadata;
     });
   }
   private async captureRecoveryEvidence(

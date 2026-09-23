@@ -213,6 +213,73 @@ async function completion(
   return { record: result.record, output };
 }
 
+test("reference metadata inspection is admitted, owner-scoped, body-free and bounded before parsing", async () => {
+  const f = await setup();
+  const record = value(await f.store.jobs.create(f.submission(), f.ctx()));
+  expect(
+    await f.store.referenceJobMetadata(record.job.id, f.ctx()),
+  ).toMatchObject({ status: "failed", error: { code: "FORBIDDEN" } });
+  f.options.referenceInspection = { authorize: async () => {} };
+  let reads = 0;
+  const read = f.disk.fs.read;
+  f.disk.fs.read = async (...args) => {
+    reads++;
+    return read(...args);
+  };
+  expect(
+    value(await f.store.referenceJobMetadata(record.job.id, f.ctx())),
+  ).toEqual({ record, receipt: null, stages: [] });
+  expect(
+    value(await f.store.referenceJobMetadata("absent", f.ctx())),
+  ).toBeNull();
+  const foreign = f.ctx();
+  foreign.authorization = {
+    ...foreign.authorization,
+    actorId: "foreign-actor",
+  };
+  expect(
+    await f.store.referenceJobMetadata(record.job.id, foreign),
+  ).toMatchObject({ status: "failed", error: { code: "FORBIDDEN" } });
+  expect(
+    await f.store.referenceJobMetadata(record.job.id, {
+      ...f.ctx(),
+      projectId: "foreign-project",
+    }),
+  ).toMatchObject({ status: "failed" });
+  for (const overflow of ["job", "stages"]) {
+    f.store.close();
+    const db = new Database(f.options.databasePath, { nativeBinding });
+    try {
+      db.prepare("UPDATE jobs SET data=? WHERE id=?").run(
+        overflow === "job" ? "x".repeat(262145) : JSON.stringify(record),
+        record.job.id,
+      );
+      if (overflow === "stages")
+        for (let i = 0; i < 3; i++)
+          db.prepare("INSERT INTO job_stages VALUES (?,?,?)").run(
+            `synthetic_${i}`,
+            record.job.id,
+            "{}",
+          );
+    } finally {
+      db.close();
+    }
+    await f.reopen();
+    expect(
+      await f.store.referenceJobMetadata(record.job.id, f.ctx()),
+    ).toMatchObject({ status: "failed", error: { code: "INPUT_LIMIT" } });
+  }
+  expect(reads).toBe(0);
+  f.options.referenceInspection = {
+    authorize: async () => {
+      throw Object.assign(new Error("revoked"), { code: "FORBIDDEN" });
+    },
+  };
+  expect(
+    await f.store.referenceJobMetadata(record.job.id, f.ctx()),
+  ).toMatchObject({ status: "failed", error: { code: "FORBIDDEN" } });
+});
+
 test.each(
   (["verifier", "durability"] as const).flatMap((phase) =>
     (
@@ -1652,6 +1719,65 @@ test("guarded commit atomically stores job, receipt, refs, revision and head; le
     done.receipt,
   );
 });
+
+test.each(["receipt", "output-protection"] as const)(
+  "capture job snapshots reject changed authoritative %s before proof reuse",
+  async (corrupt) => {
+    const f = await setup();
+    const queued = value(
+      await f.store.jobs.create(
+        { ...f.submission(), operation: "capture" },
+        f.ctx(),
+      ),
+    );
+    const running = value(
+      await f.store.jobs.claim(
+        queued.job.id,
+        {
+          state: queued.job.status,
+          rowVersion: queued.rowVersion,
+        },
+        "worker1",
+        1000,
+        f.ctx(),
+      ),
+    );
+    const { record, output } = await completion(f, running);
+    const done = value(
+      await f.store.jobs.commitJob(
+        record.job.id,
+        fence(record),
+        output,
+        f.ctx(),
+      ),
+    );
+    expect(
+      value(await f.store.jobs.get(record.job.id, f.ctx())).job.receipt,
+    ).toEqual(done.receipt);
+    f.store.close();
+    const db = new Database(f.options.databasePath, { nativeBinding });
+    try {
+      if (corrupt === "receipt")
+        db.prepare(
+          "UPDATE receipts SET data=? WHERE json_extract(data,'$.jobId')=?",
+        ).run(
+          JSON.stringify({ ...done.receipt, id: "changed-receipt" }),
+          record.job.id,
+        );
+      else
+        db.prepare(
+          "DELETE FROM artifact_refs WHERE owner_kind='job' AND owner_id=?",
+        ).run(done.receipt.id);
+    } finally {
+      db.close();
+    }
+    await f.reopen();
+    expect(await f.store.jobs.get(record.job.id, f.ctx())).toMatchObject({
+      status: "failed",
+      error: { code: "ARTIFACT_INTEGRITY" },
+    });
+  },
+);
 
 test("live fence is checked after the async publication barrier inside the commit transaction", async () => {
   const f = await setup();

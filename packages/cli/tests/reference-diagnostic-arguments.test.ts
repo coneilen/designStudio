@@ -7,6 +7,58 @@ const base = [
   "--request-id",
   "original",
 ];
+it("gates metadata-only inspection without changing the default or admitting arbitrary jobs", () => {
+  expect(
+    parseCaptureArguments(["figma", "reference-diagnostic-inspect", ...base]),
+  ).toMatchObject({
+    capture: {
+      operation: "reference-diagnostic-inspect",
+      requestId: "original",
+    },
+  });
+  expect(
+    parseCaptureArguments([
+      "figma",
+      "reference-diagnostic-inspect",
+      ...base,
+      "--inspection",
+      "metadata-only",
+    ]),
+  ).toMatchObject({
+    capture: {
+      operation: "reference-diagnostic-inspect",
+      requestId: "original",
+      inspection: "metadata-only",
+    },
+  });
+  for (const verb of [
+    "reference-inspect",
+    "reference-diagnostic-plan",
+    "reference-diagnostic-download",
+  ])
+    expect(() =>
+      parseCaptureArguments([
+        "figma",
+        verb,
+        ...base,
+        "--inspection",
+        "metadata-only",
+      ]),
+    ).toThrow();
+  for (const suffix of [
+    ["--inspection", "full"],
+    ["--inspection", "metadata-only", "--inspection", "metadata-only"],
+    ["--job-id", "diagnostic_synthetic"],
+  ])
+    expect(() =>
+      parseCaptureArguments([
+        "figma",
+        "reference-diagnostic-inspect",
+        ...base,
+        ...suffix,
+      ]),
+    ).toThrow();
+});
 it("admits explicit diagnostic planning without caller-selected acquisition IDs or URLs", () => {
   expect(
     parseCaptureArguments(["figma", "reference-diagnostic-plan", ...base]),
