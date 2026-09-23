@@ -6,6 +6,7 @@ import {
   type Job,
   type Outcome,
   type ResponseEnvelope,
+  referenceDiagnosticFields,
   validateContract,
 } from "@design-studio/contracts";
 
@@ -42,6 +43,7 @@ export class ApplicationError extends Error {
     readonly code: ErrorCode,
     readonly httpStatus = 400,
     readonly jobId?: string,
+    readonly referenceDiagnostic?: import("@design-studio/contracts").ReferenceDiagnostic,
   ) {
     super(code);
   }
@@ -87,7 +89,12 @@ export function safeError(error: unknown): ApplicationError {
   if (error && typeof error === "object" && "code" in error) {
     const checked = validateContract("ErrorCode", error.code);
     if (checked.success)
-      return new ApplicationError(checked.value, statusCode(checked.value));
+      return new ApplicationError(
+        checked.value,
+        statusCode(checked.value),
+        undefined,
+        referenceDiagnosticFields(error).referenceDiagnostic,
+      );
     if (error.code === "WRITER_BUSY")
       return new ApplicationError("CONFLICT", 409);
     if (error.code === "SCHEMA_INCOMPATIBLE")
@@ -134,6 +141,7 @@ export function unwrap<T>(outcome: Outcome<T>): T {
       outcome.error.code,
       statusCode(outcome.error.code),
       outcome.error.jobId,
+      referenceDiagnosticFields(outcome.error).referenceDiagnostic,
     );
   return outcome.value;
 }

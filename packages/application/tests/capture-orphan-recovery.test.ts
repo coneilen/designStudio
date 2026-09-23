@@ -21,6 +21,15 @@ import {
 } from "../src/capture-runtime.js";
 
 const seam = vi.hoisted(() => ({ work: undefined as CaptureWork | undefined }));
+vi.mock("@napi-rs/keyring", () => ({
+  AsyncEntry: class {
+    constructor() {
+      throw new Error(
+        "Synthetic orphan recovery forbids real credential backend access",
+      );
+    }
+  },
+}));
 vi.mock("@design-studio/project-host", async () => {
   const actual = await import("../../project-host/src/index.js");
   return {

@@ -4,7 +4,10 @@ import type {
   OperationContext,
   StagedArtifact,
 } from "@design-studio/contracts";
-import { DEFAULT_BUDGETS } from "@design-studio/contracts";
+import {
+  DEFAULT_BUDGETS,
+  referenceDiagnosticFields,
+} from "@design-studio/contracts";
 import { canonicalBytes } from "@design-studio/design-ir";
 import {
   type Authority,
@@ -17,6 +20,11 @@ import type { JobExecution } from "@design-studio/jobs";
 import type { JobUsage } from "@design-studio/storage";
 import { fail, type ImageBudget } from "./boundary.js";
 import { decodeReference } from "./decode.js";
+import {
+  mimeClass,
+  operationDiagnostic,
+  requirePngMime,
+} from "./diagnostic.js";
 import { CaptureHttpError, FigmaHttpsTransport } from "./transport.js";
 
 export const REFERENCE_ORIGIN =
@@ -274,9 +282,14 @@ export async function acquireReference(
         "Reference network effect is unresolved; retry is forbidden.",
       );
     if (error) throw error;
-    if (image?.mediaType !== "image/png")
-      fail("INVALID_INPUT", "Reference response is not a PNG.");
+    if (!image) fail("INTERRUPTED", "Reference response was not observed.");
+    const classification = requirePngMime(image.mediaType);
     const info = await decodeReference(image.bytes, budget);
+    evidence.referenceDiagnostic = {
+      stage: "png",
+      reason: "validated",
+      mimeClass: classification,
+    };
     const artifact = await stage(image.bytes);
     evidence.reference = {
       artifact: { id: artifact.id, sha256: artifact.sha256 },
@@ -294,12 +307,26 @@ export async function acquireReference(
     if (info.colorSpace !== "srgb")
       evidence.missing.push("reference-color-unknown");
     evidence.referenceStatus = evidence.missing.length ? "partial" : "complete";
-  } catch (error) {
-    budget.check();
-    const remoteDenied =
-      error instanceof CaptureHttpError &&
-      ((error.status === 401 && error.code === "AUTH_REQUIRED") ||
-        (error.status === 403 && error.code === "FORBIDDEN"));
+  } catch (problem) {
+    let remoteDenied =
+      problem instanceof CaptureHttpError &&
+      ((problem.status === 401 && problem.code === "AUTH_REQUIRED") ||
+        (problem.status === 403 && problem.code === "FORBIDDEN"));
+    let error = remoteDenied
+      ? problem
+      : operationDiagnostic(
+          problem,
+          image ? mimeClass(image.mediaType) : "not-observed",
+        );
+    try {
+      budget.check();
+    } catch (guardError) {
+      remoteDenied = false;
+      error = operationDiagnostic(
+        guardError,
+        image ? mimeClass(image.mediaType) : "not-observed",
+      );
+    }
     if (
       !(error instanceof HostBoundaryError) ||
       (!remoteDenied &&
@@ -311,10 +338,14 @@ export async function acquireReference(
           "DEADLINE_EXCEEDED",
           "INPUT_LIMIT",
           "OUTPUT_LIMIT",
+          "RASTER_LIMIT",
+          "NODE_LIMIT",
+          "DEPTH_LIMIT",
         ].includes(error.code))
     )
       throw error;
     evidence.errorCode = error.code;
+    Object.assign(evidence, referenceDiagnosticFields(error));
     evidence.missing.push("verified-reference-unavailable");
     if (error instanceof CaptureHttpError && error.status === 429) {
       if (
@@ -341,10 +372,23 @@ export async function acquireReference(
     evidence.usage.persistedBytes = budget.persisted + bytes.length;
     const next = canonicalBytes(evidence);
     if (next.length === bytes.length) {
-      await stage(next);
+      try {
+        await stage(next);
+      } catch (error) {
+        throw operationDiagnostic(
+          error,
+          image ? mimeClass(image.mediaType) : "not-observed",
+        );
+      }
       return { outputs, evidence };
     }
     bytes = next;
   }
-  fail("OUTPUT_LIMIT", "Reference evidence accounting did not stabilize.");
+  throw operationDiagnostic(
+    new HostBoundaryError(
+      "OUTPUT_LIMIT",
+      "Reference evidence accounting did not stabilize.",
+    ),
+    image ? mimeClass(image.mediaType) : "not-observed",
+  );
 }

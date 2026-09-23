@@ -1,10 +1,17 @@
 import { parentPort, workerData } from "node:worker_threads";
-import { decodeRaster } from "@design-studio/assets";
-import { DEFAULT_BUDGETS, parseContract } from "@design-studio/contracts";
+import { AssetError, decodeRaster } from "@design-studio/assets";
+import {
+  ContractBoundaryError,
+  DEFAULT_BUDGETS,
+  parseContract,
+} from "@design-studio/contracts";
+import { assetReasons, type DecoderReason } from "./diagnostic.js";
 
 if (parentPort) {
   const port = parentPort;
   let bytes: Uint8Array | undefined;
+  let kind: "json" | "png" | undefined;
+  let reason: DecoderReason = "worker-protocol";
   try {
     const input: unknown = workerData;
     if (
@@ -13,7 +20,7 @@ if (parentPort) {
       !("bytes" in input) ||
       !(input.bytes instanceof Uint8Array) ||
       !("kind" in input) ||
-      !["json", "png"].includes(String(input.kind)) ||
+      (input.kind !== "json" && input.kind !== "png") ||
       !("maxInput" in input) ||
       typeof input.maxInput !== "number" ||
       !("maxOutput" in input) ||
@@ -27,7 +34,16 @@ if (parentPort) {
     )
       throw new Error("worker-input");
     bytes = input.bytes;
+    kind = input.kind;
     if (
+      bytes.buffer instanceof SharedArrayBuffer ||
+      ![
+        input.maxInput,
+        input.maxOutput,
+        input.maxPixels,
+        input.maxNodes,
+        input.maxDepth,
+      ].every((n) => Number.isSafeInteger(n) && n > 0) ||
       bytes.length > input.maxInput ||
       input.maxInput > 26214400 ||
       input.maxOutput > 26214400 ||
@@ -37,6 +53,7 @@ if (parentPort) {
     )
       throw new Error("worker-limit");
     if (input.kind === "json") {
+      reason = "json-malformed";
       const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
       const value = parseContract("JsonObject", text, "json", {
         maxInputBytes: input.maxInput,
@@ -45,12 +62,15 @@ if (parentPort) {
       let entries = 0;
       while (stack.length) {
         const item = stack.pop();
-        if (
-          !item ||
-          item.depth > input.maxDepth ||
-          ++entries > Math.min(640000, input.maxNodes * 32)
-        )
+        if (!item) throw new Error("worker-structure");
+        if (item.depth > input.maxDepth) {
+          reason = "depth-limit";
           throw new Error("worker-structure");
+        }
+        if (++entries > Math.min(640000, input.maxNodes * 32)) {
+          reason = "node-limit";
+          throw new Error("worker-structure");
+        }
         if (item.value && typeof item.value === "object") {
           for (const child of Object.values(item.value))
             stack.push({ value: child, depth: item.depth + 1 });
@@ -78,8 +98,16 @@ if (parentPort) {
         raster.rgba.fill(0);
       }
     }
-  } catch {
-    port.postMessage({ ok: false });
+  } catch (error) {
+    if (error instanceof AssetError)
+      reason = assetReasons[error.diagnostic.code] ?? "worker-protocol";
+    else if (error instanceof ContractBoundaryError && kind === "json") {
+      if (error.issues.some((issue) => issue.code === "DEPTH_LIMIT"))
+        reason = "depth-limit";
+      else if (error.issues.some((issue) => issue.code === "INPUT_LIMIT"))
+        reason = "input-limit";
+    }
+    port.postMessage({ ok: false, kind, reason });
   } finally {
     bytes?.fill(0);
     port.close();

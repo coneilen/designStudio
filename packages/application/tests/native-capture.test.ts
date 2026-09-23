@@ -26,6 +26,15 @@ const seam = vi.hoisted(() => ({
   ca: "",
   origins: [] as string[],
 }));
+vi.mock("@napi-rs/keyring", () => ({
+  AsyncEntry: class {
+    constructor() {
+      throw new Error(
+        "Synthetic native capture forbids real credential backend access",
+      );
+    }
+  },
+}));
 vi.mock("@design-studio/project-host", async () => {
   const actual = await import("../../project-host/src/index.js");
   const installation = await import("../../project-host/src/installation.js");

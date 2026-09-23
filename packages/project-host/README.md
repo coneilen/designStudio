@@ -34,6 +34,15 @@ lookup, migration, project copy, credential reference or old-job authority
 override is introduced. Independently approved new bootstrap/payload inventories
 are still required; changing packaging source does not approve or install them.
 
+Diagnostic-capable version-5 release metadata additionally binds
+`capture-diagnostic-policy.json` and its exact digest in the verified payload
+inventory. Version-2/3/4 leases cannot mint diagnostic authority, even when new
+command code is present. The original base, recovery and reference policy bytes,
+project namespaces and credential identities are unchanged. This separate
+supplement permits only one freshly consented diagnostic successor of the exact
+completed HTTP200/INVALID_INPUT/no-PNG reference receipt; it does not reset the
+original job or authorize a live invocation merely by being installed.
+
 Reference-capable version-4 release metadata additionally binds the exact
 `capture-reference-policy.json` inventory member. Both historical base and
 recovery policy bytes, namespaces, credential references and old job identities

@@ -28,7 +28,7 @@ export const ASSET_PROFILE = Object.freeze({
   adapterVersion: "assets-1.0.0",
   schemaVersion: "1.0",
   derivativeVersion: "static-svg-v1",
-  png: "decoded-8bit-rgb-rgba-noninterlaced",
+  png: "bounded-static-noninterlaced-png-rgba8-inspection",
   jpeg: "unsupported-decoder",
   webp: "unsupported-decoder",
   svg: "sanitized-static-shapes-no-css-text-or-references",
@@ -234,6 +234,7 @@ export class AssetPipeline {
             notice,
           };
     });
+    bound("OPERATION_OUTPUT_BYTES", totalBytes, limits.maxOutputBytes);
     const get = (hash: string) => {
       const bytes = blobs.get(hash);
       if (!bytes) fail("PIPELINE_STATE", "Missing prepared bytes");

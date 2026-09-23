@@ -91,8 +91,12 @@ describe("budget and hostile parser regressions", () => {
       decodeRaster(Buffer.concat([stripe, Buffer.from("tail")]), limits),
     ).toThrow(/PNG_MALFORMED/);
   });
-  it("rejects color profiles/transparency/animation rather than claiming conversion", () => {
-    for (const type of ["iCCP", "tRNS", "acTL"]) {
+  it("rejects malformed profiles/transparency and explicitly unsupported animation", () => {
+    for (const [type, reason] of [
+      ["iCCP", /PNG_MALFORMED/],
+      ["tRNS", /PNG_MALFORMED/],
+      ["acTL", /PNG_ANIMATION_UNSUPPORTED/],
+    ] as const) {
       expect(() =>
         decodeRaster(
           Buffer.concat([
@@ -102,7 +106,7 @@ describe("budget and hostile parser regressions", () => {
           ]),
           limits,
         ),
-      ).toThrow(/PNG_UNSUPPORTED/);
+      ).toThrow(reason);
     }
   });
   it("bounds chunk counts independently of compressed bytes", () => {

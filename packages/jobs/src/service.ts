@@ -49,7 +49,12 @@ interface Active {
 const safeError = (error: ContractError): ContractError => {
   if (!validateContract("ContractError", error).success)
     throw new HostBoundaryError("INVALID_INPUT", "Invalid handler error.");
-  return detail(error.code, error.retryable);
+  return {
+    ...detail(error.code, error.retryable),
+    ...(error.referenceDiagnostic
+      ? { referenceDiagnostic: structuredClone(error.referenceDiagnostic) }
+      : {}),
+  };
 };
 const view = (record: StoredJob): VersionedJob => ({
   job: structuredClone(record.job),

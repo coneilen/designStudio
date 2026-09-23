@@ -10,17 +10,25 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { NativeReferenceEnvelope } from "@design-studio/contracts";
 import { fakeComplete } from "@design-studio/contracts/testing";
+import { canonicalBytes } from "@design-studio/design-ir";
 import { HostBoundaryError, ProjectFileSystem } from "@design-studio/host";
 import { JobService } from "@design-studio/jobs";
 import type { CaptureProject, CaptureWork } from "@design-studio/project-host";
 import { LocalStore } from "@design-studio/storage";
 import { afterEach, expect, it, vi } from "vitest";
 import {
+  image as authoredPng,
+  chunk,
+  srgb,
+} from "../../assets/tests/png-fixtures.js";
+import * as referenceDecoder from "../../figma-capture/dist/decode.js";
+import {
   CaptureHttpError,
   FigmaHttpsTransport,
 } from "../../figma-capture/dist/transport.js";
 import { png } from "../../figma-capture/tests/support.js";
 import { nativeCapturePolicy } from "../../project-host/dist/capture-authority.js";
+import { CAPTURE_DIAGNOSTIC_POLICY_SHA256 } from "../../project-host/src/capture-diagnostic-profile.js";
 import { CAPTURE_POLICY_SHA256 } from "../../project-host/src/capture-profile.js";
 import { CAPTURE_REFERENCE_POLICY_SHA256 } from "../../project-host/src/capture-reference-profile.js";
 import {
@@ -29,6 +37,8 @@ import {
 } from "../src/capture-runtime-internal.js";
 import { ReferenceReader } from "../src/reference-proof.js";
 import {
+  DIAGNOSTIC_APPROVAL_CONFIRMATION,
+  DIAGNOSTIC_DOWNLOAD_CONFIRMATION,
   REFERENCE_APPROVAL_CONFIRMATION,
   REFERENCE_DOWNLOAD_CONFIRMATION,
 } from "../src/reference-runtime.js";
@@ -99,6 +109,7 @@ async function fixture(
     dimensions?: number;
     nodeVersion?: string;
     renderNode?: string;
+    diagnostic?: boolean;
   } = {},
 ) {
   const root = await mkdtemp(path.join(tmpdir(), "reference-synthetic-"));
@@ -128,6 +139,7 @@ async function fixture(
   let vaultAllowed = true;
   let fault: string | undefined;
   let clockOffset = 0;
+  let diagnosticPolicy = CAPTURE_DIAGNOSTIC_POLICY_SHA256;
   const vault = vi.fn();
   const ready = vi.fn(async () => undefined);
   const reads: { bytes: number; allowed: boolean }[] = [];
@@ -151,14 +163,16 @@ async function fixture(
     fakeComplete(context, { durable: true }),
   );
   const openStore = LocalStore.open.bind(LocalStore);
-  vi.spyOn(LocalStore, "open").mockImplementation((o) =>
-    openStore({
+  let currentStore: LocalStore | undefined;
+  vi.spyOn(LocalStore, "open").mockImplementation(async (o) => {
+    currentStore = await openStore({
       ...o,
       fault: (point) => {
         if (point === fault) throw new Error("Synthetic publication fault");
       },
-    }),
-  );
+    });
+    return currentStore;
+  });
   const open = async () => {
     let current = true;
     let policy: ReturnType<typeof nativeCapturePolicy>;
@@ -181,6 +195,18 @@ async function fixture(
           throw new HostBoundaryError("FORBIDDEN", "Closed synthetic owner");
       },
       isCurrent: () => current,
+      ...(options.diagnostic
+        ? {
+            diagnosticAuthority: async () => {
+              if (!admitted)
+                throw new HostBoundaryError(
+                  "FORBIDDEN",
+                  "Synthetic diagnostic authority revoked.",
+                );
+              return diagnosticPolicy;
+            },
+          }
+        : {}),
       readyCredential: ready,
       recoveryAuthority: async () => {
         throw new Error("Reference must not read recovery/credential state");
@@ -316,6 +342,28 @@ async function fixture(
       },
       signal,
     );
+  const diagnosticPlan = () =>
+    run({ operation: "reference-diagnostic-plan", requestId: "original" });
+  const diagnosticApprove = async () => {
+    const plan = await diagnosticPlan();
+    expect(plan.status, JSON.stringify(plan)).toBe("complete");
+    const approved = await run({
+      operation: "reference-diagnostic-approve",
+      requestId: "original",
+      origin,
+      expectedProof: required(plan.value?.proposal?.proofSha256),
+      confirmation: DIAGNOSTIC_APPROVAL_CONFIRMATION,
+    });
+    expect(approved.status, JSON.stringify(approved)).toBe("complete");
+    return approved;
+  };
+  const diagnosticDownload = (approval: NativeReferenceEnvelope) =>
+    run({
+      operation: "reference-diagnostic-download",
+      requestId: "original",
+      expectedApproval: required(approval.value?.approval?.sha256),
+      confirmation: DIAGNOSTIC_DOWNLOAD_CONFIRMATION,
+    });
   const blobs = async () => {
     const dir = path.join(root, "artifacts", "blobs");
     return Promise.all(
@@ -330,6 +378,87 @@ async function fixture(
     plan,
     approve,
     download,
+    diagnosticPlan,
+    diagnosticApprove,
+    diagnosticDownload,
+    changeDiagnosticPolicy: () => {
+      diagnosticPolicy = "d".repeat(64);
+    },
+    corruptReferenceRead: (kind: "receipt" | "unknown" | "reserved") => {
+      const jobs = required(currentStore).jobs;
+      const get = jobs.get.bind(jobs);
+      vi.spyOn(jobs, "get").mockImplementation(async (jobId, context) => {
+        const result = await get(jobId, context);
+        if (
+          result.status === "complete" &&
+          result.value.handlerId === "figma-reference-download-v1"
+        ) {
+          if (kind === "receipt" && result.value.job.receipt)
+            result.value.job.receipt.id = "wrong_receipt";
+          else if (result.value.effects[0])
+            result.value.effects[0].state =
+              kind === "unknown" ? "unknown" : "reserved";
+        }
+        return result;
+      });
+    },
+    retainSyntheticStage: async () => {
+      const ctx = await required(seam.work).policy.issue({
+        jobId: "synthetic_pending",
+        requestId: "synthetic_pending",
+        signal: new AbortController().signal,
+      });
+      expect(
+        (
+          await required(currentStore).stage(
+            Buffer.from("synthetic uncommitted publication"),
+            ctx,
+          )
+        ).status,
+      ).toBe("complete");
+    },
+    seedCooldown: async (predecessor: NativeReferenceEnvelope) => {
+      const work = required(seam.work);
+      const db = required(currentStore);
+      const jobId = required(predecessor.value?.job?.id);
+      const ctx = await work.policy.issue({
+        jobId: "synthetic_cooldown",
+        requestId: "synthetic_cooldown",
+        jobReads: [jobId],
+        signal: new AbortController().signal,
+      });
+      const evidence = {
+        ...required(predecessor.value?.evidence),
+        statusCode: 429,
+        errorCode: "RATE_LIMITED",
+        nextEligibleAt: new Date(work.policy.clock.now() + 60000).toISOString(),
+        retry: "explicit-action-required",
+      };
+      const staged = await db.stage(canonicalBytes(evidence), ctx);
+      if (staged.status !== "complete")
+        throw new Error("Synthetic cooldown stage failed");
+      const receipt = await db.commit([staged.value], ctx);
+      if (receipt.status !== "complete")
+        throw new Error("Synthetic cooldown receipt failed");
+      const history = await db.jobs.discoverOwned({ jobId, limit: 1 }, ctx);
+      if (history.status !== "complete")
+        throw new Error("Synthetic history unavailable");
+      const descriptor = required(history.value.descriptors[0]);
+      const discover = db.jobs.discoverOwned.bind(db.jobs);
+      // Only discovery is synthetic; the cooldown artifact/receipt and physical reads use SQLite.
+      vi.spyOn(db.jobs, "discoverOwned").mockImplementation(
+        async (query, context) => {
+          const result = await discover(query, context);
+          if (!query.jobId && result.status === "complete")
+            result.value.descriptors.push({
+              ...descriptor,
+              jobId: "synthetic_cooldown",
+              outputs: receipt.value.outputs,
+            });
+          return result;
+        },
+      );
+    },
     run,
     image,
     api,
@@ -402,6 +531,7 @@ it("requires exact explicit offline approval and attaches once without modifying
     },
     usage: { externalCalls: 1, dnsQueries: 1 },
   });
+
   expect(f.image).toHaveBeenCalledTimes(1);
   expect(f.api).not.toHaveBeenCalled();
   expect(f.vault).not.toHaveBeenCalled();
@@ -413,6 +543,314 @@ it("requires exact explicit offline approval and attaches once without modifying
   expect(f.image).toHaveBeenCalledTimes(1);
   const after = new Map(await f.blobs());
   for (const [name, bytes] of old) expect(after.get(name)).toEqual(bytes);
+});
+
+it.each([
+  ["image/png", "png", true],
+  ["application/octet-stream", "generic-binary", true],
+  ["binary/octet-stream", "generic-binary", true],
+  [undefined, "missing", false],
+  ["text/html", "other", false],
+  ["application/json", "other", false],
+] as const)(
+  "persists safe MIME %s evidence and original bytes without renewing consumed authority",
+  async (mediaType, mimeClass, accepted) => {
+    const f = await fixture();
+    const approval = await f.approve();
+    const before = await f.blobs();
+    const original = authoredPng(
+      6,
+      8,
+      Buffer.from([
+        0, 10, 20, 30, 255, 10, 20, 30, 255, 0, 10, 20, 30, 255, 10, 20, 30,
+        255,
+      ]),
+      [
+        srgb(),
+        chunk("tEXt", Buffer.from("Synthetic\0diagnostic-private-marker")),
+      ],
+      [],
+      2,
+      2,
+    );
+    f.image.mockImplementation(async (_url, budget) => {
+      budget.dnsQuery();
+      budget.receive(original.length + 100);
+      budget.decoded(original.length);
+      return {
+        status: 200,
+        bytes: Buffer.from(original),
+        ...(mediaType ? { mediaType } : {}),
+      };
+    });
+    const result = await f.download(approval);
+    expect(result.status, JSON.stringify(result)).toBe(
+      accepted ? "complete" : "unavailable",
+    );
+    expect(result.value?.evidence).toMatchObject({
+      statusCode: 200,
+      referenceDiagnostic: {
+        stage: accepted ? "png" : "mime",
+        reason: accepted
+          ? "validated"
+          : mediaType
+            ? "mime-rejected"
+            : "mime-missing",
+        mimeClass,
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain("diagnostic-private-marker");
+    const after = new Map(await f.blobs());
+    for (const [hash, bytes] of before) expect(after.get(hash)).toEqual(bytes);
+    if (accepted)
+      expect(
+        after.get(required(result.value?.evidence?.reference?.artifact.sha256)),
+      ).toEqual(original);
+    else {
+      expect(result.value?.receipt?.outputs).toHaveLength(1);
+      expect(result.value?.evidence?.errorCode).toBe("UNSUPPORTED_FEATURE");
+    }
+    await f.reopen();
+    expect((await f.download(approval)).value?.receipt).toEqual(
+      result.value?.receipt,
+    );
+    expect(f.image).toHaveBeenCalledTimes(1);
+    expect(f.api).not.toHaveBeenCalled();
+    expect(f.vault).not.toHaveBeenCalled();
+  },
+);
+it("returns terminal raster diagnostic without claiming a durable receipt or replaying", async () => {
+  const f = await fixture();
+  const approval = await f.approve();
+  const bytes = png(true, 1, 1);
+  const { header, signature } = await import(
+    "../../assets/tests/png-fixtures.js"
+  );
+  const oversized = Buffer.concat([
+    signature,
+    header(6, 8, 6553601),
+    bytes.subarray(33),
+  ]);
+  f.image.mockResolvedValue({
+    status: 200,
+    bytes: oversized,
+    mediaType: "image/png",
+  });
+  const result = await f.download(approval);
+  expect(result).toMatchObject({
+    status: "failed",
+    error: {
+      code: "RASTER_LIMIT",
+      referenceDiagnostic: {
+        stage: "png",
+        reason: "raster-limit",
+        mimeClass: "png",
+      },
+    },
+  });
+  expect(result.value?.receipt).toBeUndefined();
+  await f.download(approval);
+  expect(f.image).toHaveBeenCalledTimes(1);
+});
+it("reads legacy unknown HTTP200 decoder failure without rewriting its evidence or consumed slot", async () => {
+  const f = await fixture();
+  const approval = await f.approve();
+  const legacy = vi
+    .spyOn(referenceDecoder, "decodeReference")
+    .mockRejectedValue(
+      new HostBoundaryError(
+        "INVALID_INPUT",
+        "Synthetic legacy decoder collision.",
+      ),
+    );
+  const result = await f.download(approval);
+  legacy.mockRestore();
+  expect(result.status, JSON.stringify(result)).toBe("unavailable");
+  expect(result.value?.evidence).toMatchObject({
+    statusCode: 200,
+    errorCode: "INVALID_INPUT",
+    referenceStatus: "unavailable",
+  });
+  expect(result.value?.evidence?.referenceDiagnostic).toBeUndefined();
+  expect(result.referenceDiagnostic).toEqual({
+    stage: "legacy",
+    reason: "legacy-unknown",
+    mimeClass: "not-observed",
+  });
+  const before = await f.blobs();
+  await f.reopen();
+  const inspected = await f.download(approval);
+  expect(inspected.value?.receipt).toEqual(result.value?.receipt);
+  expect(inspected.value?.evidence).toEqual(result.value?.evidence);
+  expect(await f.blobs()).toEqual(before);
+  expect(f.image).toHaveBeenCalledTimes(1);
+});
+
+async function legacyReferenceFailure(f: Awaited<ReturnType<typeof fixture>>) {
+  const approval = await f.approve();
+  const legacy = vi
+    .spyOn(referenceDecoder, "decodeReference")
+    .mockRejectedValue(
+      new HostBoundaryError(
+        "INVALID_INPUT",
+        "Synthetic legacy rejection, phase unknown.",
+      ),
+    );
+  try {
+    const result = await f.download(approval);
+    expect(result.status, JSON.stringify(result)).toBe("unavailable");
+    expect(result.value?.evidence?.statusCode).toBe(200);
+    expect(result.value?.evidence?.referenceDiagnostic).toBeUndefined();
+    return result;
+  } finally {
+    legacy.mockRestore();
+  }
+}
+
+it.each([false, true])(
+  "consumes exactly one server-derived diagnostic slot, including failed successor=%s",
+  async (failSuccessor) => {
+    const f = await fixture({ diagnostic: true });
+    const predecessor = await legacyReferenceFailure(f);
+    f.advanceClock(300001);
+    const originalBlobs = await f.blobs();
+    const approved = await f.diagnosticApprove();
+    expect(approved.value?.proposal?.diagnosticPredecessor?.jobId).toBe(
+      predecessor.value?.job?.id,
+    );
+    expect(approved.value?.proposal?.binding.originalRequestId).toBe(
+      "original",
+    );
+    expect(approved.value?.proposal?.binding.acquisitionId).not.toBe(
+      predecessor.value?.job?.id,
+    );
+    expect(f.image).toHaveBeenCalledTimes(1);
+    if (failSuccessor)
+      f.image.mockResolvedValue({
+        status: 200,
+        bytes: Buffer.from("<html>synthetic</html>"),
+        mediaType: "application/octet-stream",
+      });
+    const result = await f.diagnosticDownload(approved);
+    expect(result.status, JSON.stringify(result)).toBe(
+      failSuccessor ? "unavailable" : "complete",
+    );
+    expect(result.value?.consumed).toBe(true);
+    expect(result.value?.job?.attempt).toBe(1);
+    expect(result.value?.evidence?.usage.externalCalls).toBe(1);
+    expect(f.image).toHaveBeenCalledTimes(2);
+    expect(
+      (
+        await f.run({
+          operation: "reference-diagnostic-plan",
+          requestId: required(result.value?.job?.id),
+        })
+      ).status,
+    ).toBe("failed");
+    await f.reopen();
+    expect((await f.diagnosticDownload(approved)).value?.receipt).toEqual(
+      result.value?.receipt,
+    );
+    const after = new Map(await f.blobs());
+    for (const [hash, bytes] of originalBlobs)
+      expect(after.get(hash)).toEqual(bytes);
+    const original = await f.run({
+      operation: "reference-inspect",
+      requestId: "original",
+    });
+    expect(original.value?.job).toEqual(predecessor.value?.job);
+    expect(original.value?.receipt).toEqual(predecessor.value?.receipt);
+    expect(original.value?.evidence).toEqual(predecessor.value?.evidence);
+    f.changeDiagnosticPolicy();
+    expect((await f.diagnosticPlan()).status).toBe("failed");
+    expect(f.image).toHaveBeenCalledTimes(2);
+    expect(f.api).not.toHaveBeenCalled();
+    expect(f.vault).not.toHaveBeenCalled();
+  },
+);
+it("does not give legacy native capability diagnostic authority", async () => {
+  const f = await fixture();
+  await legacyReferenceFailure(f);
+  expect(await f.diagnosticPlan()).toMatchObject({
+    status: "failed",
+    error: { code: "FORBIDDEN" },
+  });
+  expect(f.image).toHaveBeenCalledTimes(1);
+});
+it("refuses an acquired PNG as a diagnostic predecessor", async () => {
+  const f = await fixture({ diagnostic: true });
+  await f.download(await f.approve());
+  expect((await f.diagnosticPlan()).status).toBe("failed");
+  expect(f.image).toHaveBeenCalledTimes(1);
+});
+
+it.each(["receipt", "unknown", "reserved"] as const)(
+  "refuses diagnostic admission with %s predecessor evidence",
+  async (kind) => {
+    const f = await fixture({ diagnostic: true });
+    await legacyReferenceFailure(f);
+    f.corruptReferenceRead(kind);
+    expect((await f.diagnosticPlan()).status).toBe("failed");
+    expect(f.image).toHaveBeenCalledTimes(1);
+  },
+);
+it("refuses a diagnostic successor while a synthetic publication remains uncommitted", async () => {
+  const f = await fixture({ diagnostic: true });
+  await legacyReferenceFailure(f);
+  await f.retainSyntheticStage();
+  expect((await f.diagnosticPlan()).status).toBe("failed");
+  expect(f.image).toHaveBeenCalledTimes(1);
+});
+it("requires current diagnostic authority and a fresh unexpired approval before contact", async () => {
+  const f = await fixture({ diagnostic: true });
+  await legacyReferenceFailure(f);
+  const approved = await f.diagnosticApprove();
+  f.advanceClock(300001);
+  expect((await f.diagnosticDownload(approved)).status).toBe("failed");
+  f.deny();
+  expect((await f.diagnosticPlan()).status).toBe("failed");
+  expect(f.image).toHaveBeenCalledTimes(1);
+});
+
+it("burns the diagnostic slot on a terminal decoder limit without claiming a receipt", async () => {
+  const f = await fixture({ diagnostic: true });
+  await legacyReferenceFailure(f);
+  const approved = await f.diagnosticApprove();
+  const { header, signature } = await import(
+    "../../assets/tests/png-fixtures.js"
+  );
+  f.image.mockResolvedValue({
+    status: 200,
+    mediaType: "image/png",
+    bytes: Buffer.concat([signature, header(6, 8, 6553601), chunk("IEND")]),
+  });
+  const result = await f.diagnosticDownload(approved);
+  expect(result).toMatchObject({
+    status: "failed",
+    error: {
+      code: "RASTER_LIMIT",
+      referenceDiagnostic: { reason: "raster-limit" },
+    },
+  });
+  expect(result.value?.receipt).toBeUndefined();
+  await f.reopen();
+  expect(await f.diagnosticDownload(approved)).toMatchObject({
+    status: "interrupted",
+    value: { consumed: true, phase: "admitted", job: { status: "failed" } },
+  });
+  expect(f.image).toHaveBeenCalledTimes(2);
+});
+
+it("rechecks settled same-source cooldowns before diagnostic admission", async () => {
+  const f = await fixture({ diagnostic: true });
+  const predecessor = await legacyReferenceFailure(f);
+  const approved = await f.diagnosticApprove();
+  await f.seedCooldown(predecessor);
+  expect(await f.diagnosticDownload(approved)).toMatchObject({
+    status: "failed",
+    error: { code: "RATE_LIMITED" },
+  });
+  expect(f.image).toHaveBeenCalledTimes(1);
 });
 
 it("refuses old native capability and changed proof without network", async () => {

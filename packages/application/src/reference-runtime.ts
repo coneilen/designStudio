@@ -6,9 +6,13 @@ import type {
   FigmaReferenceRequest,
   NativeReferenceEnvelope,
   OperationContext,
+  ReferenceDiagnostic,
   ResourceSnapshot,
 } from "@design-studio/contracts";
-import { validateContract } from "@design-studio/contracts";
+import {
+  referenceDiagnosticFields,
+  validateContract,
+} from "@design-studio/contracts";
 import {
   canonicalBytes,
   canonicalDigest,
@@ -38,6 +42,11 @@ import {
 } from "../../figma-capture/dist/reference.js";
 import { nativeCaptureResources } from "./capture-recovery.js";
 import type { RecoveryDecisions } from "./recovery.js";
+import {
+  DIAGNOSTIC_REFERENCE_HANDLER,
+  diagnosticReferenceId,
+  diagnosticReferenceProposal,
+} from "./reference-diagnostic-proof.js";
 import { ReferenceInput } from "./reference-input.js";
 import {
   approvalKey,
@@ -53,6 +62,10 @@ import { ApplicationError, safeError, unwrap } from "./response.js";
 export const REFERENCE_APPROVAL_CONFIRMATION = "APPROVE-ONE-SELECTED-REFERENCE";
 export const REFERENCE_DOWNLOAD_CONFIRMATION =
   "DOWNLOAD-ONE-APPROVED-REFERENCE";
+export const DIAGNOSTIC_APPROVAL_CONFIRMATION =
+  "APPROVE-ONE-DIAGNOSTIC-REFERENCE";
+export const DIAGNOSTIC_DOWNLOAD_CONFIRMATION =
+  "DOWNLOAD-ONE-DIAGNOSTIC-REFERENCE";
 export interface NativeReferenceInput {
   operation: NativeReferenceEnvelope["operation"];
   requestId: string;
@@ -64,6 +77,7 @@ export interface NativeReferenceInput {
 type Prepared = Awaited<ReturnType<typeof acquireReference>>;
 export class NativeReference {
   private input: ReferenceInput | undefined;
+  private diagnosticDeadline: string | undefined;
   reserveRead(bytes: number) {
     this.input?.reserveRead(bytes);
   }
@@ -91,6 +105,8 @@ export class NativeReference {
   }
   private service: JobService | undefined;
   private primaryFailure: ErrorCode | undefined;
+  private immediateDiagnostic: ReferenceDiagnostic | undefined;
+  private immediateCode: ErrorCode | undefined;
   get operationFailure() {
     return this.primaryFailure;
   }
@@ -98,7 +114,12 @@ export class NativeReference {
     return this.service !== undefined;
   }
   private prepared:
-    | { value: Prepared; context: OperationContext; record: StoredJob }
+    | {
+        value: Prepared;
+        context: OperationContext;
+        record: StoredJob;
+        handlerId: string;
+      }
     | undefined;
   constructor(
     private readonly work: CaptureWork,
@@ -131,7 +152,7 @@ export class NativeReference {
       saved.record.job.id !== record.job.id ||
       context.jobId !== record.job.id ||
       context.requestId !== record.requestId ||
-      record.handlerId !== REFERENCE_HANDLER ||
+      record.handlerId !== saved.handlerId ||
       record.job.operation !== "reference-download" ||
       record.job.status !== "running" ||
       record.job.attempt !== 1 ||
@@ -152,6 +173,11 @@ export class NativeReference {
       artifacts.length !== saved.value.outputs.length
     )
       throw new ApplicationError("FORBIDDEN");
+    if (saved.handlerId === DIAGNOSTIC_REFERENCE_HANDLER) {
+      if (!this.work.diagnosticAuthority)
+        throw new ApplicationError("FORBIDDEN");
+      await this.work.diagnosticAuthority();
+    }
     for (const [index, entry] of artifacts.entries()) {
       const expected = saved.value.outputs[index]?.artifact;
       if (
@@ -257,7 +283,10 @@ export class NativeReference {
             context.clock.now() < Date.parse(manifest.nextEligibleAt)
           )
             throw new ApplicationError("RATE_LIMITED");
-        } else if (item.handlerId === REFERENCE_HANDLER) {
+        } else if (
+          item.handlerId === REFERENCE_HANDLER ||
+          item.handlerId === DIAGNOSTIC_REFERENCE_HANDLER
+        ) {
           const evidence = await reader.contract(
             "FigmaReferenceEvidence",
             last,
@@ -282,6 +311,25 @@ export class NativeReference {
     const ownsInput = !this.input;
     this.input ??= new ReferenceInput();
     const inputBudget = this.input;
+    const diagnostic =
+      typeof input.operation === "string" &&
+      input.operation.startsWith("reference-diagnostic-");
+    if (diagnostic && ownsInput)
+      this.diagnosticDeadline = new Date(
+        this.work.policy.clock.now() + 30000,
+      ).toISOString();
+    const operation = diagnostic
+      ? input.operation.replace("reference-diagnostic-", "reference-")
+      : input.operation;
+    const approvalConfirmation = diagnostic
+      ? DIAGNOSTIC_APPROVAL_CONFIRMATION
+      : REFERENCE_APPROVAL_CONFIRMATION;
+    const downloadConfirmation = diagnostic
+      ? DIAGNOSTIC_DOWNLOAD_CONFIRMATION
+      : REFERENCE_DOWNLOAD_CONFIRMATION;
+    const handlerId = diagnostic
+      ? DIAGNOSTIC_REFERENCE_HANDLER
+      : REFERENCE_HANDLER;
     const base = {
       schemaVersion: "1.0" as const,
       operation: input.operation,
@@ -295,10 +343,12 @@ export class NativeReference {
       if (this.service || !this.work.referenceAuthority)
         throw new ApplicationError("FORBIDDEN");
       this.primaryFailure = undefined;
+      this.immediateDiagnostic = undefined;
+      this.immediateCode = undefined;
       const fields =
-        input.operation === "reference-approve"
+        operation === "reference-approve"
           ? ["origin", "expectedProof", "confirmation"]
-          : input.operation === "reference-download"
+          : operation === "reference-download"
             ? ["expectedApproval", "confirmation"]
             : [];
       if (
@@ -307,22 +357,48 @@ export class NativeReference {
           "reference-approve",
           "reference-download",
           "reference-inspect",
-        ].includes(input.operation) ||
+        ].includes(operation) ||
         !validateContract("StableId", input.requestId).success ||
         Object.keys(input).some(
           (k) => !["operation", "requestId", ...fields].includes(k),
         ) ||
-        (input.operation === "reference-approve" &&
+        (operation === "reference-approve" &&
           (input.origin !== REFERENCE_ORIGIN ||
             !validateContract("Sha256", input.expectedProof).success ||
-            input.confirmation !== REFERENCE_APPROVAL_CONFIRMATION)) ||
-        (input.operation === "reference-download" &&
+            input.confirmation !== approvalConfirmation)) ||
+        (operation === "reference-download" &&
           (!validateContract("Sha256", input.expectedApproval).success ||
-            input.confirmation !== REFERENCE_DOWNLOAD_CONFIRMATION))
+            input.confirmation !== downloadConfirmation))
       )
         throw new ApplicationError("INVALID_INPUT");
       await this.work.referenceAuthority();
-      const ids = referenceIds(this.work, input.requestId);
+      let predecessor: NativeReferenceEnvelope | undefined;
+      let diagnosticPolicy: string | undefined;
+      const originalIds = referenceIds(this.work, input.requestId);
+      let ids = originalIds;
+      if (diagnostic) {
+        if (!this.work.diagnosticAuthority)
+          throw new ApplicationError("FORBIDDEN");
+        diagnosticPolicy = await this.work.diagnosticAuthority();
+        predecessor = await this.execute(
+          { operation: "reference-inspect", requestId: input.requestId },
+          signal,
+        );
+        if (!predecessor.value?.receipt)
+          throw new ApplicationError(
+            predecessor.error?.code ?? "ACTION_REQUIRED",
+          );
+        const job = diagnosticReferenceId(
+          this.work,
+          originalIds.job,
+          predecessor.value.receipt,
+        );
+        ids = {
+          original: originalIds.original,
+          job,
+          approval: approvalKey(job, 0),
+        };
+      }
       const policy = this.work.policy;
       const context = await policy.issue({
         jobId: ids.approval,
@@ -330,10 +406,14 @@ export class NativeReference {
         jobReads: [
           ids.original,
           ids.job,
+          ...(diagnostic ? [originalIds.job] : []),
           ...Array.from({ length: 32 }, (_, i) => approvalKey(ids.job, i)),
         ],
         output: true,
         signal,
+        ...(this.diagnosticDeadline
+          ? { deadline: this.diagnosticDeadline }
+          : {}),
       });
       reader = new ReferenceReader(
         this.work,
@@ -341,10 +421,24 @@ export class NativeReference {
         this.files,
         context,
         inputBudget,
+        diagnostic,
       );
       const loaded = await reader.proposal(input.requestId);
+      if (diagnostic) {
+        if (!predecessor || !diagnosticPolicy)
+          throw new ApplicationError("FORBIDDEN");
+        loaded.proposal = diagnosticReferenceProposal(
+          predecessor,
+          unwrap(await this.store.jobs.get(originalIds.job, context)),
+          loaded.proposal,
+          ids.job,
+          diagnosticPolicy,
+        );
+      }
       let proposal = loaded.proposal;
       const old = await this.existing(ids.job, context);
+      if (diagnostic && !old)
+        await this.settledPublications(reader, loaded.proposal);
       let approvalReceipt: CommitReceipt | null = null;
       let approval: FigmaReferenceApproval | undefined;
       let request: FigmaReferenceRequest | undefined;
@@ -373,6 +467,7 @@ export class NativeReference {
         resources = await reader.contract("ResourceSnapshot", resourceRef);
         if (
           !same(approval.proposal, proposal) ||
+          approval.confirmation !== approvalConfirmation ||
           canonicalDigest(approval) !== a.sha256 ||
           !same(request, {
             schemaVersion: "1.0",
@@ -424,13 +519,13 @@ export class NativeReference {
           throw new ApplicationError("ARTIFACT_INTEGRITY");
       }
       if (
-        input.operation === "reference-download" &&
+        operation === "reference-download" &&
         (!approved || approved.approval.sha256 !== input.expectedApproval)
       )
         throw new ApplicationError("CONFLICT");
       if (old) {
         if (
-          input.operation === "reference-approve" &&
+          operation === "reference-approve" &&
           input.expectedProof !== proposal.proofSha256
         )
           throw new ApplicationError("CONFLICT");
@@ -439,9 +534,12 @@ export class NativeReference {
         const r = approvalReceipt.outputs[1];
         if (
           !r ||
-          old.handlerId !== REFERENCE_HANDLER ||
+          old.handlerId !== handlerId ||
           old.handlerVersion !== "1.0.0" ||
-          old.authorityRef !== `reference_${proposal.referencePolicySha256}` ||
+          old.authorityRef !==
+            (diagnostic
+              ? `diagnostic_${proposal.diagnosticPredecessor?.policySha256}`
+              : `reference_${proposal.referencePolicySha256}`) ||
           old.job.operation !== "reference-download" ||
           old.job.id !== ids.job ||
           old.requestId !== ids.job ||
@@ -484,6 +582,11 @@ export class NativeReference {
             throw new ApplicationError("ARTIFACT_INTEGRITY");
           return {
             ...base,
+            referenceDiagnostic: evidence.referenceDiagnostic ?? {
+              stage: "legacy",
+              reason: "legacy-unknown",
+              mimeClass: "not-observed",
+            },
             status:
               evidence.referenceStatus === "complete"
                 ? "complete"
@@ -524,8 +627,8 @@ export class NativeReference {
         approval &&
         approved &&
         context.clock.now() >= Date.parse(approval.expiresAt) &&
-        (input.operation === "reference-plan" ||
-          (input.operation === "reference-approve" &&
+        (operation === "reference-plan" ||
+          (operation === "reference-approve" &&
             input.expectedProof !== proposal.proofSha256))
       ) {
         if (proposal.approvalGeneration >= 31)
@@ -542,14 +645,11 @@ export class NativeReference {
         approved = undefined;
       }
       if (
-        input.operation === "reference-approve" &&
+        operation === "reference-approve" &&
         input.expectedProof !== proposal.proofSha256
       )
         throw new ApplicationError("CONFLICT");
-      if (
-        input.operation === "reference-plan" ||
-        input.operation === "reference-inspect"
-      )
+      if (operation === "reference-plan" || operation === "reference-inspect")
         return {
           ...base,
           status: "complete",
@@ -560,7 +660,7 @@ export class NativeReference {
             ...approved,
           },
         };
-      if (input.operation === "reference-approve") {
+      if (operation === "reference-approve") {
         if (approved)
           return {
             ...base,
@@ -582,7 +682,7 @@ export class NativeReference {
         const grant: FigmaReferenceApproval = {
           schemaVersion: "1.0",
           proposal,
-          confirmation: REFERENCE_APPROVAL_CONFIRMATION,
+          confirmation: approvalConfirmation,
           recordedAt: new Date(now).toISOString(),
           expiresAt: new Date(end).toISOString(),
         };
@@ -636,7 +736,10 @@ export class NativeReference {
         signal,
         deadline,
         jobReads: [ids.original, ids.approval],
-        reference: { sourceId: ids.job },
+        reference: {
+          sourceId: ids.job,
+          ...(diagnostic ? { diagnostic: true as const } : {}),
+        },
       });
       const fixedRequest = structuredClone(request);
       const localInputBytes = reader.bytes;
@@ -645,7 +748,7 @@ export class NativeReference {
       if (!jobInput || !snapshot)
         throw new ApplicationError("ARTIFACT_INTEGRITY");
       const handler: TrustedJobHandler = {
-        id: REFERENCE_HANDLER,
+        id: handlerId,
         version: "1.0.0",
         operation: "reference-download",
         run: async (execution) => {
@@ -661,6 +764,7 @@ export class NativeReference {
           )
             throw new ApplicationError("FORBIDDEN");
           await this.work.referenceAuthority?.();
+          if (diagnostic) await this.work.diagnosticAuthority?.();
           const budget = new ReferenceBudget(
             execution.context,
             ids.job,
@@ -680,6 +784,7 @@ export class NativeReference {
               value,
               context: execution.context,
               record: structuredClone(record),
+              handlerId,
             };
             return {
               kind: "complete",
@@ -692,6 +797,11 @@ export class NativeReference {
                 diagnosticIds: [],
               },
             };
+          } catch (error) {
+            this.immediateDiagnostic =
+              referenceDiagnosticFields(error).referenceDiagnostic;
+            this.immediateCode = safeError(error).code;
+            throw error;
           } finally {
             await budget.close();
           }
@@ -723,7 +833,10 @@ export class NativeReference {
               signal: s,
               parentSignal: signal,
               deadline,
-              reference: { sourceId: ids.job },
+              reference: {
+                sourceId: ids.job,
+                ...(diagnostic ? { diagnostic: true as const } : {}),
+              },
             });
           },
         },
@@ -757,10 +870,16 @@ export class NativeReference {
                 tokenRegistryRevision: "none",
                 selectedModes: {},
               },
-              handlerId: REFERENCE_HANDLER,
+              handlerId,
               handlerVersion: "1.0.0",
-              authorityRef: `reference_${proposal.referencePolicySha256}`,
-              resourceKeys: [`reference_${ids.original}`],
+              authorityRef: diagnostic
+                ? `diagnostic_${proposal.diagnosticPredecessor?.policySha256}`
+                : `reference_${proposal.referencePolicySha256}`,
+              resourceKeys: [
+                diagnostic
+                  ? `diagnostic_${originalIds.job}`
+                  : `reference_${ids.original}`,
+              ],
               deadline,
               budget: { ...REFERENCE_LIMITS },
             },
@@ -779,12 +898,25 @@ export class NativeReference {
       }
       await reader.close();
       reader = undefined;
+      if (this.immediateCode)
+        throw new ApplicationError(
+          this.immediateCode,
+          400,
+          undefined,
+          this.immediateDiagnostic,
+        );
       return this.execute(
-        { operation: "reference-inspect", requestId: input.requestId },
+        {
+          operation: diagnostic
+            ? "reference-diagnostic-inspect"
+            : "reference-inspect",
+          requestId: input.requestId,
+        },
         signal,
       ).then((result) => ({ ...result, operation: input.operation }));
     } catch (error) {
-      const code = safeError(error).code;
+      const safe = safeError(error);
+      const code = safe.code;
       return {
         ...base,
         status:
@@ -799,11 +931,21 @@ export class NativeReference {
             "Reference operation was not confirmed. Inspect the original request; no URL refresh, capture, or automatic retry is authorized.",
           retryable: false,
           diagnosticIds: [],
+          ...referenceDiagnosticFields(
+            safe.referenceDiagnostic
+              ? safe
+              : {
+                  referenceDiagnostic: this.immediateDiagnostic,
+                },
+          ),
         },
       };
     } finally {
       await reader?.close();
-      if (ownsInput && !this.service) this.input = undefined;
+      if (ownsInput && !this.service) {
+        this.input = undefined;
+        this.diagnosticDeadline = undefined;
+      }
     }
   }
 }

@@ -71,6 +71,63 @@ computed with the function under test.
 
 ## Running and interpreting checks
 
+### Default unit and hardware-native phases
+
+`pnpm test` and `pnpm test:unit` run a membership check, portable tests with two
+workers, then the exact hardware-native inventory with one worker and no file
+parallelism. Both phases are failure-gated; the workflow shows them as separate
+steps and does not run the combined command again. This intentionally changes
+native test scheduling, not product authorization, lease or time-budget rules.
+
+The overall Workspace CI job watchdog is **25 minutes**, increased from 15 after
+the two complete local phases measured 851.19 seconds (14.19 minutes), before
+checkout/install/build/drift/smoke overhead. This is an infrastructure allowance,
+not a per-test, hook, product deadline or operation-budget increase. All assertions
+remain failure-gated; no automatic retry or `continue-on-error` is added.
+
+`tests/unit-partition.ts` is the reviewed exact-file inventory. The checker uses
+the original `packages/**/*.test.ts` discovery minus the original smoke/default
+exclusions, then compares that set against **actual Vitest project discovery**.
+It rejects omissions, duplicates, overlap, absent native files and wildcard/smoke
+entries. New files remain portable unless explicitly classified. Initially the
+union is 172 files (171 existing plus one membership-regression file), partitioned
+into 145 portable and 27 native files. Existing OS skip predicates stay inside
+their files; classification does not change non-Windows behavior. The subsequent
+owned-subprocess regression file defaults portable, bringing the current union to
+**146 portable + 27 native = 173 files**.
+
+Hardware tests exercise real native ACL/NTFS admission and publication, Windows
+Job/process ownership, or native storage-driver behavior on owned temporary
+fixtures. Portable tests may still use real SQLite with synthetic host boundaries.
+Native renderer-host tests run authored child modules, not a browser renderer.
+Capture fixtures use synthetic credential adapters and denied real keyring
+constructors; network fixtures are mocked or isolated loopback. This phase is
+not permission for real vault, UI, installed-project or provider access.
+
+The isolation was proposed after hosted runs showed a long portable
+reference/SQLite proof suite overlapping native installation, durable journal
+creation and capture tests. Failures included a genuine 30-second operation
+deadline, lease loss in prerequisite setup, and native fixture/test timeouts.
+Those observations do not identify a specific hardware, endpoint-security or
+runtime root cause. Running the same assertions under an explicit isolated
+workload is evidence about that workload only, not proof of broad performance.
+No deadline, test timeout or hook allowance is raised by this partition.
+The previously approved **60-second allowance for only the 1,023-record native
+journal preparation hook** remains a documented exception; ordinary tests,
+operation budgets, global hook defaults and production leases are unchanged.
+
+The first isolated portable run still failed three admission matrix tests:
+each enclosed 10–15 fresh subprocesses in one five-second test. Those independent
+inputs are now named parameterized cases with their own fresh owned temporary
+root and one original production probe per case (the runtime-closure positive
+also needs its second consumer process). Vitest's `test.for` supplies each
+case's original runner signal. All 25 invalid package scenarios, both package
+positives and all 15 browser-inventory shapes/byte boundaries remain covered.
+Test granularity and totals change; per-case timeouts and byte limits do not.
+The probe helper retains process isolation and joins actual child `close`, not
+just an early `execFile` abort rejection, before fixture cleanup. Nonzero exit,
+bounded-output errors and malformed JSON are not replaced with success results.
+
 Run the six README commands in order. `test` is an alias for unit tests, not the
 whole CI gate; run `test:smoke` separately after `build`. CI performs both.
 Tests need no outbound services after dependencies are restored, but are not an

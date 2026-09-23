@@ -835,6 +835,7 @@ export interface ContractCatalog {
   FigmaReferenceBinding: FigmaReferenceBinding;
   FigmaReferenceProposal: FigmaReferenceProposal;
   FigmaReferenceApproval: FigmaReferenceApproval;
+  FigmaDiagnosticPredecessor: FigmaDiagnosticPredecessor;
   FigmaReferenceRequest: FigmaReferenceRequest;
   FigmaReferenceEvidence: FigmaReferenceEvidence;
   NativeReferenceEnvelope: NativeReferenceEnvelope;
@@ -870,6 +871,7 @@ export interface ContractCatalog {
   HandoffMetadata: HandoffMetadata;
   HandoffManifest: HandoffManifest;
   ErrorCode: ErrorCode;
+  ReferenceDiagnostic: ReferenceDiagnostic;
   ContractError: ContractError;
   Budget: Budget;
   AuthorizationContext: AuthorizationContext;
@@ -1743,6 +1745,7 @@ export interface CredentialReference {
 export interface FigmaCaptureManifest {
   schemaVersion: SchemaVersion;
   format: "figma-rest-capture-v1";
+  referenceDiagnostic?: ReferenceDiagnostic;
   policySha256: Sha256;
   captureId: StableId;
   projectId: StableId;
@@ -2008,6 +2011,42 @@ export interface FigmaCaptureManifest {
   };
 }
 /**
+ * Closed nonsecret observations only. Absence on legacy evidence means unknown, never a reconstructed diagnosis. A command diagnostic without a receipt is not durable proof.
+ *
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "ReferenceDiagnostic".
+ */
+export interface ReferenceDiagnostic {
+  stage: "mime" | "png" | "json" | "worker" | "operation" | "legacy";
+  reason:
+    | "validated"
+    | "mime-missing"
+    | "mime-rejected"
+    | "not-png"
+    | "png-malformed"
+    | "png-unsupported"
+    | "png-interlace"
+    | "png-animation"
+    | "png-critical"
+    | "png-color-unsupported"
+    | "png-color-conflict"
+    | "input-limit"
+    | "output-limit"
+    | "raster-limit"
+    | "node-limit"
+    | "depth-limit"
+    | "intermediate-limit"
+    | "json-malformed"
+    | "worker-protocol"
+    | "worker-unavailable"
+    | "worker-limit"
+    | "cancelled"
+    | "deadline"
+    | "authority"
+    | "legacy-unknown";
+  mimeClass: "not-observed" | "png" | "generic-binary" | "missing" | "other";
+}
+/**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "FigmaCaptureResult".
  */
@@ -2018,6 +2057,7 @@ export interface FigmaCaptureResult {
   manifest: ArtifactReference;
   persistedBytes: number;
   errorCode?: ErrorCode;
+  referenceDiagnostic?: ReferenceDiagnostic;
   source?: ArtifactReference;
   completeness: "complete" | "partial" | "unavailable";
   referenceStatus: "complete" | "partial" | "unavailable";
@@ -2098,6 +2138,7 @@ export interface ContractError {
   retryable: boolean;
   retryAfter?: Timestamp;
   jobId?: StableId;
+  referenceDiagnostic?: ReferenceDiagnostic;
   diagnosticIds: StableId[];
 }
 /**
@@ -2234,6 +2275,7 @@ export interface FigmaReferenceProposal {
   format: "figma-reference-proposal-v1";
   approvalGeneration: number;
   previousApproval?: ArtifactReference;
+  diagnosticPredecessor?: FigmaDiagnosticPredecessor;
   binding: FigmaReferenceBinding;
   capturePolicySha256: Sha256;
   referencePolicySha256: Sha256;
@@ -2297,6 +2339,19 @@ export interface FigmaReferenceProposal {
 }
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "FigmaDiagnosticPredecessor".
+ */
+export interface FigmaDiagnosticPredecessor {
+  jobId: StableId;
+  recordSha256: Sha256;
+  receiptSha256: Sha256;
+  request: ArtifactReference;
+  approval: ArtifactReference;
+  evidence: ArtifactReference;
+  policySha256: Sha256;
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "Budget".
  */
 export interface Budget {
@@ -2319,7 +2374,7 @@ export interface Budget {
 export interface FigmaReferenceApproval {
   schemaVersion: SchemaVersion;
   proposal: FigmaReferenceProposal;
-  confirmation: "APPROVE-ONE-SELECTED-REFERENCE";
+  confirmation: "APPROVE-ONE-SELECTED-REFERENCE" | "APPROVE-ONE-DIAGNOSTIC-REFERENCE";
   recordedAt: Timestamp;
   expiresAt: Timestamp;
 }
@@ -2339,6 +2394,7 @@ export interface FigmaReferenceRequest {
 export interface FigmaReferenceEvidence {
   schemaVersion: SchemaVersion;
   format: "figma-reference-evidence-v1";
+  referenceDiagnostic?: ReferenceDiagnostic;
   request: FigmaReferenceRequest;
   startedAt: Timestamp;
   endedAt: Timestamp;
@@ -2430,9 +2486,18 @@ export interface FigmaReferenceEvidence {
  */
 export interface NativeReferenceEnvelope {
   schemaVersion: SchemaVersion;
-  operation: "reference-plan" | "reference-approve" | "reference-download" | "reference-inspect";
+  operation:
+    | "reference-plan"
+    | "reference-approve"
+    | "reference-download"
+    | "reference-inspect"
+    | "reference-diagnostic-plan"
+    | "reference-diagnostic-approve"
+    | "reference-diagnostic-download"
+    | "reference-diagnostic-inspect";
   projectId: StableId;
   requestId: StableId;
+  referenceDiagnostic?: ReferenceDiagnostic;
   status: "complete" | "partial" | "failed" | "interrupted" | "cancelled" | "unavailable";
   value?: {
     phase: "proposed" | "approved" | "admitted" | "completed";

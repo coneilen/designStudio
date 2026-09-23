@@ -33,12 +33,14 @@ import {
   type StoredJobStage,
 } from "@design-studio/storage";
 import { afterEach, expect, it, vi } from "vitest";
+import * as referenceDecoder from "../../figma-capture/dist/decode.js";
 import {
   CaptureHttpError,
   FigmaHttpsTransport,
 } from "../../figma-capture/dist/transport.js";
 import { png } from "../../figma-capture/tests/support.js";
 import { nativeCapturePolicy } from "../../project-host/dist/capture-authority.js";
+import { CAPTURE_DIAGNOSTIC_POLICY_SHA256 } from "../../project-host/src/capture-diagnostic-profile.js";
 import { CAPTURE_RECOVERY_POLICY_SHA256 } from "../../project-host/src/capture-recovery-profile.js";
 import { CAPTURE_REFERENCE_POLICY_SHA256 } from "../../project-host/src/capture-reference-profile.js";
 import {
@@ -58,6 +60,8 @@ import {
 } from "../src/capture-runtime-internal.js";
 import { RecoveryDecisions } from "../src/recovery.js";
 import {
+  DIAGNOSTIC_APPROVAL_CONFIRMATION,
+  DIAGNOSTIC_DOWNLOAD_CONFIRMATION,
   REFERENCE_APPROVAL_CONFIRMATION,
   REFERENCE_DOWNLOAD_CONFIRMATION,
 } from "../src/reference-runtime.js";
@@ -212,6 +216,7 @@ async function fixture(
       },
       readyCredential: ready,
       referenceAuthority: async () => CAPTURE_REFERENCE_POLICY_SHA256,
+      diagnosticAuthority: async () => CAPTURE_DIAGNOSTIC_POLICY_SHA256,
       recoveryAuthority: async () => {
         if (!admitted)
           throw new HostBoundaryError(
@@ -1351,6 +1356,10 @@ it("keeps unsupported generation histories refused and accepts independent resou
 
 it.each([
   "valid",
+  "diagnostic-valid",
+  "diagnostic-unknown-stage",
+  "diagnostic-missing-protection",
+  "diagnostic-receipt-mutation",
   "unknown-stage",
   "changed-stage",
   "pair-link",
@@ -1451,7 +1460,7 @@ it.each([
     );
     expect(next.status, JSON.stringify(next)).toBe("partial");
     expect(next.value?.jobStatus).toBe("completed");
-    if (fault === "valid") {
+    if (fault === "valid" || fault === "diagnostic-valid") {
       const convert = figmaImport.convertFigmaStructure;
       vi.spyOn(figmaImport, "convertFigmaStructure").mockImplementation(
         (...args) => {
@@ -1494,7 +1503,7 @@ it.each([
     if (!currentProjection.success)
       throw new Error("Invalid synthetic conversion evidence");
     expect(currentProjection.value.adapter).toBe("figma-structure-fixed-v2");
-    if (fault === "valid")
+    if (fault === "valid" || fault === "diagnostic-valid")
       expect(
         converted.value?.artifacts.find((entry) => entry.role === "report")
           ?.artifact.byteLength,
@@ -1595,12 +1604,23 @@ it.each([
       },
       new AbortController().signal,
     );
-    if (fault !== "valid") {
+    const diagnostic = fault.startsWith("diagnostic-");
+    if (fault !== "valid" && !diagnostic) {
       expect(approved.status, JSON.stringify(approved)).toBe("failed");
       expect(image).not.toHaveBeenCalled();
       return;
     }
     expect(approved.status, JSON.stringify(approved)).toBe("complete");
+    const legacy = diagnostic
+      ? vi
+          .spyOn(referenceDecoder, "decodeReference")
+          .mockRejectedValueOnce(
+            new HostBoundaryError(
+              "INVALID_INPUT",
+              "Synthetic legacy phase unknown.",
+            ),
+          )
+      : undefined;
     const result = await run(
       {
         operation: "reference-download",
@@ -1610,8 +1630,114 @@ it.each([
       },
       new AbortController().signal,
     );
-    expect(result.status, JSON.stringify(result)).toBe("complete");
-    expect(image).toHaveBeenCalledTimes(1);
+    legacy?.mockRestore();
+    expect(result.status, JSON.stringify(result)).toBe(
+      diagnostic ? "unavailable" : "complete",
+    );
+    if (diagnostic) {
+      expect(result.value?.evidence?.referenceDiagnostic).toBeUndefined();
+      const originalReferenceFiles = await Promise.all(
+        (await readdir(path.join(f.artifacts, "blobs"))).map(
+          async (name) =>
+            [
+              name,
+              await readFile(path.join(f.artifacts, "blobs", name)),
+            ] as const,
+        ),
+      );
+      if (fault === "diagnostic-unknown-stage") {
+        const directory = path.join(
+          f.artifacts,
+          ".host-11111111-1111-4111-8111-111111111111",
+        );
+        await mkdir(directory);
+        await writeFile(
+          path.join(directory, "22222222-2222-4222-8222-222222222222"),
+          beforeBytes,
+        );
+      }
+      if (fault === "diagnostic-missing-protection")
+        removeSyntheticCaptureProtection(
+          f.store,
+          required(result.value?.job?.id),
+        );
+      if (fault === "diagnostic-receipt-mutation")
+        mutateOpenSyntheticCapture(
+          f.store,
+          required(result.value?.job?.id),
+          (record) => {
+            required(record.job.receipt).idempotency.payloadSha256 = "f".repeat(
+              64,
+            );
+          },
+        );
+      const planned = await run(
+        { operation: "reference-diagnostic-plan", requestId },
+        new AbortController().signal,
+      );
+      if (fault !== "diagnostic-valid") {
+        expect(planned.status, JSON.stringify(planned)).toBe("failed");
+        expect(image).toHaveBeenCalledTimes(1);
+        expect(await f.record()).toEqual(beforeRecord);
+        expect(await f.stages()).toEqual(beforeStages);
+        expect(await readFile(stagePath)).toEqual(beforeBytes);
+        for (const [name, bytes] of originalReferenceFiles)
+          expect(
+            (await readFile(path.join(f.artifacts, "blobs", name))).equals(
+              bytes,
+            ),
+          ).toBe(true);
+        for (const [name, bytes] of exports)
+          expect(
+            (await readFile(path.join(f.outputs, name))).equals(bytes),
+          ).toBe(true);
+        return;
+      }
+      expect(planned.status, JSON.stringify(planned)).toBe("complete");
+      const approved = await run(
+        {
+          operation: "reference-diagnostic-approve",
+          requestId,
+          origin,
+          expectedProof: required(planned.value?.proposal?.proofSha256),
+          confirmation: DIAGNOSTIC_APPROVAL_CONFIRMATION,
+        },
+        new AbortController().signal,
+      );
+      expect(approved.status, JSON.stringify(approved)).toBe("complete");
+      const downloaded = await run(
+        {
+          operation: "reference-diagnostic-download",
+          requestId,
+          expectedApproval: required(approved.value?.approval?.sha256),
+          confirmation: DIAGNOSTIC_DOWNLOAD_CONFIRMATION,
+        },
+        new AbortController().signal,
+      );
+      expect(downloaded.status, JSON.stringify(downloaded)).toBe("complete");
+      await f.reopen();
+      const inspect = required(f.runtime.reference).bind(f.runtime);
+      expect(
+        (
+          await inspect(
+            { operation: "reference-diagnostic-inspect", requestId },
+            new AbortController().signal,
+          )
+        ).value?.receipt,
+      ).toEqual(downloaded.value?.receipt);
+      const original = await inspect(
+        { operation: "reference-inspect", requestId },
+        new AbortController().signal,
+      );
+      expect(original.value?.job).toEqual(result.value?.job);
+      expect(original.value?.receipt).toEqual(result.value?.receipt);
+      expect(original.value?.evidence).toEqual(result.value?.evidence);
+      for (const [name, bytes] of originalReferenceFiles)
+        expect(
+          (await readFile(path.join(f.artifacts, "blobs", name))).equals(bytes),
+        ).toBe(true);
+      expect(image).toHaveBeenCalledTimes(2);
+    } else expect(image).toHaveBeenCalledTimes(1);
     expect(f.ready).not.toHaveBeenCalled();
     expect(f.vault).not.toHaveBeenCalled();
     expect(api).not.toHaveBeenCalled();
@@ -1619,11 +1745,13 @@ it.each([
     expect(await f.stages()).toEqual(beforeStages);
     expect(await readFile(stagePath)).toEqual(beforeBytes);
     for (const [name, bytes] of priorFiles)
-      expect(await readFile(path.join(f.artifacts, "blobs", name))).toEqual(
-        bytes,
-      );
+      expect(
+        (await readFile(path.join(f.artifacts, "blobs", name))).equals(bytes),
+      ).toBe(true);
     for (const [name, bytes] of exports)
-      expect(await readFile(path.join(f.outputs, name))).toEqual(bytes);
+      expect((await readFile(path.join(f.outputs, name))).equals(bytes)).toBe(
+        true,
+      );
   },
   60000,
 );

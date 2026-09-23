@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { HostBoundaryError } from "@design-studio/host";
+import { CAPTURE_DIAGNOSTIC_POLICY_SHA256 } from "./capture-diagnostic-profile.js";
 import { CAPTURE_POLICY_SHA256, CAPTURE_PROFILE } from "./capture-profile.js";
 import { CAPTURE_RECOVERY_POLICY_SHA256 } from "./capture-recovery-profile.js";
 import { CAPTURE_REFERENCE_POLICY_SHA256 } from "./capture-reference-profile.js";
@@ -68,12 +69,13 @@ interface FixtureReleasePolicy {
   catalogSha256: string;
 }
 interface CaptureReleasePolicy {
-  version: 2 | 3 | 4;
+  version: 2 | 3 | 4 | 5;
   kind: typeof CAPTURE_PROFILE;
   manifestSha256: string;
   capturePolicySha256: string;
   captureRecoveryPolicySha256?: string;
   captureReferencePolicySha256?: string;
+  captureDiagnosticPolicySha256?: string;
 }
 type ReleasePolicy = FixtureReleasePolicy | CaptureReleasePolicy;
 interface Metadata {
@@ -106,6 +108,7 @@ const active = new WeakMap<
     profile: "fixture" | typeof CAPTURE_PROFILE;
     recovery: boolean;
     reference: boolean;
+    diagnostic: boolean;
   }
 >();
 let bootstrapOrigin: string | undefined;
@@ -164,17 +167,20 @@ export function decodeReleasePolicy(policyBytes: Buffer): ReleasePolicy {
     refuse("Trusted bootstrap policy exceeds its bound.");
   const policy: ReleasePolicy = JSON.parse(policyBytes.toString("utf8"));
   if (
-    ![1, 2, 3, 4].includes(policy?.version) ||
+    ![1, 2, 3, 4, 5].includes(policy?.version) ||
     !/^[a-f0-9]{64}$/.test(policy.manifestSha256) ||
     (policy.version === 1
       ? !/^[a-f0-9]{64}$/.test(policy.catalogSha256)
       : policy.kind !== CAPTURE_PROFILE ||
         policy.capturePolicySha256 !== CAPTURE_POLICY_SHA256) ||
-    ((policy.version === 3 || policy.version === 4) &&
+    ((policy.version === 3 || policy.version === 4 || policy.version === 5) &&
       policy.captureRecoveryPolicySha256 !== CAPTURE_RECOVERY_POLICY_SHA256) ||
-    (policy.version === 4 &&
+    ((policy.version === 4 || policy.version === 5) &&
       policy.captureReferencePolicySha256 !==
         CAPTURE_REFERENCE_POLICY_SHA256) ||
+    (policy.version === 5 &&
+      policy.captureDiagnosticPolicySha256 !==
+        CAPTURE_DIAGNOSTIC_POLICY_SHA256) ||
     !policyBytes.equals(
       Buffer.from(
         JSON.stringify(
@@ -189,16 +195,24 @@ export function decodeReleasePolicy(policyBytes: Buffer): ReleasePolicy {
                 kind: CAPTURE_PROFILE,
                 manifestSha256: policy.manifestSha256,
                 capturePolicySha256: policy.capturePolicySha256,
-                ...(policy.version === 3 || policy.version === 4
+                ...(policy.version === 3 ||
+                policy.version === 4 ||
+                policy.version === 5
                   ? {
                       captureRecoveryPolicySha256:
                         CAPTURE_RECOVERY_POLICY_SHA256,
                     }
                   : {}),
-                ...(policy.version === 4
+                ...(policy.version === 4 || policy.version === 5
                   ? {
                       captureReferencePolicySha256:
                         CAPTURE_REFERENCE_POLICY_SHA256,
+                    }
+                  : {}),
+                ...(policy.version === 5
+                  ? {
+                      captureDiagnosticPolicySha256:
+                        CAPTURE_DIAGNOSTIC_POLICY_SHA256,
                     }
                   : {}),
               },
@@ -405,7 +419,9 @@ function required(meta: Metadata): void {
   )
     refuse("Release capture policy differs from the closed native profile.");
   if (
-    (meta.policy.version === 3 || meta.policy.version === 4) &&
+    (meta.policy.version === 3 ||
+      meta.policy.version === 4 ||
+      meta.policy.version === 5) &&
     files.get("capture-recovery-policy.json")?.sha256 !==
       CAPTURE_RECOVERY_POLICY_SHA256
   )
@@ -413,7 +429,7 @@ function required(meta: Metadata): void {
       "Release recovery supplement differs from the closed native profile.",
     );
   if (
-    meta.policy.version === 4 &&
+    (meta.policy.version === 4 || meta.policy.version === 5) &&
     files.get("capture-reference-policy.json")?.sha256 !==
       CAPTURE_REFERENCE_POLICY_SHA256
   )
@@ -421,6 +437,14 @@ function required(meta: Metadata): void {
       "Release reference supplement differs from the closed native profile.",
     );
   const bootstrapFiles = new Set(meta.bootstrapFiles.map((file) => file.path));
+  if (
+    meta.policy.version === 5 &&
+    files.get("capture-diagnostic-policy.json")?.sha256 !==
+      CAPTURE_DIAGNOSTIC_POLICY_SHA256
+  )
+    refuse(
+      "Release diagnostic supplement differs from the closed native profile.",
+    );
   for (const name of [
     "runtime/node.exe",
     "launch.mjs",
@@ -733,8 +757,12 @@ async function verifyProfileRoot(
       live: true,
       guards: 0,
       profile,
-      recovery: meta.policy.version === 3 || meta.policy.version === 4,
-      reference: meta.policy.version === 4,
+      recovery:
+        meta.policy.version === 3 ||
+        meta.policy.version === 4 ||
+        meta.policy.version === 5,
+      reference: meta.policy.version === 4 || meta.policy.version === 5,
+      diagnostic: meta.policy.version === 5,
     };
     const checkpoint = async (hashBytes: boolean): Promise<void> => {
       const trace = traceInstallation(hashBytes);
@@ -885,6 +913,13 @@ export function assertCaptureReferenceInstallation(
   assertCaptureInstallation(lease);
   if (!active.get(lease)?.reference)
     refuse("This installed release does not authorize reference acquisition.");
+}
+export function assertCaptureDiagnosticInstallation(
+  lease: CaptureInstallationLease,
+): void {
+  assertCaptureReferenceInstallation(lease);
+  if (!active.get(lease)?.diagnostic)
+    refuse("This installed release does not authorize a diagnostic successor.");
 }
 function registerGuards(lease: InstallationLease): { close(): void } {
   const state = active.get(lease);

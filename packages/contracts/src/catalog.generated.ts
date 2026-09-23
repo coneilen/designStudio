@@ -89,6 +89,7 @@ export interface ContractTypes {
   FigmaReferenceBinding: Types.FigmaReferenceBinding;
   FigmaReferenceProposal: Types.FigmaReferenceProposal;
   FigmaReferenceApproval: Types.FigmaReferenceApproval;
+  FigmaDiagnosticPredecessor: Types.FigmaDiagnosticPredecessor;
   FigmaReferenceRequest: Types.FigmaReferenceRequest;
   FigmaReferenceEvidence: Types.FigmaReferenceEvidence;
   NativeReferenceEnvelope: Types.NativeReferenceEnvelope;
@@ -124,6 +125,7 @@ export interface ContractTypes {
   HandoffMetadata: Types.HandoffMetadata;
   HandoffManifest: Types.HandoffManifest;
   ErrorCode: Types.ErrorCode;
+  ReferenceDiagnostic: Types.ReferenceDiagnostic;
   ContractError: Types.ContractError;
   Budget: Types.Budget;
   AuthorizationContext: Types.AuthorizationContext;
@@ -254,6 +256,7 @@ export const contractNames: readonly ContractName[] = [
   "FigmaReferenceBinding",
   "FigmaReferenceProposal",
   "FigmaReferenceApproval",
+  "FigmaDiagnosticPredecessor",
   "FigmaReferenceRequest",
   "FigmaReferenceEvidence",
   "NativeReferenceEnvelope",
@@ -289,6 +292,7 @@ export const contractNames: readonly ContractName[] = [
   "HandoffMetadata",
   "HandoffManifest",
   "ErrorCode",
+  "ReferenceDiagnostic",
   "ContractError",
   "Budget",
   "AuthorizationContext",

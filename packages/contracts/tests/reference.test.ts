@@ -1,8 +1,38 @@
 import { expect, it } from "vitest";
-import { validateContract } from "../src/index.js";
+import { referenceDiagnosticFields, validateContract } from "../src/index.js";
 import { DEFAULT_BUDGETS } from "../src/profile.js";
 
 const artifact = { id: `sha256_${"a".repeat(64)}`, sha256: "a".repeat(64) };
+it("accepts only closed nonsecret diagnostics and leaves legacy absence untouched", () => {
+  const legacy = {
+    code: "INVALID_INPUT",
+    message: "legacy",
+    retryable: false,
+    diagnosticIds: [],
+  };
+  expect(validateContract("ContractError", legacy).success).toBe(true);
+  expect(referenceDiagnosticFields(legacy)).toEqual({});
+  const diagnostic = {
+    stage: "png",
+    reason: "png-malformed",
+    mimeClass: "generic-binary",
+  };
+  expect(
+    validateContract("ContractError", {
+      ...legacy,
+      referenceDiagnostic: diagnostic,
+    }).success,
+  ).toBe(true);
+  for (const bad of [
+    { ...diagnostic, reason: "private exception text" },
+    { ...diagnostic, mimeClass: "image/png;private=header" },
+    { ...diagnostic, stage: "https://private.invalid/query" },
+    { ...diagnostic, message: "private PNG text" },
+  ]) {
+    expect(validateContract("ReferenceDiagnostic", bad).success).toBe(false);
+    expect(referenceDiagnosticFields({ referenceDiagnostic: bad })).toEqual({});
+  }
+});
 const proposal = {
   schemaVersion: "1.0",
   format: "figma-reference-proposal-v1",

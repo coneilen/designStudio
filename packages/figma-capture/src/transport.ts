@@ -102,9 +102,18 @@ function headers(message: IncomingMessage): {
   return {
     ...(length === undefined ? {} : { length: Number(length) }),
     ...(retryAfter === undefined ? {} : { retryAfter }),
-    ...(type === "application/json" || type === "image/png"
-      ? { mediaType: type }
-      : {}),
+    ...(type === undefined
+      ? {}
+      : {
+          mediaType: [
+            "application/json",
+            "image/png",
+            "application/octet-stream",
+            "binary/octet-stream",
+          ].includes(type)
+            ? type
+            : "other",
+        }),
   };
 }
 /** Not a public configurable transport: API targets and authenticated headers are constructed here. */

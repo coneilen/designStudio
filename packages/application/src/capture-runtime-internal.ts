@@ -10,7 +10,12 @@ import type {
   OperationContext,
   StagedArtifact,
 } from "@design-studio/contracts";
-import { parseContract, validateContract } from "@design-studio/contracts";
+import {
+  parseContract,
+  type ReferenceDiagnostic,
+  referenceDiagnosticFields,
+  validateContract,
+} from "@design-studio/contracts";
 import {
   canonicalBytes,
   canonicalDigest,
@@ -658,6 +663,7 @@ export async function assembleNativeCapture(
       status: NativeCaptureEnvelope["status"],
       value?: Value,
       code?: ErrorCode,
+      referenceDiagnostic?: ReferenceDiagnostic,
     ) => {
       const candidate = {
         schemaVersion: "1.0",
@@ -674,6 +680,7 @@ export async function assembleNativeCapture(
                   "Native capture requires the reported recovery or review; no automatic retry.",
                 retryable: false,
                 diagnosticIds: [],
+                ...(referenceDiagnostic ? { referenceDiagnostic } : {}),
               },
             }
           : {}),
@@ -779,6 +786,7 @@ export async function assembleNativeCapture(
         const jobId = identity(owned.requestId);
         const base = { jobId, requestId: owned.requestId, signal, deadline };
         let attemptFailure: ErrorCode | undefined;
+        let attemptDiagnostic: ReferenceDiagnostic | undefined;
         try {
           await policy.check();
           let ctx = await policy.issue(base);
@@ -857,7 +865,18 @@ export async function assembleNativeCapture(
                 clock: policy.clock,
                 artifactRootId: project.artifactRootId,
                 ownerId: `owner_${canonicalDigest([work.actorId, jobId])}`,
-                handlers: execution.handlers,
+                handlers: execution.handlers.map((handler) => ({
+                  ...handler,
+                  run: async (jobExecution) => {
+                    try {
+                      return await handler.run(jobExecution);
+                    } catch (error) {
+                      attemptDiagnostic =
+                        referenceDiagnosticFields(error).referenceDiagnostic;
+                      throw error;
+                    }
+                  },
+                })),
                 executionAuthority: {
                   verify: policy.verify,
                   observe: async (jobSignal) =>
@@ -951,6 +970,8 @@ export async function assembleNativeCapture(
                 missing: ["capture-not-committed"],
               },
               loaded.record.job.error?.code ?? "ACTION_REQUIRED",
+              referenceDiagnosticFields(loaded.record.job.error)
+                .referenceDiagnostic ?? attemptDiagnostic,
             );
           }
           const { result, manifest, artifacts } = loaded;
@@ -1037,6 +1058,7 @@ export async function assembleNativeCapture(
                 : {}),
             },
             partial ? (result.errorCode ?? "ACTION_REQUIRED") : undefined,
+            result.referenceDiagnostic,
           );
         } catch (error) {
           const code = signal.aborted ? "CANCELLED" : safeError(error).code;
@@ -1051,6 +1073,8 @@ export async function assembleNativeCapture(
                 : "failed",
             undefined,
             code,
+            referenceDiagnosticFields(error).referenceDiagnostic ??
+              attemptDiagnostic,
           );
         } finally {
           active = false;

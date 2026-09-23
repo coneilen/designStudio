@@ -16,8 +16,11 @@
     "contracts:generate": "pnpm --filter @design-studio/contracts generate",
     "contracts:check": "pnpm --filter @design-studio/contracts check:generated",
     "fixtures:check": "node tests/fixtures/foundation/generate.mjs --check",
-    "test": "vitest run --project unit",
-    "test:unit": "vitest run --project unit",
+    "test": "pnpm test:unit",
+    "test:unit": "pnpm test:partition && pnpm test:portable && pnpm test:native",
+    "test:partition": "node scripts/check-test-partition.mjs",
+    "test:portable": "vitest run --project unit",
+    "test:native": "vitest run --project native",
     "test:smoke": "vitest run --project smoke"
   },
   "devDependencies": {

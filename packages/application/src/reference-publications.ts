@@ -9,6 +9,89 @@ import {
 import { type ReferenceReader, ref, same } from "./reference-proof.js";
 import { ApplicationError } from "./response.js";
 
+function authenticatedReferenceDescendant(
+  state: CaptureRecoveryState,
+  proposal: FigmaReferenceProposal,
+): string | undefined {
+  const proof = proposal.diagnosticPredecessor;
+  if (!proof) return undefined;
+  const records = state.jobs.filter((entry) => entry.job.id === proof.jobId);
+  const record = records[0];
+  const receipts = state.receipts.filter(
+    (entry) => entry.receipt.jobId === proof.jobId,
+  );
+  const entry = receipts[0];
+  if (
+    records.length !== 1 ||
+    !record ||
+    receipts.length !== 1 ||
+    !entry ||
+    canonicalDigest(record) !== proof.recordSha256 ||
+    canonicalDigest(entry.receipt) !== proof.receiptSha256 ||
+    record.handlerId !== "figma-reference-download-v1" ||
+    record.handlerVersion !== "1.0.0" ||
+    record.authorityRef !== `reference_${proposal.referencePolicySha256}` ||
+    record.requestId !== proof.jobId ||
+    record.job.status !== "completed" ||
+    record.job.operation !== "reference-download" ||
+    record.job.attempt !== 1 ||
+    !same(record.job.input, proof.request) ||
+    !same(record.resourceKeys, [
+      `reference_${proposal.binding.originalJobId}`,
+    ]) ||
+    entry.scope !==
+      JSON.stringify([
+        "job-v1",
+        proposal.binding.projectId,
+        proposal.binding.actorId,
+        "reference-download",
+        proof.jobId,
+      ]) ||
+    entry.receipt.projectId !== proposal.binding.projectId ||
+    entry.receipt.idempotency.projectId !== proposal.binding.projectId ||
+    entry.receipt.idempotency.actorId !== proposal.binding.actorId ||
+    entry.receipt.idempotency.operation !== "reference-download" ||
+    entry.receipt.idempotency.key !== proof.jobId ||
+    !same(record.job.receipt, entry.receipt) ||
+    record.finalOutputSha256 !== entry.receipt.idempotency.payloadSha256 ||
+    entry.receipt.integrity !== "verified" ||
+    entry.receipt.publication !== "atomic" ||
+    entry.receipt.outputs.length !== 1 ||
+    !entry.receipt.outputs[0] ||
+    !same(ref(entry.receipt.outputs[0]), proof.evidence) ||
+    !state.artifacts.some((artifact) =>
+      same(artifact, entry.receipt.outputs[0]),
+    )
+  )
+    throw new ApplicationError("ARTIFACT_INTEGRITY");
+  const inputIds = state.references
+    .filter((r) => r.kind === "job-input" && r.owner === proof.jobId)
+    .map((r) => r.artifactId)
+    .sort();
+  const outputIds = state.references
+    .filter((r) => r.kind === "job" && r.owner === entry.receipt.id)
+    .map((r) => r.artifactId)
+    .sort();
+  const stages = state.stages.filter((stage) => stage.jobId === proof.jobId);
+  if (
+    !same(
+      inputIds,
+      [...new Set([proof.request.id, record.job.resources.snapshotId])].sort(),
+    ) ||
+    !same(outputIds, [proof.evidence.id]) ||
+    stages.length !== 1 ||
+    stages.some(
+      (stage) =>
+        stage.requestId !== record.requestId ||
+        stage.attempt !== 1 ||
+        stage.fencingToken !== record.generation ||
+        !same(stage.staged.artifact, entry.receipt.outputs[0]),
+    )
+  )
+    throw new ApplicationError("ARTIFACT_INTEGRITY");
+  return proof.jobId;
+}
+
 export async function retainedReferenceStages(
   reader: ReferenceReader,
   state: CaptureRecoveryState,
@@ -96,6 +179,7 @@ export async function retainedReferenceStages(
     },
     canonicalDigest,
   );
+  const referenceDescendant = authenticatedReferenceDescendant(state, proposal);
   let lease: string | undefined;
   let host: string | undefined;
   const descriptors = pending.map((stage) => {
@@ -123,7 +207,11 @@ export async function retainedReferenceStages(
   // Only the protected closure of the remaining immutable jobs can prove this
   // historical inventory. New ordinary conversion/approval receipts remain
   // validated in the current graph but cannot assert historical membership.
-  const jobs = new Set(historic.jobs.map((record) => record.job.id));
+  const jobs = new Set(
+    historic.jobs
+      .filter((record) => record.job.id !== referenceDescendant)
+      .map((record) => record.job.id),
+  );
   const owners = new Set(
     historic.receipts
       .filter((entry) => jobs.has(entry.receipt.jobId))

@@ -13,6 +13,10 @@ import {
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  CAPTURE_DIAGNOSTIC_POLICY_SHA256,
+  captureDiagnosticPolicyBytes,
+} from "../dist/capture-diagnostic-profile.js";
+import {
   CAPTURE_POLICY_SHA256,
   CAPTURE_PROFILE,
   capturePolicyBytes,
@@ -558,6 +562,11 @@ export async function packageCandidate({
       captureReferencePolicyBytes(),
       { flag: "wx" },
     );
+    await writeFile(
+      path.join(payload, "capture-diagnostic-policy.json"),
+      captureDiagnosticPolicyBytes(),
+      { flag: "wx" },
+    );
   } else {
     await mkdir(path.join(payload, "fixtures"));
     await copyPhysical(
@@ -615,12 +624,13 @@ export async function packageCandidate({
     JSON.stringify(
       capture
         ? {
-            version: 4,
+            version: 5,
             kind: CAPTURE_PROFILE,
             manifestSha256: digest(manifest),
             capturePolicySha256: CAPTURE_POLICY_SHA256,
             captureRecoveryPolicySha256: CAPTURE_RECOVERY_POLICY_SHA256,
             captureReferencePolicySha256: CAPTURE_REFERENCE_POLICY_SHA256,
+            captureDiagnosticPolicySha256: CAPTURE_DIAGNOSTIC_POLICY_SHA256,
           }
         : {
             version: 1,

@@ -3302,6 +3302,9 @@ export const foundationSchema = {
         "format": {
           "const": "figma-rest-capture-v1"
         },
+        "referenceDiagnostic": {
+          "$ref": "#/definitions/ReferenceDiagnostic"
+        },
         "policySha256": {
           "$ref": "#/definitions/Sha256"
         },
@@ -3603,6 +3606,9 @@ export const foundationSchema = {
         },
         "errorCode": {
           "$ref": "#/definitions/ErrorCode"
+        },
+        "referenceDiagnostic": {
+          "$ref": "#/definitions/ReferenceDiagnostic"
         },
         "source": {
           "$ref": "#/definitions/ArtifactReference"
@@ -4540,6 +4546,9 @@ export const foundationSchema = {
         "previousApproval": {
           "$ref": "#/definitions/ArtifactReference"
         },
+        "diagnosticPredecessor": {
+          "$ref": "#/definitions/FigmaDiagnosticPredecessor"
+        },
         "binding": {
           "$ref": "#/definitions/FigmaReferenceBinding"
         },
@@ -4586,13 +4595,52 @@ export const foundationSchema = {
           "$ref": "#/definitions/FigmaReferenceProposal"
         },
         "confirmation": {
-          "const": "APPROVE-ONE-SELECTED-REFERENCE"
+          "enum": [
+            "APPROVE-ONE-SELECTED-REFERENCE",
+            "APPROVE-ONE-DIAGNOSTIC-REFERENCE"
+          ]
         },
         "recordedAt": {
           "$ref": "#/definitions/Timestamp"
         },
         "expiresAt": {
           "$ref": "#/definitions/Timestamp"
+        }
+      }
+    },
+    "FigmaDiagnosticPredecessor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "jobId",
+        "recordSha256",
+        "receiptSha256",
+        "request",
+        "approval",
+        "evidence",
+        "policySha256"
+      ],
+      "properties": {
+        "jobId": {
+          "$ref": "#/definitions/StableId"
+        },
+        "recordSha256": {
+          "$ref": "#/definitions/Sha256"
+        },
+        "receiptSha256": {
+          "$ref": "#/definitions/Sha256"
+        },
+        "request": {
+          "$ref": "#/definitions/ArtifactReference"
+        },
+        "approval": {
+          "$ref": "#/definitions/ArtifactReference"
+        },
+        "evidence": {
+          "$ref": "#/definitions/ArtifactReference"
+        },
+        "policySha256": {
+          "$ref": "#/definitions/Sha256"
         }
       }
     },
@@ -4638,6 +4686,9 @@ export const foundationSchema = {
         },
         "format": {
           "const": "figma-reference-evidence-v1"
+        },
+        "referenceDiagnostic": {
+          "$ref": "#/definitions/ReferenceDiagnostic"
         },
         "request": {
           "$ref": "#/definitions/FigmaReferenceRequest"
@@ -4798,7 +4849,11 @@ export const foundationSchema = {
             "reference-plan",
             "reference-approve",
             "reference-download",
-            "reference-inspect"
+            "reference-inspect",
+            "reference-diagnostic-plan",
+            "reference-diagnostic-approve",
+            "reference-diagnostic-download",
+            "reference-diagnostic-inspect"
           ]
         },
         "projectId": {
@@ -4806,6 +4861,9 @@ export const foundationSchema = {
         },
         "requestId": {
           "$ref": "#/definitions/StableId"
+        },
+        "referenceDiagnostic": {
+          "$ref": "#/definitions/ReferenceDiagnostic"
         },
         "status": {
           "enum": [
@@ -7372,6 +7430,66 @@ export const foundationSchema = {
         "INTERNAL_ERROR"
       ]
     },
+    "ReferenceDiagnostic": {
+      "description": "Closed nonsecret observations only. Absence on legacy evidence means unknown, never a reconstructed diagnosis. A command diagnostic without a receipt is not durable proof.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stage",
+        "reason",
+        "mimeClass"
+      ],
+      "properties": {
+        "stage": {
+          "enum": [
+            "mime",
+            "png",
+            "json",
+            "worker",
+            "operation",
+            "legacy"
+          ]
+        },
+        "reason": {
+          "enum": [
+            "validated",
+            "mime-missing",
+            "mime-rejected",
+            "not-png",
+            "png-malformed",
+            "png-unsupported",
+            "png-interlace",
+            "png-animation",
+            "png-critical",
+            "png-color-unsupported",
+            "png-color-conflict",
+            "input-limit",
+            "output-limit",
+            "raster-limit",
+            "node-limit",
+            "depth-limit",
+            "intermediate-limit",
+            "json-malformed",
+            "worker-protocol",
+            "worker-unavailable",
+            "worker-limit",
+            "cancelled",
+            "deadline",
+            "authority",
+            "legacy-unknown"
+          ]
+        },
+        "mimeClass": {
+          "enum": [
+            "not-observed",
+            "png",
+            "generic-binary",
+            "missing",
+            "other"
+          ]
+        }
+      }
+    },
     "ContractError": {
       "type": "object",
       "additionalProperties": false,
@@ -7397,6 +7515,9 @@ export const foundationSchema = {
         },
         "jobId": {
           "$ref": "#/definitions/StableId"
+        },
+        "referenceDiagnostic": {
+          "$ref": "#/definitions/ReferenceDiagnostic"
         },
         "diagnosticIds": {
           "type": "array",
