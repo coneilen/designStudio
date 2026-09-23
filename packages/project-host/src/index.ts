@@ -13,6 +13,7 @@ export {
   assertCaptureDiagnosticInstallation,
   assertCaptureRecoveryInstallation,
   assertCaptureReferenceInstallation,
+  assertReferenceValidationInstallation,
   type CaptureInstallationLease,
   type FixtureInstallationLease,
   type FixtureInstallationPaths,

@@ -72,3 +72,26 @@ it("denies reference actions before opening any project for a legacy or forged l
   expect(seam.close).toHaveBeenCalledTimes(4);
   expect(seam.guard).toHaveBeenCalledTimes(4);
 });
+it("denies retained validation before project/database effects for a legacy or structural lease", async () => {
+  seam.close.mockClear();
+  seam.guard.mockClear();
+  expect(
+    await runCaptureCommand([
+      "figma",
+      "reference-recovery-plan",
+      "--project",
+      "capture_11111111-1111-4111-8111-111111111111",
+      "--request-id",
+      "original",
+      "--expected-job",
+      "a".repeat(64),
+    ]),
+  ).toMatchObject({
+    operation: "reference-recovery-plan",
+    status: "failed",
+    error: { code: "ACTION_REQUIRED" },
+  });
+  expect(seam.project).not.toHaveBeenCalled();
+  expect(seam.close).toHaveBeenCalledTimes(1);
+  expect(seam.guard).toHaveBeenCalledTimes(1);
+});

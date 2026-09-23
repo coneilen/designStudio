@@ -1,6 +1,8 @@
+import { execFile } from "node:child_process";
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { promisify } from "node:util";
 import type {
   ApprovalContext,
   Artifact,
@@ -11,6 +13,7 @@ import type {
 } from "@design-studio/contracts";
 import Database from "better-sqlite3";
 import { afterEach, aroundEach, describe, expect, test } from "vitest";
+import { initializeImmutableSqlite } from "../src/immutable-sqlite.js";
 import {
   decodeBackup,
   encodeBackup,
@@ -18,7 +21,18 @@ import {
   type StorageOptions,
 } from "../src/index.js";
 import { closeSettledStores, inStorageTest } from "./lifetime.js";
-import { bytes, context, diskFixture, hash, revision } from "./support.js";
+import {
+  bytes,
+  context,
+  diskFixture,
+  hash,
+  revision,
+  syntheticImmutableSnapshot,
+} from "./support.js";
+
+initializeImmutableSqlite(
+  resolve(".tools\\sqlite-prebuild\\build\\Release\\better_sqlite3.node"),
+);
 
 const roots: string[] = [];
 const stores: LocalStore[] = [];
@@ -109,6 +123,89 @@ const fixture: { payloads: string[] } = JSON.parse(
     "utf8",
   ),
 );
+test.each([
+  "clean",
+  "preloaded",
+  "load-failure",
+  "alias",
+  "caller-uri",
+  "worker",
+  "sidecars",
+  "live-writer",
+  "database-limit",
+  "missing",
+])(
+  "cold immutable command admission and native source preservation: %s",
+  async (mode) => {
+    const result = await promisify(execFile)(
+      process.execPath,
+      [resolve("packages\\storage\\tests\\immutable-probe.mjs"), mode],
+      { windowsHide: true, maxBuffer: 16384 },
+    );
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout)).toEqual({
+      mode,
+      passed: true,
+      environmentRestored: true,
+    });
+  },
+);
+test("read-only existing-schema storage verifies bytes but cannot stage, commit, migrate or change files", async () => {
+  const { store, options, root } = await setup();
+  const staged = value(
+    await store.stage(bytes("retained synthetic bytes"), context()),
+  );
+  const receipt = value(await store.commit([staged], context()));
+  store.close();
+  const beforeNames = (await readdir(root)).sort();
+  const database = await readFile(options.databasePath);
+  const snapshot = await syntheticImmutableSnapshot(options.databasePath);
+  const readonly = await LocalStore.open({
+    ...options,
+    access: "read-only",
+    readonlySnapshot: snapshot,
+  });
+  stores.push(readonly);
+  expect(
+    value(
+      await readonly.readVerified(
+        { id: staged.artifact.id, sha256: staged.artifact.sha256 },
+        context(),
+      ),
+    ).bytes,
+  ).toEqual(bytes("retained synthetic bytes"));
+  expect(await readonly.stage(bytes("forbidden"), context())).toMatchObject({
+    error: { code: "FORBIDDEN" },
+  });
+  expect(await readonly.commit([staged], context())).toMatchObject({
+    error: { code: "FORBIDDEN" },
+  });
+  expect(
+    value(await readonly.getReceipt(context().requestId, context())),
+  ).toEqual(receipt);
+  readonly.close();
+  await snapshot.check();
+  snapshot.close();
+  expect(await readFile(options.databasePath)).toEqual(database);
+  expect((await readdir(root)).sort()).toEqual(beforeNames);
+  const db = new Database(options.databasePath, {
+    nativeBinding: options.nativeBinding,
+  });
+  db.pragma("user_version = 3");
+  db.close();
+  const old = await readFile(options.databasePath);
+  const oldSnapshot = await syntheticImmutableSnapshot(options.databasePath);
+  await expect(
+    LocalStore.open({
+      ...options,
+      access: "read-only",
+      readonlySnapshot: oldSnapshot,
+    }),
+  ).rejects.toMatchObject({ code: "SCHEMA_INCOMPATIBLE" });
+  oldSnapshot.close();
+  expect(await readFile(options.databasePath)).toEqual(old);
+  expect((await readdir(root)).sort()).toEqual(beforeNames);
+});
 test("readVerified returns exactly the bytes verified in its single authorized read and rejects corruption", async () => {
   const { store, disk, options, root } = await setup();
   const body = bytes("synthetic verified bytes");

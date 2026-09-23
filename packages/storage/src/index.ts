@@ -324,6 +324,11 @@ export class LocalStore implements ArtifactStore {
     kind: StorageScope["resourceKind"] = "artifact",
     id = this.options.artifactRootId,
   ): Promise<void> {
+    if (operation === "write" && this.options.access === "read-only")
+      throw new StorageError(
+        "AUTHORIZATION_CHANGED",
+        "This connection is read-only.",
+      );
     const { signal: _signal, clock: _clock, ...request } = context;
     check("OperationRequestContext", request);
     if (context.projectId !== this.options.projectId)

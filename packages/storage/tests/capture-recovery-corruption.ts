@@ -1,7 +1,102 @@
+import { createHash } from "node:crypto";
+import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import type { FigmaReferenceEvidence } from "@design-studio/contracts";
 import Database from "better-sqlite3";
 import type { StoredJob, StoredJobStage } from "../src/job-types.js";
+
+export function rewriteSyntheticRetainedEvidence(
+  filename: string,
+  nativeBinding: string,
+  jobId: string,
+  change: (evidence: FigmaReferenceEvidence, image: Buffer) => void,
+  canonical: (value: unknown) => Uint8Array,
+): void {
+  if (
+    !/^reference-synthetic-[^\\]+\\state\.sqlite$/.test(
+      path.relative(tmpdir(), filename),
+    ) ||
+    !jobId.startsWith("diagnostic_")
+  )
+    throw new Error(
+      "Retained evidence corruption requires the exact synthetic fixture",
+    );
+  const db = new Database(filename, { nativeBinding });
+  try {
+    const rows = db
+      .prepare<[string], { data: string }>(
+        "SELECT data FROM job_stages WHERE job=? ORDER BY id",
+      )
+      .all(jobId);
+    if (rows.length !== 2)
+      throw new Error("Expected two synthetic retained stages");
+    const stages = rows.map((row) => JSON.parse(row.data) as StoredJobStage);
+    const root = path.join(path.dirname(filename), "artifacts");
+    const bodies = stages.map((stage) => {
+      const artifact = stage.staged.artifact;
+      if (
+        !/^[a-f0-9]{64}$/.test(artifact.sha256) ||
+        artifact.path !== `blobs/${artifact.sha256}`
+      )
+        throw new Error("Synthetic stage path is not canonical");
+      return readFileSync(path.join(root, artifact.path));
+    });
+    const index = bodies.findIndex((body) => body[0] === 0x7b);
+    const json = bodies[index];
+    const image = bodies[1 - index];
+    const jsonStage = stages[index];
+    const imageStage = stages[1 - index];
+    if (!json || !image || !jsonStage || !imageStage)
+      throw new Error("Missing synthetic role");
+    const evidence: FigmaReferenceEvidence = JSON.parse(json.toString("utf8"));
+    change(evidence, image);
+    const rewrite = (stage: StoredJobStage, bytes: Uint8Array) => {
+      const hash = createHash("sha256").update(bytes).digest("hex");
+      const old = stage.staged.artifact;
+      if (old.sha256 !== hash) {
+        writeFileSync(path.join(root, "blobs", hash), bytes, { flag: "wx" });
+        unlinkSync(path.join(root, old.path));
+      }
+      stage.staged.artifact = {
+        ...old,
+        id: `sha256_${hash}`,
+        sha256: hash,
+        path: `blobs/${hash}`,
+        byteLength: bytes.length,
+      };
+      db.prepare("UPDATE job_stages SET data=? WHERE id=?").run(
+        JSON.stringify(stage),
+        stage.stagingId,
+      );
+    };
+    rewrite(imageStage, image);
+    if (evidence.reference)
+      evidence.reference.artifact = {
+        id: imageStage.staged.artifact.id,
+        sha256: imageStage.staged.artifact.sha256,
+      };
+    let encoded = canonical(evidence);
+    for (let i = 0; i < 8; i++) {
+      evidence.usage.persistedBytes = image.length + encoded.length;
+      encoded = canonical(evidence);
+    }
+    rewrite(jsonStage, encoded);
+    const row = db
+      .prepare<[string], { data: string }>("SELECT data FROM jobs WHERE id=?")
+      .get(jobId);
+    if (!row) throw new Error("Missing synthetic diagnostic");
+    const record: StoredJob = JSON.parse(row.data);
+    record.usage.inputBytes = image.length + encoded.length;
+    record.usage.outputBytes = record.usage.inputBytes;
+    db.prepare("UPDATE jobs SET data=? WHERE id=?").run(
+      JSON.stringify(record),
+      jobId,
+    );
+  } finally {
+    db.close();
+  }
+}
 
 export function mutateOpenSyntheticCapture(
   store: object,
@@ -57,6 +152,34 @@ export function removeSyntheticCaptureProtection(
     )
     .run(jobId);
   if (!result.changes) throw new Error("Missing synthetic protected inputs");
+}
+
+export function addSyntheticCaptureProtection(
+  store: object,
+  jobId: string,
+  kind: "job-input" | "job",
+): void {
+  const db: unknown = Reflect.get(store, "db");
+  if (
+    !(db instanceof Database) ||
+    !/^capture-recovery-synthetic-[^\\]+\\state\.sqlite$/.test(
+      path.relative(tmpdir(), db.name),
+    )
+  )
+    throw new Error(
+      "Protection corruption requires the exact open temporary fixture database",
+    );
+  const extra = db
+    .prepare<[string], { id: string }>(
+      "SELECT id FROM artifacts WHERE id NOT IN (SELECT artifact_id FROM artifact_refs WHERE owner_kind='job-input' AND owner_id=?) ORDER BY id LIMIT 1",
+    )
+    .get(jobId);
+  if (!extra) throw new Error("Missing extra synthetic artifact");
+  db.prepare("INSERT INTO artifact_refs VALUES (?,?,?)").run(
+    kind,
+    jobId,
+    extra.id,
+  );
 }
 
 export function corruptSyntheticCapture(

@@ -57,6 +57,83 @@ export function nativeCapturePolicy(work: CaptureWork) {
     verify,
     actorId: work.actorId,
     outputRoot,
+    async issueReferenceValidation(supplied: {
+      jobId: string;
+      requestId: string;
+      jobReads: readonly string[];
+      deadline: string;
+      signal: AbortSignal;
+    }): Promise<OperationContext> {
+      const input = { ...supplied, jobReads: [...supplied.jobReads] };
+      await check();
+      if (!work.referenceValidationAuthority)
+        throw new ApplicationError("FORBIDDEN");
+      await work.referenceValidationAuthority();
+      if (input.signal.aborted) throw new ApplicationError("CANCELLED");
+      if (input.jobReads.length > 1000 || issued.size >= 128)
+        throw new ApplicationError("INPUT_LIMIT");
+      const end = Math.min(clock.now() + 30000, Date.parse(input.deadline));
+      if (!Number.isFinite(end) || end <= clock.now())
+        throw new ApplicationError("DEADLINE_EXCEEDED");
+      const token = sessions.createSession(
+        {
+          schemaVersion: "1.0",
+          projectId: work.project.projectId,
+          actorId: work.actorId,
+          sessionId: randomUUID(),
+          expiresAt: new Date(end).toISOString(),
+          grants: [
+            ...[work.project.artifactRootId, outputRoot].map((resourceId) => ({
+              resourceKind: "artifact" as const,
+              resourceId,
+              operations: ["read"] as ["read"],
+            })),
+            ...[...new Set([input.jobId, ...input.jobReads])].map(
+              (resourceId) => ({
+                resourceKind: "job" as const,
+                resourceId,
+                operations: ["read"] as ["read"],
+              }),
+            ),
+          ],
+          egress: "deny",
+        },
+        "cli",
+      );
+      const authorization = sessions.authenticate({
+        remoteAddress: "127.0.0.1",
+        host: "127.0.0.1:47121",
+        method: "POST",
+        bearer: token.credential,
+      });
+      const detach = () => input.signal.removeEventListener("abort", abort);
+      const abort = () => {
+        detach();
+        sessions.revoke(authorization);
+        issued.delete(authorization);
+      };
+      input.signal.addEventListener("abort", abort, { once: true });
+      issued.set(authorization, detach);
+      if (input.signal.aborted) {
+        abort();
+        throw new ApplicationError("CANCELLED");
+      }
+      return snapshotOperationContext({
+        schemaVersion: "1.0",
+        projectId: work.project.projectId,
+        requestId: input.requestId,
+        jobId: input.jobId,
+        authorization,
+        signal: input.signal,
+        clock,
+        deadline: new Date(end).toISOString(),
+        budget: {
+          ...CAPTURE_LIMITS,
+          maxExternalCalls: 0,
+          maxRasterPixels: 6553600,
+        },
+      });
+    },
     async issue(input: {
       jobId: string;
       requestId: string;

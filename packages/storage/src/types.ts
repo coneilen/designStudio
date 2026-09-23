@@ -54,6 +54,8 @@ export interface StoredArtifactBinding extends LogicalArtifactBinding {
 }
 
 export interface StorageOptions {
+  access?: "read-only";
+  readonlySnapshot?: { check(): Promise<void> };
   referenceInspection?: {
     authorize(context: OperationContext): Promise<void>;
   };

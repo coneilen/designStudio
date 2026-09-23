@@ -1,5 +1,6 @@
 import {
   link,
+  lstat,
   mkdir,
   mkdtemp,
   readdir,
@@ -14,7 +15,11 @@ import path from "node:path";
 import type { NativeReferenceEnvelope } from "@design-studio/contracts";
 import { fakeComplete } from "@design-studio/contracts/testing";
 import { canonicalBytes, hashBytes } from "@design-studio/design-ir";
-import { HostBoundaryError, ProjectFileSystem } from "@design-studio/host";
+import {
+  authorizeOperation,
+  HostBoundaryError,
+  ProjectFileSystem,
+} from "@design-studio/host";
 import { JobService } from "@design-studio/jobs";
 import type { CaptureProject, CaptureWork } from "@design-studio/project-host";
 import { LocalStore } from "@design-studio/storage";
@@ -34,6 +39,10 @@ import { nativeCapturePolicy } from "../../project-host/dist/capture-authority.j
 import { CAPTURE_DIAGNOSTIC_POLICY_SHA256 } from "../../project-host/src/capture-diagnostic-profile.js";
 import { CAPTURE_POLICY_SHA256 } from "../../project-host/src/capture-profile.js";
 import { CAPTURE_REFERENCE_POLICY_SHA256 } from "../../project-host/src/capture-reference-profile.js";
+import { REFERENCE_VALIDATION_POLICY_SHA256 } from "../../project-host/src/reference-validation-profile.js";
+import { initializeImmutableSqlite } from "../../storage/dist/immutable-sqlite.js";
+import { rewriteSyntheticRetainedEvidence } from "../../storage/tests/capture-recovery-corruption.js";
+import { syntheticImmutableSnapshot } from "../../storage/tests/support.js";
 import {
   assembleNativeCapture,
   type NativeCaptureRuntime,
@@ -46,6 +55,7 @@ import {
   REFERENCE_APPROVAL_CONFIRMATION,
   REFERENCE_DOWNLOAD_CONFIRMATION,
 } from "../src/reference-runtime.js";
+import { openNativeReferenceValidation } from "../src/reference-validation.js";
 
 const seam = vi.hoisted(() => ({
   work: undefined as CaptureWork | undefined,
@@ -122,6 +132,11 @@ async function fixture(
     diagnostic?: boolean;
   } = {},
 ) {
+  initializeImmutableSqlite(
+    path.resolve(
+      ".tools\\sqlite-prebuild\\build\\Release\\better_sqlite3.node",
+    ),
+  );
   const root = await mkdtemp(path.join(tmpdir(), "reference-synthetic-"));
   for (const name of ["artifacts", "outputs"])
     await mkdir(path.join(root, name));
@@ -145,6 +160,13 @@ async function fixture(
     close: async () => {},
   } as CaptureProject;
   let runtime: NativeCaptureRuntime;
+  let validation:
+    | Awaited<ReturnType<typeof openNativeReferenceValidation>>
+    | undefined;
+  let validationMode = false;
+  let readPins = 0;
+  let failInventoryPinClose = false;
+  let firstInventoryRoot = true;
   let admitted = true;
   let vaultAllowed = true;
   let fault: string | undefined;
@@ -227,6 +249,64 @@ async function fixture(
       isCurrent: () => current,
       ...(options.diagnostic
         ? {
+            referenceValidationAuthority: async () => {
+              if (!admitted)
+                throw new HostBoundaryError(
+                  "FORBIDDEN",
+                  "Synthetic validation revoked.",
+                );
+              return REFERENCE_VALIDATION_POLICY_SHA256;
+            },
+            pinReferenceValidationDatabase: () =>
+              syntheticImmutableSnapshot(project.paths.database),
+            pinReferenceValidationEntry: async (
+              rootId: string,
+              relative: string,
+            ) => {
+              const rootPath =
+                rootId === project.artifactRootId
+                  ? project.paths.artifacts
+                  : project.paths.outputs;
+              const filename = path.join(rootPath, ...relative.split("/"));
+              const stat = await lstat(filename);
+              if (
+                stat.isSymbolicLink() ||
+                (!stat.isDirectory() && stat.nlink !== 1)
+              )
+                throw new HostBoundaryError(
+                  "PATH_FORBIDDEN",
+                  "Synthetic pin refused.",
+                );
+              readPins++;
+              const inventoryRoot = relative === "" && firstInventoryRoot;
+              if (inventoryRoot) firstInventoryRoot = false;
+              let closed = false;
+              return {
+                handle: 1,
+                identity: {
+                  path: filename,
+                  volume: stat.dev,
+                  file: String(stat.ino),
+                },
+                byteLength: stat.size,
+                read: () => {
+                  throw new Error("Synthetic pin does not read bodies");
+                },
+                close: () => {
+                  if (failInventoryPinClose && inventoryRoot) {
+                    failInventoryPinClose = false;
+                    throw new HostBoundaryError(
+                      "INTERRUPTED",
+                      "Synthetic pin close failed",
+                    );
+                  }
+                  if (!closed) {
+                    closed = true;
+                    readPins--;
+                  }
+                },
+              };
+            },
             diagnosticAuthority: async () => {
               if (!admitted)
                 throw new HostBoundaryError(
@@ -268,7 +348,9 @@ async function fixture(
     vi.spyOn(policy.clock, "now").mockImplementation(
       () => originalNow() + clockOffset,
     );
-    runtime = await assembleNativeCapture(project);
+    if (validationMode)
+      validation = await openNativeReferenceValidation(project);
+    else runtime = await assembleNativeCapture(project);
     return runtime;
   };
   const api = vi
@@ -326,6 +408,7 @@ async function fixture(
     });
   const initial = await open();
   cleanups.push(async () => {
+    await validation?.close();
     await runtime.close();
     await rm(root, { recursive: true, force: true });
   });
@@ -408,7 +491,43 @@ async function fixture(
         ),
     );
   };
+  const openValidation = async () => {
+    await runtime.close();
+    await validation?.close();
+    validationMode = true;
+    firstInventoryRoot = true;
+    await open();
+    reads.length = 0;
+    seam.physicalReads = 0;
+    return required(validation);
+  };
   return {
+    project,
+    openValidation,
+    failInventoryClose: () => {
+      failInventoryPinClose = true;
+    },
+    get readPins() {
+      return readPins;
+    },
+    validateRetained: async (
+      expectedJob: string,
+      signal = new AbortController().signal,
+    ) => {
+      const current = await openValidation();
+      try {
+        return await current.execute(
+          {
+            operation: "reference-recovery-plan",
+            requestId: "original",
+            expectedJob,
+          },
+          signal,
+        );
+      } finally {
+        await validation?.close();
+      }
+    },
     plan,
     approve,
     download,
@@ -513,6 +632,7 @@ async function fixture(
         | "replace"
         | "hardlink"
         | "swap"
+        | "replace-after-proof"
         | "junction" = "truncate",
     ) => {
       const artifact = required(
@@ -521,6 +641,10 @@ async function fixture(
       const target = path.join(root, "artifacts", "blobs", artifact.sha256);
       if (kind === "hardlink") {
         await link(target, path.join(root, "extra-link"));
+      } else if (kind === "replace-after-proof") {
+        const bytes = await readFile(target);
+        await rename(target, path.join(root, "old-node"));
+        await writeFile(target, bytes);
       } else if (kind === "swap") {
         seam.afterRead = async (file) => {
           if (file !== target) return;
@@ -552,7 +676,9 @@ async function fixture(
       fault = value;
     },
     reopen: async () => {
+      await validation?.close();
       await runtime.close();
+      validationMode = false;
       await open();
     },
   };
@@ -771,6 +897,19 @@ async function legacyReferenceFailure(f: Awaited<ReturnType<typeof fixture>>) {
   }
 }
 
+function realisticReferencePng() {
+  const raw = Buffer.alloc((460 * 4 + 1) * 460);
+  let seed = 42;
+  for (let y = 0; y < 460; y++)
+    for (let x = 1; x <= 460 * 4; x++) {
+      seed ^= seed << 13;
+      seed ^= seed >>> 17;
+      seed ^= seed << 5;
+      raw[y * (460 * 4 + 1) + x] = seed & 255;
+    }
+  return authoredPng(6, 8, raw, [srgb()], [], 460, 460);
+}
+
 it("completes a diagnostic with realistic synthetic source bytes within the invocation input budget", async () => {
   const f = await fixture({
     diagnostic: true,
@@ -783,16 +922,7 @@ it("completes a diagnostic with realistic synthetic source bytes within the invo
   const before = await f.blobs();
   f.reads.length = 0;
   seam.physicalReads = 0;
-  const raw = Buffer.alloc((460 * 4 + 1) * 460);
-  let seed = 42;
-  for (let y = 0; y < 460; y++)
-    for (let x = 1; x <= 460 * 4; x++) {
-      seed ^= seed << 13;
-      seed ^= seed >>> 17;
-      seed ^= seed << 5;
-      raw[y * (460 * 4 + 1) + x] = seed & 255;
-    }
-  const pngBytes = authoredPng(6, 8, raw, [srgb()], [], 460, 460);
+  const pngBytes = realisticReferencePng();
   f.image.mockImplementation(async (_url, budget) => {
     budget.check();
     budget.dnsQuery();
@@ -865,6 +995,386 @@ it("completes a diagnostic with realistic synthetic source bytes within the invo
   expect(f.api).not.toHaveBeenCalled();
   expect(f.vault).not.toHaveBeenCalled();
 });
+
+it("validates actual published-only retained bytes offline without rewriting the interrupted acquisition", async () => {
+  const f = await fixture({ diagnostic: true });
+  await legacyReferenceFailure(f);
+  const approved = await f.diagnosticApprove();
+  f.setFault("job-after-artifacts");
+  expect((await f.diagnosticDownload(approved)).status).toBe("interrupted");
+  f.setFault();
+  f.advanceClock(40000);
+  const metadata = await f.run({
+    operation: "reference-diagnostic-inspect",
+    requestId: "original",
+    inspection: "metadata-only",
+  });
+
+  const expectedJob = required(metadata.value?.metadata?.jobSha256);
+  const before = await f.blobs();
+  f.image.mockClear();
+  const result = await f.validateRetained(expectedJob);
+  expect(result.status, JSON.stringify(result)).toBe("complete");
+  expect(result.value).toMatchObject({
+    verification: "retained-bytes",
+    eligibility: "eligible-for-recovery-review",
+    historicalStatus: "interrupted",
+    consumed: true,
+    pixelWidth: 2,
+    pixelHeight: 2,
+    stages: [
+      { role: "evidence", publication: "published-only" },
+      { role: "reference", publication: "published-only" },
+    ],
+  });
+  expect(result.inputAccounting?.networkBytes).toBe(0);
+  expect(result.inputAccounting?.privateBytes).toBeGreaterThan(0);
+  expect(f.readPins).toBe(0);
+  const again = await f.validateRetained(expectedJob);
+  expect(again.value).toEqual(result.value);
+  expect(await f.blobs()).toEqual(before);
+  await f.reopen();
+  const after = await f.run({
+    operation: "reference-diagnostic-inspect",
+    requestId: "original",
+    inspection: "metadata-only",
+  });
+  expect(after.value).toEqual(metadata.value);
+  expect(f.image).not.toHaveBeenCalled();
+  expect(f.api).not.toHaveBeenCalled();
+  expect(f.vault).not.toHaveBeenCalled();
+  expect(f.ready).not.toHaveBeenCalled();
+});
+
+it("validates stage-only realistic source and PNG under the unchanged physical read budget including closure", async () => {
+  const f = await fixture({
+    diagnostic: true,
+    nodeBytes: 2400000,
+    frameSize: 460,
+  });
+  await legacyReferenceFailure(f);
+  const approved = await f.diagnosticApprove();
+  const pngBytes = realisticReferencePng();
+  expect(pngBytes.length).toBe(847196);
+  f.image.mockImplementation(async (_url, budget) => {
+    budget.dnsQuery();
+    budget.receive(pngBytes.length);
+    budget.decoded(pngBytes.length);
+    return { status: 200, mediaType: "image/png", bytes: pngBytes };
+  });
+  const publish = vi
+    .spyOn(ProjectFileSystem.prototype, "publish")
+    .mockRejectedValueOnce(
+      new HostBoundaryError(
+        "INPUT_LIMIT",
+        "Synthetic interruption before first publication",
+      ),
+    );
+  const interrupted = await f.diagnosticDownload(approved);
+  publish.mockRestore();
+  expect(interrupted.status, JSON.stringify(interrupted)).toBe("interrupted");
+  f.advanceClock(40000);
+  const metadata = await f.run({
+    operation: "reference-diagnostic-inspect",
+    requestId: "original",
+    inspection: "metadata-only",
+  });
+  f.image.mockClear();
+  const result = await f.validateRetained(
+    required(metadata.value?.metadata?.jobSha256),
+  );
+  expect(result.status, JSON.stringify(result)).toBe("complete");
+  expect(result.value?.stages.map((stage) => stage.publication)).toEqual([
+    "stage-only",
+    "stage-only",
+  ]);
+  const charged = f.reads
+    .filter((read) => read.allowed)
+    .reduce((sum, read) => sum + read.bytes, 0);
+  const eof = f.reads.filter((read) => read.allowed && read.bytes === 1).length;
+  expect(f.reads.every((read) => read.allowed)).toBe(true);
+  expect(result.inputAccounting).toEqual({
+    limitBytes: 26214400,
+    privateBytes: charged,
+    networkBytes: 0,
+    phase: "inspection",
+  });
+  expect(charged).toBe(seam.physicalReads + eof);
+  expect(charged).toBeLessThanOrEqual(26214400);
+  expect(f.readPins).toBe(0);
+  expect(f.image).not.toHaveBeenCalled();
+  expect(f.api).not.toHaveBeenCalled();
+  expect(f.vault).not.toHaveBeenCalled();
+  expect(f.ready).not.toHaveBeenCalled();
+  expect({
+    physical: seam.physicalReads,
+    eof,
+    charged,
+    network: 0,
+  }).toMatchInlineSnapshot(`
+    {
+      "charged": 5698604,
+      "eof": 29,
+      "network": 0,
+      "physical": 5698575,
+    }
+  `);
+});
+
+async function interruptedValidationFixture() {
+  const f = await fixture({ diagnostic: true });
+  await legacyReferenceFailure(f);
+  const approved = await f.diagnosticApprove();
+  f.setFault("job-after-artifacts");
+  expect((await f.diagnosticDownload(approved)).status).toBe("interrupted");
+  f.setFault();
+  f.advanceClock(40000);
+  const metadata = await f.run({
+    operation: "reference-diagnostic-inspect",
+    requestId: "original",
+    inspection: "metadata-only",
+  });
+  return {
+    f,
+    expectedJob: required(metadata.value?.metadata?.jobSha256),
+    jobId: required(metadata.value?.metadata?.jobId),
+  };
+}
+
+it.each(["approval", "source", "bounds", "dimensions", "png"] as const)(
+  "rejects physically hashed retained output with forged %s evidence rather than trusting stage metadata",
+  async (kind) => {
+    const { f, expectedJob, jobId } = await interruptedValidationFixture();
+    await f.runtime.close();
+    rewriteSyntheticRetainedEvidence(
+      f.project.paths.database,
+      path.resolve(
+        ".tools\\sqlite-prebuild\\build\\Release\\better_sqlite3.node",
+      ),
+      jobId,
+      (evidence, image) => {
+        if (kind === "approval")
+          evidence.request.approval.sha256 = "f".repeat(64);
+        if (kind === "source")
+          evidence.request.binding.sourceVersion = "forged";
+        if (kind === "bounds") required(evidence.reference).bounds.width = 3;
+        if (kind === "dimensions") required(evidence.reference).pixelWidth = 3;
+        if (kind === "png")
+          image[image.length - 1] = (image[image.length - 1] ?? 0) ^ 1;
+      },
+      canonicalBytes,
+    );
+    f.image.mockClear();
+    const result = await f.validateRetained(expectedJob);
+    expect(result.status, JSON.stringify(result)).toBe("failed");
+    expect(result.reason).toBe("evidence-invalid");
+    expect(result.value).toBeUndefined();
+    expect(f.readPins).toBe(0);
+    expect(f.image).not.toHaveBeenCalled();
+    expect(f.vault).not.toHaveBeenCalled();
+  },
+);
+
+it("rejects same-byte source inode replacement between verified proof reads and retained inventory", async () => {
+  const { f, expectedJob } = await interruptedValidationFixture();
+  const inspect = ProjectFileSystem.prototype.inspectRetainedReference;
+  const replaced = vi
+    .spyOn(ProjectFileSystem.prototype, "inspectRetainedReference")
+    .mockImplementationOnce(async function (this: ProjectFileSystem, ...args) {
+      await f.corruptNodes("replace-after-proof");
+      return inspect.apply(this, args);
+    });
+  try {
+    const result = await f.validateRetained(expectedJob);
+    expect(result).toMatchObject({
+      status: "failed",
+      reason: "inventory-invalid",
+      error: { code: "ARTIFACT_INTEGRITY" },
+    });
+    expect(result.value).toBeUndefined();
+    expect(f.readPins).toBe(0);
+  } finally {
+    replaced.mockRestore();
+  }
+});
+
+it("owns recovery plan input before asynchronous digest checks and final proof construction", async () => {
+  const { f, expectedJob } = await interruptedValidationFixture();
+  const validation = await f.openValidation();
+  const work = required(seam.work);
+  const context = await work.policy.issueReferenceValidation({
+    jobId: "validation_readonly",
+    requestId: "readonly_grants",
+    jobReads: [],
+    deadline: new Date(work.policy.clock.now() + 30000).toISOString(),
+    signal: new AbortController().signal,
+  });
+  expect(context.authorization.egress).toBe("deny");
+  expect(context.budget.maxExternalCalls).toBe(0);
+  expect(
+    context.authorization.grants.every((grant) =>
+      grant.operations.every((operation) => operation === "read"),
+    ),
+  ).toBe(true);
+  for (const scope of [
+    {
+      resourceKind: "artifact" as const,
+      resourceId: f.project.artifactRootId,
+      operation: "write" as const,
+    },
+    {
+      resourceKind: "job" as const,
+      resourceId: "validation_readonly",
+      operation: "write" as const,
+    },
+    {
+      resourceKind: "credential" as const,
+      resourceId: f.project.reference.id,
+      operation: "credential-use" as const,
+    },
+    {
+      resourceKind: "provider" as const,
+      resourceId: "figma_rest",
+      operation: "read" as const,
+    },
+    {
+      resourceKind: "source" as const,
+      resourceId: "synthetic",
+      operation: "reference-download" as const,
+    },
+  ])
+    expect(() =>
+      authorizeOperation(
+        context,
+        { projectId: f.project.projectId, ...scope },
+        work.policy.verify,
+      ),
+    ).toThrow();
+  const command = {
+    operation: "reference-recovery-plan" as const,
+    requestId: "original",
+    expectedJob,
+  };
+  const original = LocalStore.prototype.referencePublicationState;
+  const mutated = vi
+    .spyOn(LocalStore.prototype, "referencePublicationState")
+    .mockImplementation(async function (this: LocalStore, context) {
+      const result = await original.call(this, context);
+      command.expectedJob = "f".repeat(64);
+      command.requestId = "changed-after-digest-check";
+      return result;
+    });
+
+  try {
+    const result = await validation.execute(
+      command,
+      new AbortController().signal,
+    );
+    expect(result.status, JSON.stringify(result)).toBe("complete");
+    expect(result.requestId).toBe("original");
+    expect(result.value?.jobSha256).toBe(expectedJob);
+    expect(JSON.stringify(result)).not.toContain("changed-after-digest-check");
+  } finally {
+    mutated.mockRestore();
+    await validation.close();
+  }
+});
+
+it("rejects changed outer diagnostic effects even when the inner Job digest still matches", async () => {
+  const { f, expectedJob } = await interruptedValidationFixture();
+  const validation = await f.openValidation();
+  let kind: "reserved" | "unknown" | "extra" | "actual" = "reserved";
+  const change = (record: import("@design-studio/storage").StoredJob) => {
+    if (!record.job.id.startsWith("diagnostic_")) return;
+    const effect = required(record.effects[0]);
+    if (kind === "extra") record.effects.push(structuredClone(effect));
+    else if (kind === "actual") required(effect.actual).externalCalls = 0;
+    else effect.state = kind;
+  };
+  const metadata = LocalStore.prototype.referenceJobMetadata;
+  const state = LocalStore.prototype.referencePublicationState;
+  vi.spyOn(LocalStore.prototype, "referenceJobMetadata").mockImplementation(
+    async function (this: LocalStore, ...args) {
+      const result = await metadata.apply(this, args);
+      if (result.status === "complete" && result.value)
+        change(result.value.record);
+      return result;
+    },
+  );
+  vi.spyOn(
+    LocalStore.prototype,
+    "referencePublicationState",
+  ).mockImplementation(async function (this: LocalStore, ...args) {
+    const result = await state.apply(this, args);
+    if (result.status === "complete")
+      for (const record of result.value.jobs) change(record);
+    return result;
+  });
+  try {
+    for (const value of ["reserved", "unknown", "extra", "actual"] as const) {
+      kind = value;
+      expect(
+        await validation.execute(
+          {
+            operation: "reference-recovery-plan",
+            requestId: "original",
+            expectedJob,
+          },
+          new AbortController().signal,
+        ),
+      ).toMatchObject({
+        status: "failed",
+        reason: "ineligible-job",
+        inputAccounting: { privateBytes: 0, networkBytes: 0 },
+      });
+    }
+  } finally {
+    await validation.close();
+  }
+});
+
+it.each([false, true])(
+  "retains failed validation cleanup ownership and preserves primary failure=%s",
+  async (failDecoder) => {
+    const { f, expectedJob } = await interruptedValidationFixture();
+    const validation = await f.openValidation();
+    const closeReader = vi.spyOn(ReferenceReader.prototype, "close");
+    if (failDecoder)
+      vi.spyOn(ReferenceReader.prototype, "png").mockRejectedValueOnce(
+        new HostBoundaryError("ASSET_INVALID", "Synthetic decoder failure"),
+      );
+    f.failInventoryClose();
+    const command = {
+      operation: "reference-recovery-plan" as const,
+      requestId: "original",
+      expectedJob,
+    };
+    const failure = await validation
+      .execute(command, new AbortController().signal)
+      .then(
+        () => {
+          throw new Error("Expected failed cleanup");
+        },
+        (error: unknown) => error,
+      );
+    const detail =
+      failure instanceof Error && failure.cause instanceof AggregateError
+        ? failure.cause.errors.map(String).join("; ")
+        : String(failure);
+    expect(failure, detail).toMatchObject({
+      operationCode: failDecoder ? "ASSET_INVALID" : "INTERRUPTED",
+      cleanupCode: "INTERRUPTED",
+    });
+    expect(closeReader).toHaveBeenCalledTimes(2);
+    expect(f.readPins).toBe(1);
+    await expect(
+      validation.execute(command, new AbortController().signal),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await validation.close();
+    expect(f.readPins).toBe(0);
+    await validation.close();
+  },
+);
 
 it.each(["private", "network"] as const)(
   "keeps exact aggregate and EOF boundaries closed for %s input",

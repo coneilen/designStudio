@@ -5,6 +5,21 @@ No HTTP routes, database, jobs, media validators, model calls or device provider
 
 ## Trusted composition
 
+`inspectRetainedReference` is a separate read-only, explicitly authorized native
+inspection. It receives exact journal descriptors and authenticated inventory,
+not caller filenames. It checks bounded namespaces/native pins and hashes only
+the requested retained bytes and necessary historical stages. Unknown,
+duplicate, foreign, reparse or ambiguous publications deny. Single-link
+stage-only/published-only reads preserve all names; an exact-looking nlink2
+pair is classified as native-read-blocked without reading or unlinking it.
+Ordinary inspection and publication/reconciliation rules are unchanged.
+Physical reads include shared-meter EOF reservations, and returned read leases
+must be checked and closed. Failed closes stay owned for close-only retry,
+including failures before an inspection result can be returned.
+Source reads in this composition retain their native pins and verified identity
+until `closeRetainedProofReads`; final inventory must match those identities.
+Cleanup attempts all independent closures, retaining failed ones for retry.
+
 `authorizeOperation(context, scope, authority)` throws `HostBoundaryError` with
 a contract `ErrorCode`. `Authority` is `(AuthorizationContext) => boolean` and
 is **mandatory**: the host cannot infer authenticity from valid JSON, a session

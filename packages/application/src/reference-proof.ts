@@ -18,7 +18,10 @@ import { parseFigmaSelection } from "@design-studio/figma-import";
 import { OperationGuard, type ProjectFileSystem } from "@design-studio/host";
 import type { CaptureWork } from "@design-studio/project-host";
 import type { LocalStore } from "@design-studio/storage";
-import { parseCaptureJson } from "../../figma-capture/dist/decode.js";
+import {
+  decodeReference,
+  parseCaptureJson,
+} from "../../figma-capture/dist/decode.js";
 import {
   REFERENCE_LIMITATIONS,
   REFERENCE_LIMITS,
@@ -75,6 +78,7 @@ export class ReferenceReader {
     readonly context: OperationContext,
     readonly input: ReferenceInput,
     readonly diagnostic = false,
+    readonly retainedValidation = false,
   ) {
     this.guard = new OperationGuard(
       context,
@@ -100,6 +104,11 @@ export class ReferenceReader {
       if (!this.work.diagnosticAuthority)
         throw new ApplicationError("FORBIDDEN");
       await this.work.diagnosticAuthority();
+    }
+    if (this.retainedValidation) {
+      if (!this.work.referenceValidationAuthority)
+        throw new ApplicationError("FORBIDDEN");
+      await this.work.referenceValidationAuthority();
     }
     this.guard.check();
     return digest;
@@ -179,6 +188,24 @@ export class ReferenceReader {
   }
   async close() {
     await this.watch.close();
+  }
+  async png(bytes: Uint8Array) {
+    await this.check();
+    const forbidden = () => {
+      throw new ApplicationError("FORBIDDEN");
+    };
+    const result = await decodeReference(bytes, {
+      context: this.context,
+      signal: this.watch.signal,
+      policy: { imageOrigins: [] },
+      body: 0,
+      check: () => this.guard.check(),
+      dnsQuery: forbidden,
+      receive: forbidden,
+      decoded: forbidden,
+    });
+    await this.check();
+    return result;
   }
   async proposal(
     requestId: string,

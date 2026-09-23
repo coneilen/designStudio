@@ -1,5 +1,51 @@
 # @design-studio/application
 
+## Read-only retained-reference validation
+
+`openNativeReferenceValidation(project)` is a separate native facade for
+`reference-recovery-plan`. It requires the exact installed v6 validation
+supplement and an existing owned project; it does not open the ordinary writable
+capture runtime. Input is the original capture request plus the metadata
+inspector's **Job** digest (`canonicalDigest(record.job)`), not an arbitrary job,
+path or URL. Caller input is snapshotted before any asynchronous work.
+
+The plan authenticates the full StoredJob, exact two retained stages, settled
+effect, quarantined resource/expired lease, absent receipt, approval chain,
+original reference and capture-recovery/source closure. It physically reads and
+hashes the target bytes, assigns roles from canonical evidence and its exact
+reference pointer, and decodes the PNG under existing bounds. Source dimensions,
+color and partial-reference limitations remain explicit. Unrelated committed
+blobs/exports receive bounded namespace/identity checks, not a misleading
+whole-project body-integrity claim; necessary historical stages are verified.
+
+Single-link stage-only and published-only outputs can yield
+`eligible-for-recovery-review`. An exact-looking two-name/two-link publication
+is explicitly `known-pair-native-read-blocked`: the native owner/DACL helper
+does not admit multi-link reads. No reconciliation, unlink, adoption, retry,
+provider/DNS/vault call, receipt, approval or persistent plan is performed.
+Metadata-only and ordinary full inspection retain their previous behavior.
+
+The closed projection contains hashes, counts, dimensions, dispositions and a
+stable proof, never bytes, paths, private URLs or design text. The proof also
+binds native installation/project/database identities and the full metadata
+snapshot. A valid PNG is not a recovered image or a completed acquisition.
+Future recovery requires a separately reviewed write supplement, a unique
+original-job reservation, append-only evidence/receipt and explicit conversion
+resolution; existing conversion does not consume this plan.
+
+Every physical artifact read and EOF reservation shares the unchanged 25 MiB
+meter through awaited proof, decoding, response and read-handle/watch closure.
+Source proof reads retain native pins and their verified native/stat identities
+until final inventory and response assembly. Repeated reads cannot replace an
+incompatible identity, and current inventory/DACL checks must match the exact
+verified source scope without another source-body pass.
+The realistic synthetic 2.4 MB source/847,196-byte PNG case charges 5,698,604
+private bytes (5,698,575 physical bytes plus 29 EOF reservations), zero network.
+This is validation-only evidence, not a recovery-commit or live-image claim.
+Failed cleanup retains ownership and the meter, joins independent cleanup,
+preserves the primary error and rejects further execution until close-only
+continuation succeeds.
+
 ## Native reference evidence
 
 The separate diagnostic-successor commands require the version-5 native

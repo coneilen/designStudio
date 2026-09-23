@@ -8,6 +8,14 @@ successful validation, accessors, cycles, depth and non-finite/non-JSON values.
 
 ## Native capture integration (package 1.4.0)
 
+`NativeReferenceRecoveryPlanEnvelope` and `ReferenceRecoveryPlan` describe the
+separate read-only retained-byte validator. Successful verification means
+`eligible-for-recovery-review`, while the historical job remains interrupted
+and consumed. The closed projection contains bounded hashes, lengths,
+dispositions, PNG dimensions and a stable proof, never image/private-text
+payloads. A plan is neither a commit receipt nor authority to apply recovery.
+Existing reference/metadata contracts and HTTP routes are unchanged.
+
 `NativeCaptureEnvelope` is the closed, native-only result for capture, inspect,
 draft conversion and explicit private artifact output. It separates job state
 from capture completeness and render readiness. A completed partial-inspection

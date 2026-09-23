@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
 import Database from "better-sqlite3";
+import { immutableDatabaseUri } from "./immutable-sqlite.js";
 import { StorageError, type StorageOptions } from "./types.js";
 
 const applicationId = 0x44535431;
@@ -44,17 +45,42 @@ export async function openDatabase(
     artifactRootId: options.artifactRootId,
     permissionScope: options.permissionScope,
   });
+  if (options.access === "read-only") {
+    if (!options.readonlySnapshot)
+      throw new StorageError(
+        "AUTHORIZATION_CHANGED",
+        "Read-only storage requires a pinned immutable main database.",
+      );
+    await options.readonlySnapshot.check();
+  }
   let db: Database.Database | undefined;
   try {
-    db = new Database(path, {
-      nativeBinding: options.nativeBinding,
-      timeout: 0,
-    });
-    db.pragma("locking_mode = EXCLUSIVE");
-    // Retained SQLite OS locks are the service lease; a dead process releases them.
-    db.exec("BEGIN EXCLUSIVE; COMMIT");
+    db = new Database(
+      options.access === "read-only"
+        ? immutableDatabaseUri(path, options.nativeBinding)
+        : path,
+      {
+        nativeBinding: options.nativeBinding,
+        timeout: 0,
+        ...(options.access === "read-only"
+          ? { readonly: true, fileMustExist: true }
+          : {}),
+      },
+    );
+    if (options.access === "read-only") {
+      db.pragma("query_only = ON");
+    } else {
+      db.pragma("locking_mode = EXCLUSIVE");
+      // Retained SQLite OS locks are the service lease; a dead process releases them.
+      db.exec("BEGIN EXCLUSIVE; COMMIT");
+    }
     const version = db.pragma("user_version", { simple: true });
     const app = db.pragma("application_id", { simple: true });
+    if (options.access === "read-only" && version !== 4)
+      throw new StorageError(
+        "SCHEMA_INCOMPATIBLE",
+        "Read-only inspection requires an existing current schema.",
+      );
     const tables = db
       .prepare(
         "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
@@ -89,8 +115,10 @@ export async function openDatabase(
     }
     if (db.pragma("integrity_check", { simple: true }) !== "ok")
       throw new StorageError("INTEGRITY", "SQLite integrity check failed.");
-    db.pragma("journal_mode = WAL");
-    db.pragma("synchronous = FULL");
+    if (options.access !== "read-only") {
+      db.pragma("journal_mode = WAL");
+      db.pragma("synchronous = FULL");
+    }
     db.pragma("foreign_keys = ON");
     if (version === 0) {
       const connection = db;
@@ -154,6 +182,7 @@ export async function openDatabase(
         "INTEGRITY",
         "SQLite foreign keys are inconsistent.",
       );
+    if (options.access === "read-only") await options.readonlySnapshot?.check();
     return db;
   } catch (error) {
     db?.close();

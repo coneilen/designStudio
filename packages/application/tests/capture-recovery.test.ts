@@ -1,5 +1,6 @@
 import {
   link,
+  lstat,
   mkdir,
   mkdtemp,
   readdir,
@@ -43,13 +44,17 @@ import { nativeCapturePolicy } from "../../project-host/dist/capture-authority.j
 import { CAPTURE_DIAGNOSTIC_POLICY_SHA256 } from "../../project-host/src/capture-diagnostic-profile.js";
 import { CAPTURE_RECOVERY_POLICY_SHA256 } from "../../project-host/src/capture-recovery-profile.js";
 import { CAPTURE_REFERENCE_POLICY_SHA256 } from "../../project-host/src/capture-reference-profile.js";
+import { REFERENCE_VALIDATION_POLICY_SHA256 } from "../../project-host/src/reference-validation-profile.js";
+import { initializeImmutableSqlite } from "../../storage/dist/immutable-sqlite.js";
 import {
+  addSyntheticCaptureProtection,
   addSyntheticStoppedCaptures,
   corruptSyntheticCapture,
   corruptSyntheticCaptureStage,
   mutateOpenSyntheticCapture,
   removeSyntheticCaptureProtection,
 } from "../../storage/tests/capture-recovery-corruption.js";
+import { syntheticImmutableSnapshot } from "../../storage/tests/support.js";
 import {
   CAPTURE_RECOVERY_CONFIRMATION,
   nativeCaptureResources,
@@ -65,6 +70,7 @@ import {
   REFERENCE_APPROVAL_CONFIRMATION,
   REFERENCE_DOWNLOAD_CONFIRMATION,
 } from "../src/reference-runtime.js";
+import { openNativeReferenceValidation } from "../src/reference-validation.js";
 
 const seam = vi.hoisted(() => ({ work: undefined as CaptureWork | undefined }));
 vi.mock("@design-studio/project-host", async (original) => ({
@@ -125,6 +131,11 @@ async function fixture(
     stageCount?: number;
   } = {},
 ) {
+  initializeImmutableSqlite(
+    path.resolve(
+      ".tools\\sqlite-prebuild\\build\\Release\\better_sqlite3.node",
+    ),
+  );
   const root = await mkdtemp(
     path.join(tmpdir(), "capture-recovery-synthetic-"),
   );
@@ -155,6 +166,11 @@ async function fixture(
     ".tools\\sqlite-prebuild\\build\\Release\\better_sqlite3.node",
   );
   let runtime: NativeCaptureRuntime;
+  let validation:
+    | Awaited<ReturnType<typeof openNativeReferenceValidation>>
+    | undefined;
+  let validationMode = false;
+  let clockOffset = 0;
   let store: LocalStore;
   let policy: ReturnType<typeof nativeCapturePolicy>;
   let credentialSha256 = "b".repeat(64);
@@ -217,7 +233,40 @@ async function fixture(
       readyCredential: ready,
       referenceAuthority: async () => CAPTURE_REFERENCE_POLICY_SHA256,
       diagnosticAuthority: async () => CAPTURE_DIAGNOSTIC_POLICY_SHA256,
+      referenceValidationAuthority: async () =>
+        REFERENCE_VALIDATION_POLICY_SHA256,
+      pinReferenceValidationDatabase: () =>
+        syntheticImmutableSnapshot(project.paths.database),
+      pinReferenceValidationEntry: async (rootId, relative) => {
+        const filename = path.join(
+          rootId === project.artifactRootId ? artifacts : outputs,
+          ...relative.split("/"),
+        );
+        const stat = await lstat(filename);
+        if (stat.isSymbolicLink() || (!stat.isDirectory() && stat.nlink !== 1))
+          throw new HostBoundaryError(
+            "PATH_FORBIDDEN",
+            "Synthetic retained pin refused.",
+          );
+        return {
+          handle: 1,
+          byteLength: stat.size,
+          identity: {
+            path: filename,
+            volume: stat.dev,
+            file: String(stat.ino),
+          },
+          read: () => {
+            throw new Error("Synthetic native pin has no body reader");
+          },
+          close: () => {},
+        };
+      },
       recoveryAuthority: async () => {
+        if (validationMode)
+          throw new Error(
+            "Read-only validation must not inspect the credential journal",
+          );
         if (!admitted)
           throw new HostBoundaryError(
             "ACTION_REQUIRED",
@@ -249,11 +298,16 @@ async function fixture(
     };
     seam.work = work;
     policy = nativeCapturePolicy(work);
-    runtime = await assembleNativeCapture(project);
+    const now = policy.clock.now.bind(policy.clock);
+    vi.spyOn(policy.clock, "now").mockImplementation(() => now() + clockOffset);
+    if (validationMode)
+      validation = await openNativeReferenceValidation(project);
+    else runtime = await assembleNativeCapture(project);
     return { policy, store, runtime };
   };
   const initialOwners = await open();
   cleanups.push(async () => {
+    await validation?.close();
     await runtime.close();
     await rm(root, { recursive: true, force: true });
   });
@@ -621,6 +675,26 @@ async function fixture(
     setFault(value: string | undefined) {
       fault = value;
     },
+    advanceClock(milliseconds: number) {
+      clockOffset += milliseconds;
+    },
+    async validateRetained(expectedJob: string) {
+      await runtime.close();
+      validationMode = true;
+      await open();
+      try {
+        return await required(validation).execute(
+          {
+            operation: "reference-recovery-plan",
+            requestId: input.nextRequestId,
+            expectedJob,
+          },
+          new AbortController().signal,
+        );
+      } finally {
+        await validation?.close();
+      }
+    },
     raceBeforeCommit(nextOnly = false) {
       beforeCommit = () =>
         mutateOpenSyntheticCapture(
@@ -635,7 +709,9 @@ async function fixture(
         );
     },
     async reopen() {
+      await validation?.close();
       await runtime.close();
+      validationMode = false;
       await open();
     },
     async record() {
@@ -1357,6 +1433,11 @@ it("keeps unsupported generation histories refused and accepts independent resou
 it.each([
   "valid",
   "diagnostic-valid",
+  "diagnostic-retained-valid",
+  "diagnostic-retained-unknown-stage",
+  "diagnostic-retained-missing-protection",
+  "diagnostic-retained-extra-input",
+  "diagnostic-retained-extra-output",
   "diagnostic-unknown-stage",
   "diagnostic-missing-protection",
   "diagnostic-receipt-mutation",
@@ -1371,6 +1452,7 @@ it.each([
 ] as const)(
   "authenticates retained predecessor stages after successor conversion and private exports: %s",
   async (fault) => {
+    const retained = fault.startsWith("diagnostic-retained-");
     const f = await fixture(true, undefined, { repaired: true });
     const beforeRecord = await f.record();
     const beforeStages = await f.stages();
@@ -1460,7 +1542,7 @@ it.each([
     );
     expect(next.status, JSON.stringify(next)).toBe("partial");
     expect(next.value?.jobStatus).toBe("completed");
-    if (fault === "valid" || fault === "diagnostic-valid") {
+    if (fault === "valid" || fault === "diagnostic-valid" || retained) {
       const convert = figmaImport.convertFigmaStructure;
       vi.spyOn(figmaImport, "convertFigmaStructure").mockImplementation(
         (...args) => {
@@ -1503,7 +1585,7 @@ it.each([
     if (!currentProjection.success)
       throw new Error("Invalid synthetic conversion evidence");
     expect(currentProjection.value.adapter).toBe("figma-structure-fixed-v2");
-    if (fault === "valid" || fault === "diagnostic-valid")
+    if (fault === "valid" || fault === "diagnostic-valid" || retained)
       expect(
         converted.value?.artifacts.find((entry) => entry.role === "report")
           ?.artifact.byteLength,
@@ -1675,7 +1757,7 @@ it.each([
         { operation: "reference-diagnostic-plan", requestId },
         new AbortController().signal,
       );
-      if (fault !== "diagnostic-valid") {
+      if (fault !== "diagnostic-valid" && !retained) {
         expect(planned.status, JSON.stringify(planned)).toBe("failed");
         expect(image).toHaveBeenCalledTimes(1);
         expect(await f.record()).toEqual(beforeRecord);
@@ -1705,6 +1787,7 @@ it.each([
         new AbortController().signal,
       );
       expect(approved.status, JSON.stringify(approved)).toBe("complete");
+      if (retained) f.setFault("job-after-artifacts");
       const downloaded = await run(
         {
           operation: "reference-diagnostic-download",
@@ -1714,17 +1797,72 @@ it.each([
         },
         new AbortController().signal,
       );
-      expect(downloaded.status, JSON.stringify(downloaded)).toBe("complete");
+      expect(downloaded.status, JSON.stringify(downloaded)).toBe(
+        retained ? "interrupted" : "complete",
+      );
+      if (retained) {
+        f.setFault(undefined);
+        f.advanceClock(40000);
+        const metadata = await run(
+          {
+            operation: "reference-diagnostic-inspect",
+            requestId,
+            inspection: "metadata-only",
+          },
+          new AbortController().signal,
+        );
+        if (fault === "diagnostic-retained-unknown-stage") {
+          const extra = path.join(
+            f.artifacts,
+            ".host-11111111-1111-4111-8111-111111111111",
+          );
+          await mkdir(extra);
+          await writeFile(
+            path.join(extra, "22222222-2222-4222-8222-222222222222"),
+            beforeBytes,
+          );
+        }
+        if (fault === "diagnostic-retained-missing-protection")
+          removeSyntheticCaptureProtection(
+            f.store,
+            required(downloaded.value?.job?.id),
+          );
+        if (
+          fault === "diagnostic-retained-extra-input" ||
+          fault === "diagnostic-retained-extra-output"
+        )
+          addSyntheticCaptureProtection(
+            f.store,
+            required(downloaded.value?.job?.id),
+            fault === "diagnostic-retained-extra-input" ? "job-input" : "job",
+          );
+        const recovered = await f.validateRetained(
+          required(metadata.value?.metadata?.jobSha256),
+        );
+        expect(recovered.status, JSON.stringify(recovered)).toBe(
+          fault === "diagnostic-retained-valid" ? "complete" : "failed",
+        );
+        if (fault === "diagnostic-retained-valid") {
+          expect(recovered.value).toMatchObject({
+            historicalStatus: "interrupted",
+            eligibility: "eligible-for-recovery-review",
+          });
+          expect(recovered.inputAccounting?.privateBytes).toBeLessThan(
+            26214400,
+          );
+        }
+      }
       await f.reopen();
       const inspect = required(f.runtime.reference).bind(f.runtime);
-      expect(
-        (
-          await inspect(
-            { operation: "reference-diagnostic-inspect", requestId },
-            new AbortController().signal,
-          )
-        ).value?.receipt,
-      ).toEqual(downloaded.value?.receipt);
+      if (!retained)
+        expect(
+          (
+            await inspect(
+              { operation: "reference-diagnostic-inspect", requestId },
+              new AbortController().signal,
+            )
+          ).value?.receipt,
+        ).toEqual(downloaded.value?.receipt);
       const original = await inspect(
         { operation: "reference-inspect", requestId },
         new AbortController().signal,

@@ -1,3 +1,4 @@
+import path from "node:path";
 import type {
   AuthorizationContext,
   CredentialStore,
@@ -30,8 +31,12 @@ import {
   assertCaptureDiagnosticInstallation,
   assertCaptureRecoveryInstallation,
   assertCaptureReferenceInstallation,
+  assertReferenceValidationInstallation,
 } from "./installation.js";
-import { refuse } from "./native.js";
+import { digest } from "./installation-manifest.js";
+import { loadNative, type ReadLease, refuse } from "./native.js";
+import { pinImmutableReferenceDatabase } from "./reference-validation-database.js";
+import { REFERENCE_VALIDATION_POLICY_SHA256 } from "./reference-validation-profile.js";
 
 export interface CaptureWork {
   readonly project: CaptureProject;
@@ -51,6 +56,17 @@ export interface CaptureWork {
   }>;
   referenceAuthority?(): Promise<string>;
   diagnosticAuthority?(): Promise<string>;
+  referenceValidationAuthority?(): Promise<string>;
+  pinReferenceValidationDatabase?(): Promise<{
+    identitySha256: string;
+    check(): Promise<void>;
+    close(): void;
+  }>;
+  pinReferenceValidationEntry?(
+    rootId: string,
+    relative: string,
+    directory: boolean,
+  ): Promise<ReadLease>;
   isCurrent(): boolean;
   attestDatabase(
     filename: string,
@@ -74,6 +90,7 @@ export function acquireCaptureWork(project: CaptureProject): CaptureWork {
     );
   owner.work++;
   const readers = new Set<ScopedCredentialStore>();
+  const retainedPins = new Set<ReadLease>();
   let closed = false;
   let policy: NativeCapturePolicy | undefined;
   const current = async () => {
@@ -147,6 +164,87 @@ export function acquireCaptureWork(project: CaptureProject): CaptureWork {
       await current();
       assertCaptureDiagnosticInstallation(owner.installation);
       return CAPTURE_DIAGNOSTIC_POLICY_SHA256;
+    },
+    async referenceValidationAuthority() {
+      await current();
+      assertReferenceValidationInstallation(owner.installation);
+      return REFERENCE_VALIDATION_POLICY_SHA256;
+    },
+    async pinReferenceValidationDatabase() {
+      return pinImmutableReferenceDatabase({
+        filename: project.paths.database,
+        sid: owner.sid,
+        retainedPins,
+        authoritySha256: digest(
+          Buffer.from(
+            JSON.stringify({
+              installation: owner.installation.identity,
+              projectId: project.projectId,
+              actorId: work.actorId,
+              artifactRootId: project.artifactRootId,
+              permissionScope: work.permissionScope,
+              policySha256: REFERENCE_VALIDATION_POLICY_SHA256,
+            }),
+          ),
+        ),
+        authorize: async () => {
+          await current();
+          assertReferenceValidationInstallation(owner.installation);
+        },
+      });
+    },
+    async pinReferenceValidationEntry(
+      rootId: string,
+      relative: string,
+      directory: boolean,
+    ) {
+      await current();
+      assertReferenceValidationInstallation(owner.installation);
+      const root =
+        rootId === project.artifactRootId
+          ? project.paths.artifacts
+          : rootId === `outputs_${project.projectId}`
+            ? project.paths.outputs
+            : undefined;
+      const parts = relative.split("/");
+      if (
+        !root ||
+        (relative !== "" &&
+          (parts.length > 2 ||
+            parts.some(
+              (part) =>
+                !/^[A-Za-z0-9_.-]{1,120}$/.test(part) ||
+                part === "." ||
+                part === ".." ||
+                /[. ]$/.test(part),
+            )))
+      )
+        refuse("Retained validation path is outside the admitted roots.");
+      const native = await loadNative();
+      const pin = native.pinRead(
+        path.join(root, ...parts),
+        directory,
+        owner.sid,
+      );
+      retainedPins.add(pin);
+      const closePin = () => {
+        pin.close();
+        retainedPins.delete(pin);
+      };
+      try {
+        await current();
+        assertReferenceValidationInstallation(owner.installation);
+        return Object.freeze({
+          handle: pin.handle,
+          identity: pin.identity,
+          byteLength: pin.byteLength,
+          read: pin.read.bind(pin),
+          close: closePin,
+        });
+      } catch (error) {
+        closePin();
+        throw error;
+      }
     },
     async attestDatabase(
       filename: string,
@@ -261,6 +359,20 @@ export function acquireCaptureWork(project: CaptureProject): CaptureWork {
     close() {
       if (closed) return;
       if (readers.size) refuse("Original credential work has not quiesced.");
+      const errors: unknown[] = [];
+      for (const pin of [...retainedPins]) {
+        try {
+          pin.close();
+          retainedPins.delete(pin);
+        } catch (error) {
+          errors.push(error);
+        }
+      }
+      if (errors.length)
+        throw new AggregateError(
+          errors,
+          "Retained native reads have not closed.",
+        );
       policy?.close();
       closed = true;
       owner.work--;

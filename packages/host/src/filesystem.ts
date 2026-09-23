@@ -46,6 +46,22 @@ export interface ProjectRoot {
 }
 export interface ProjectFileSystemOptions {
   reserveRead?(bytes: number, context: OperationContext): void;
+  retainedReferenceInspection?: {
+    artifactRootId: string;
+    outputRootId: string;
+    authorize(
+      input: RetainedReferenceInput,
+      context: OperationContext,
+    ): Promise<void>;
+    pin(
+      rootId: string,
+      relative: string,
+      directory: boolean,
+    ): Promise<{
+      identity: { path: string; volume: number; file: string };
+      close(): void;
+    }>;
+  };
   referenceInspection?: {
     artifactRootId: string;
     outputRootId: string;
@@ -81,6 +97,11 @@ export interface ProjectFileSystemOptions {
     context: OperationContext,
   ) => Promise<void>;
 }
+type RetainedReadPin = Awaited<
+  ReturnType<
+    NonNullable<ProjectFileSystemOptions["retainedReferenceInspection"]>["pin"]
+  >
+>;
 export interface CaptureRecoveryStage {
   stagingId: string;
   jobId: string;
@@ -90,6 +111,24 @@ export interface CaptureRecoveryStage {
 export interface CaptureRecoveryInspection {
   artifacts: Artifact[];
   stages: { descriptor: CaptureRecoveryStage; bytes: Uint8Array }[];
+}
+export interface RetainedReferenceInput {
+  artifacts: readonly Artifact[];
+  targets: readonly CaptureRecoveryStage[];
+  history: readonly CaptureRecoveryStage[];
+}
+export interface RetainedReferenceInspection {
+  identitySha256: string;
+  targets: {
+    descriptor: CaptureRecoveryStage;
+    publication:
+      | "stage-only"
+      | "published-only"
+      | "known-pair-native-read-blocked";
+    bytes?: Uint8Array;
+  }[];
+  check(): Promise<void>;
+  close(): void;
 }
 /** Instance-owned identity, not a serializable cleanup grant. */
 export interface OwnedPendingPublication {
@@ -222,8 +261,33 @@ async function boundedEntries(
 }
 
 export class ProjectFileSystem implements FileSystemBoundary {
+  get hasRetainedReadClosures() {
+    return this.retainedClosures.size !== 0;
+  }
   private readonly roots = new Map<string, Root>();
   private readonly pending = new Map<string, Pending>();
+  private readonly retainedClosures = new Set<() => void>();
+  private readonly proofClosures = new Set<() => void>();
+  private readonly proofReads = new Map<
+    string,
+    { identity: RetainedReadPin["identity"]; stat: Stats }
+  >();
+  private sameProofRead(
+    proof: { identity: RetainedReadPin["identity"]; stat: Stats },
+    pin: RetainedReadPin,
+    stat: Stats,
+  ) {
+    return (
+      proof.identity.path === pin.identity.path &&
+      proof.identity.volume === pin.identity.volume &&
+      proof.identity.file === pin.identity.file &&
+      sameFile(proof.stat, stat) &&
+      proof.stat.nlink === stat.nlink &&
+      proof.stat.size === stat.size &&
+      proof.stat.mtimeMs === stat.mtimeMs &&
+      proof.stat.ctimeMs === stat.ctimeMs
+    );
+  }
   private readonly recoveries = new WeakMap<OwnedPendingPublication, Pending>();
   private readonly nativeReceipts = new Map<string, NativeReceipt>();
   private readonly nativePublisher = new WindowsNtfsPublisher();
@@ -533,10 +597,68 @@ export class ProjectFileSystem implements FileSystemBoundary {
       return this.serial(async () => {
         guard.check();
         const absolute = await this.resolve(root, request.path);
-        const result = await this.readBytes(absolute, guard);
-        await this.resolve(root, request.path);
-        guard.check();
-        return result;
+        const pin = await this.options.retainedReferenceInspection?.pin(
+          request.artifactRootId,
+          request.path,
+          false,
+        );
+        const closePin = () => {
+          pin?.close();
+          this.retainedClosures.delete(closePin);
+          this.proofClosures.delete(closePin);
+        };
+        if (pin) {
+          this.retainedClosures.add(closePin);
+          this.proofClosures.add(closePin);
+        }
+        let bytes: Uint8Array | undefined;
+        let failed = false;
+        let failure: unknown;
+        try {
+          const observed = pin ? await io(() => lstat(absolute)) : undefined;
+          bytes = await this.readBytes(absolute, guard, observed);
+          await this.resolve(root, request.path);
+          guard.check();
+          if (pin && observed) {
+            const key = `${request.artifactRootId}\0${request.path}`;
+            const prior = this.proofReads.get(key);
+            if (prior && !this.sameProofRead(prior, pin, observed))
+              throw new HostBoundaryError(
+                "ARTIFACT_INTEGRITY",
+                "Immutable source read identity changed.",
+              );
+            this.proofReads.set(key, {
+              identity: pin.identity,
+              stat: observed,
+            });
+          }
+        } catch (error) {
+          failed = true;
+          failure = error;
+        }
+        try {
+          if (failed || !pin) closePin();
+        } catch (error) {
+          bytes?.fill(0);
+          throw new HostBoundaryError(
+            failure instanceof HostBoundaryError ? failure.code : "INTERRUPTED",
+            "Retained read cleanup did not settle.",
+            false,
+            {
+              cause: new AggregateError([...(failed ? [failure] : []), error]),
+            },
+          );
+        }
+        if (failed) {
+          bytes?.fill(0);
+          throw failure;
+        }
+        if (!bytes)
+          throw new HostBoundaryError(
+            "INTERNAL_ERROR",
+            "Read did not produce bytes.",
+          );
+        return bytes;
       });
     });
   }
@@ -961,10 +1083,47 @@ export class ProjectFileSystem implements FileSystemBoundary {
   close(): Promise<void> {
     return this.serial(() => this.cleanup(), true);
   }
+  private closeRetainedReads(): void {
+    const errors: unknown[] = [];
+    for (const close of [...this.retainedClosures]) {
+      try {
+        close();
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    if (errors.length)
+      throw new HostBoundaryError(
+        "INTERRUPTED",
+        "Independent retained read closures did not settle.",
+        false,
+        { cause: new AggregateError(errors) },
+      );
+    this.proofReads.clear();
+  }
+  closeRetainedProofReads(): void {
+    const errors: unknown[] = [];
+    for (const close of [...this.proofClosures]) {
+      try {
+        close();
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    if (errors.length)
+      throw new HostBoundaryError(
+        "INTERRUPTED",
+        "Retained source proof reads did not close.",
+        false,
+        { cause: new AggregateError(errors) },
+      );
+    this.proofReads.clear();
+  }
   /** Dispose this boundary without discarding privately journaled source attempts. */
   closePreservingStages(): Promise<void> {
     return this.serial(async () => {
       if (this.preserved) return;
+      this.closeRetainedReads();
       this.assertCloseable();
       this.closed = true;
       this.preserved = true;
@@ -1204,6 +1363,419 @@ export class ProjectFileSystem implements FileSystemBoundary {
     context: OperationContext,
   ): Promise<Outcome<CaptureRecoveryInspection>> {
     return this.inspectRetainedPublications(input, context, false);
+  }
+  inspectRetainedReference(
+    supplied: RetainedReferenceInput,
+    context: OperationContext,
+  ): Promise<Outcome<RetainedReferenceInspection>> {
+    const input = structuredClone(supplied);
+    return this.execute(context, async (context) => {
+      const config = this.options.retainedReferenceInspection;
+      if (
+        !config ||
+        input.targets.length !== 2 ||
+        input.history.length > 128 ||
+        input.artifacts.length > 20000
+      )
+        throw new HostBoundaryError(
+          "FORBIDDEN",
+          "Retained validation is not admitted.",
+        );
+      await config.authorize(input, context);
+      const expected = new Map<string, CaptureRecoveryStage>();
+      for (const stage of [...input.targets, ...input.history]) {
+        if (
+          !/^[0-9a-f-]{36}$/.test(stage.stagingId) ||
+          !validateContract("Artifact", stage.artifact).success ||
+          stage.artifact.id !== `sha256_${stage.artifact.sha256}` ||
+          stage.artifact.path !== `blobs/${stage.artifact.sha256}` ||
+          stage.artifact.mediaType !== "application/octet-stream" ||
+          expected.has(stage.stagingId)
+        )
+          throw new HostBoundaryError(
+            "ARTIFACT_INTEGRITY",
+            "Invalid retained stage descriptor.",
+          );
+        expected.set(stage.stagingId, stage);
+      }
+      if (new Set(input.targets.map((s) => s.artifact.sha256)).size !== 2)
+        throw new HostBoundaryError(
+          "ARTIFACT_INTEGRITY",
+          "Retained outputs are not distinct.",
+        );
+      const artifacts = new Map(input.artifacts.map((a) => [a.sha256, a]));
+      if (
+        artifacts.size !== input.artifacts.length ||
+        input.artifacts.some(
+          (a) =>
+            !validateContract("Artifact", a).success ||
+            a.id !== `sha256_${a.sha256}` ||
+            a.path !== `blobs/${a.sha256}`,
+        )
+      )
+        throw new HostBoundaryError(
+          "ARTIFACT_INTEGRITY",
+          "Invalid retained artifact inventory.",
+        );
+      const pins: { close(): void }[] = [];
+      const targets: RetainedReferenceInspection["targets"] = [];
+      let closed = false;
+      const close = () => {
+        if (closed) return;
+        for (const target of targets) target.bytes?.fill(0);
+        const errors: unknown[] = [];
+        for (const pin of [...pins].reverse()) {
+          try {
+            pin.close();
+            pins.splice(pins.indexOf(pin), 1);
+          } catch (error) {
+            errors.push(error);
+          }
+        }
+        if (errors.length)
+          throw new HostBoundaryError(
+            "INTERRUPTED",
+            "Retained read handles did not close.",
+            false,
+            { cause: new AggregateError(errors) },
+          );
+        closed = true;
+        this.retainedClosures.delete(close);
+      };
+      this.retainedClosures.add(close);
+      type Entry = {
+        rootId: string;
+        relative: string;
+        absolute: string;
+        stat: Stats;
+        directory: boolean;
+      };
+      const scan = async (): Promise<Entry[]> => {
+        const entries: Entry[] = [];
+        let remaining = 20000;
+        const seenStages = new Set<string>();
+        const seenBlobs = new Set<string>();
+        const add = async (
+          rootId: string,
+          relative: string,
+          absolute: string,
+          directory: boolean,
+        ) => {
+          const stat = await io(() => lstat(absolute));
+          if (
+            stat.isSymbolicLink() ||
+            stat.isDirectory() !== directory ||
+            (!directory && !stat.isFile()) ||
+            path.resolve(await io(() => realpath(absolute))) !==
+              path.resolve(absolute)
+          )
+            throw new HostBoundaryError(
+              "PATH_FORBIDDEN",
+              "Retained path is not physical.",
+            );
+          entries.push({ rootId, relative, absolute, stat, directory });
+        };
+        for (const rootId of [config.artifactRootId, config.outputRootId]) {
+          const { root, guard } = this.guard(rootId, context, "read");
+          if (rootId === config.artifactRootId && !root.managedBlobs)
+            throw new HostBoundaryError(
+              "FORBIDDEN",
+              "Retained root is not managed.",
+            );
+          await this.checkRoot(root);
+          const list = async (directory: string) => {
+            const names = await boundedEntries(directory, remaining, guard);
+            remaining -= names.length;
+            if (
+              new Set(names.map((n) => n.normalize("NFC").toLowerCase()))
+                .size !== names.length
+            )
+              throw new HostBoundaryError(
+                "PATH_FORBIDDEN",
+                "Retained namespace aliases.",
+              );
+            return names.sort();
+          };
+          await add(rootId, "", root.path, true);
+          for (const name of await list(root.path)) {
+            const directory = path.join(root.path, name);
+            if (name === "blobs" && rootId === config.artifactRootId) {
+              await add(rootId, name, directory, true);
+              for (const hash of await list(directory)) {
+                if (
+                  !/^[0-9a-f]{64}$/.test(hash) ||
+                  (!artifacts.has(hash) &&
+                    !input.targets.some((s) => s.artifact.sha256 === hash))
+                )
+                  throw new HostBoundaryError(
+                    "ACTION_REQUIRED",
+                    "Unclassified retained blob.",
+                  );
+                seenBlobs.add(hash);
+                await add(
+                  rootId,
+                  `blobs/${hash}`,
+                  path.join(directory, hash),
+                  false,
+                );
+              }
+            } else if (/^\.host-[0-9a-f-]{36}$/.test(name)) {
+              await add(rootId, name, directory, true);
+              for (const id of await list(directory)) {
+                if (
+                  rootId !== config.artifactRootId ||
+                  !expected.has(id) ||
+                  seenStages.has(id)
+                )
+                  throw new HostBoundaryError(
+                    "ACTION_REQUIRED",
+                    "Unclassified or duplicate retained stage.",
+                  );
+                seenStages.add(id);
+                await add(
+                  rootId,
+                  `${name}/${id}`,
+                  path.join(directory, id),
+                  false,
+                );
+              }
+            } else if (
+              rootId === config.outputRootId &&
+              /^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$/.test(name)
+            ) {
+              await add(rootId, name, directory, false);
+            } else {
+              throw new HostBoundaryError(
+                "ACTION_REQUIRED",
+                "Unclassified retained namespace.",
+              );
+            }
+          }
+          await this.checkRoot(root);
+          guard.check();
+        }
+        if (
+          [...artifacts.keys()].some((hash) => !seenBlobs.has(hash)) ||
+          input.history.some((s) => !seenStages.has(s.stagingId))
+        )
+          throw new HostBoundaryError(
+            "ARTIFACT_INTEGRITY",
+            "Recorded retained inventory is missing.",
+          );
+        return entries;
+      };
+      const fingerprint = (entries: Entry[]) =>
+        sha256(
+          Buffer.from(
+            JSON.stringify(
+              entries.map(({ rootId, relative, stat, directory }) => ({
+                rootId,
+                relative,
+                directory,
+                dev: stat.dev,
+                ino: stat.ino,
+                size: stat.size,
+                nlink: stat.nlink,
+                mtime: stat.mtimeMs,
+                ctime: stat.ctimeMs,
+              })),
+            ),
+          ),
+        );
+      try {
+        const entries = await scan();
+        const identitySha256 = fingerprint(entries);
+        const paired = new Set<Entry>();
+        const reads: {
+          descriptor: CaptureRecoveryStage;
+          entry: Entry;
+          target?: RetainedReferenceInspection["targets"][number];
+        }[] = [];
+        for (const descriptor of [...input.targets, ...input.history]) {
+          const stages = entries.filter(
+            (e) =>
+              e.rootId === config.artifactRootId &&
+              e.relative.endsWith(`/${descriptor.stagingId}`),
+          );
+          const stage = stages[0];
+          const blob = entries.find(
+            (e) =>
+              e.rootId === config.artifactRootId &&
+              e.relative === descriptor.artifact.path,
+          );
+          const isTarget = input.targets.some(
+            (s) => s.stagingId === descriptor.stagingId,
+          );
+          if (stage && blob && isTarget) {
+            if (
+              !sameFile(stage.stat, blob.stat) ||
+              stage.stat.nlink !== 2 ||
+              blob.stat.nlink !== 2 ||
+              stage.stat.size !== descriptor.artifact.byteLength ||
+              blob.stat.size !== descriptor.artifact.byteLength
+            )
+              throw new HostBoundaryError(
+                "ARTIFACT_INTEGRITY",
+                "Ambiguous retained publication.",
+              );
+            paired.add(stage);
+            paired.add(blob);
+            targets.push({
+              descriptor,
+              publication: "known-pair-native-read-blocked",
+            });
+            continue;
+          }
+          const entry = stage ?? (isTarget ? blob : undefined);
+          if (
+            !entry ||
+            (stage && blob) ||
+            entry.stat.nlink !== 1 ||
+            entry.stat.size !== descriptor.artifact.byteLength
+          )
+            throw new HostBoundaryError(
+              "ARTIFACT_INTEGRITY",
+              "Retained publication is missing or ambiguous.",
+            );
+          const target = isTarget
+            ? {
+                descriptor,
+                publication: stage
+                  ? ("stage-only" as const)
+                  : ("published-only" as const),
+              }
+            : undefined;
+          if (target) targets.push(target);
+          reads.push({ descriptor, entry, ...(target ? { target } : {}) });
+        }
+        const nativeIdentities: RetainedReadPin["identity"][] = [];
+        const proofKeys = new Set(this.proofReads.keys());
+        for (const entry of entries) {
+          if (paired.has(entry)) continue;
+          if (!entry.directory && entry.stat.nlink !== 1)
+            throw new HostBoundaryError(
+              "PATH_FORBIDDEN",
+              "Unexpected retained links.",
+            );
+          const artifact = artifacts.get(entry.relative.slice("blobs/".length));
+          if (
+            entry.relative.startsWith("blobs/") &&
+            artifact &&
+            entry.stat.size !== artifact.byteLength
+          )
+            throw new HostBoundaryError(
+              "ARTIFACT_INTEGRITY",
+              "Recorded blob length differs.",
+            );
+          const pin = await config.pin(
+            entry.rootId,
+            entry.relative,
+            entry.directory,
+          );
+          pins.push(pin);
+          const proofKey = `${entry.rootId}\0${entry.relative}`;
+          const prior = this.proofReads.get(proofKey);
+          if (prior && !this.sameProofRead(prior, pin, entry.stat))
+            throw new HostBoundaryError(
+              "ARTIFACT_INTEGRITY",
+              "Source proof changed before retained inspection.",
+            );
+          proofKeys.delete(proofKey);
+          nativeIdentities.push(pin.identity);
+        }
+        if (proofKeys.size)
+          throw new HostBoundaryError(
+            "ARTIFACT_INTEGRITY",
+            "Source proof is outside the retained inventory.",
+          );
+        const check = async () => {
+          if (closed)
+            throw new HostBoundaryError(
+              "FORBIDDEN",
+              "Retained inspection is closed.",
+            );
+          await config.authorize(input, context);
+          if (fingerprint(await scan()) !== identitySha256)
+            throw new HostBoundaryError(
+              "ARTIFACT_INTEGRITY",
+              "Retained identity inventory changed.",
+            );
+          let index = 0;
+          for (const entry of entries) {
+            if (paired.has(entry)) continue;
+            const fresh = await config.pin(
+              entry.rootId,
+              entry.relative,
+              entry.directory,
+            );
+            pins.push(fresh);
+            const prior = nativeIdentities[index++];
+            if (
+              !prior ||
+              fresh.identity.path !== prior.path ||
+              fresh.identity.volume !== prior.volume ||
+              fresh.identity.file !== prior.file
+            )
+              throw new HostBoundaryError(
+                "ARTIFACT_INTEGRITY",
+                "Current native retained identity changed.",
+              );
+            fresh.close();
+            pins.splice(pins.indexOf(fresh), 1);
+          }
+          await config.authorize(input, context);
+        };
+        if (
+          !targets.some(
+            (t) => t.publication === "known-pair-native-read-blocked",
+          )
+        ) {
+          for (const { descriptor, entry, target } of reads) {
+            const { guard } = this.guard(
+              config.artifactRootId,
+              context,
+              "read",
+            );
+            const bytes = await this.readBytes(
+              entry.absolute,
+              guard,
+              entry.stat,
+            );
+            if (
+              bytes.length !== descriptor.artifact.byteLength ||
+              sha256(bytes) !== descriptor.artifact.sha256
+            ) {
+              bytes.fill(0);
+              throw new HostBoundaryError(
+                "ARTIFACT_INTEGRITY",
+                "Retained bytes differ from the journal.",
+              );
+            }
+            if (target) target.bytes = bytes;
+            else bytes.fill(0);
+          }
+        }
+        await check();
+        return {
+          identitySha256: sha256(
+            Buffer.from(JSON.stringify([identitySha256, nativeIdentities])),
+          ),
+          targets,
+          check,
+          close,
+        };
+      } catch (error) {
+        try {
+          close();
+        } catch (cleanup) {
+          throw new AggregateError(
+            [error, cleanup],
+            "Retained validation and close failed.",
+          );
+        }
+        throw error;
+      }
+    });
   }
   inspectReferencePublications(
     input: readonly CaptureRecoveryStage[],
@@ -1537,6 +2109,7 @@ export class ProjectFileSystem implements FileSystemBoundary {
       );
   }
   private async cleanup(): Promise<void> {
+    this.closeRetainedReads();
     if (this.preserved) return;
     this.assertCloseable();
     this.closed = true;

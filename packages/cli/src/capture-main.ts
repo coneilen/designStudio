@@ -12,7 +12,9 @@ import {
   type NativeCaptureRuntime,
   NativeCaptureStartupCleanupRequired,
   type NativeReferenceInput,
+  type NativeReferenceRecoveryPlanInput,
   openNativeCapture,
+  openNativeReferenceValidation,
   REFERENCE_APPROVAL_CONFIRMATION,
   REFERENCE_DOWNLOAD_CONFIRMATION,
 } from "@design-studio/application/capture";
@@ -21,12 +23,14 @@ import {
   type NativeCaptureEnvelope,
   type NativeCaptureRecoveryEnvelope,
   type NativeReferenceEnvelope,
+  type NativeReferenceRecoveryPlanEnvelope,
   validateContract,
 } from "@design-studio/contracts";
 import {
   assertCaptureDiagnosticInstallation,
   assertCaptureRecoveryInstallation,
   assertCaptureReferenceInstallation,
+  assertReferenceValidationInstallation,
   type CaptureInstallationLease,
   type CaptureProject,
   CaptureStartupCleanupRequired,
@@ -42,7 +46,8 @@ type Action = "setup" | "status" | "update" | "remove";
 type NativeEnvelope =
   | NativeCaptureEnvelope
   | NativeCaptureRecoveryEnvelope
-  | NativeReferenceEnvelope;
+  | NativeReferenceEnvelope
+  | NativeReferenceRecoveryPlanEnvelope;
 interface NativeArguments {
   command:
     | "help"
@@ -53,6 +58,7 @@ interface NativeArguments {
     | "figma-convert"
     | "figma-artifact"
     | "figma-recover"
+    | "figma-reference-recovery-plan"
     | `figma-${NativeReferenceInput["operation"]}`;
   project?: string;
   reference?: string;
@@ -60,7 +66,8 @@ interface NativeArguments {
   capture?:
     | NativeCaptureInput
     | NativeCaptureRecoveryInput
-    | NativeReferenceInput;
+    | NativeReferenceInput
+    | NativeReferenceRecoveryPlanInput;
 }
 const referenceOperations = [
   "reference-plan",
@@ -78,11 +85,13 @@ function isReference(
   return referenceOperations.some((value) => value === input.operation);
 }
 function envelopeKind(input: NonNullable<NativeArguments["capture"]>) {
-  return isReference(input)
-    ? ("NativeReferenceEnvelope" as const)
-    : input.operation === "recover"
-      ? ("NativeCaptureRecoveryEnvelope" as const)
-      : ("NativeCaptureEnvelope" as const);
+  return input.operation === "reference-recovery-plan"
+    ? ("NativeReferenceRecoveryPlanEnvelope" as const)
+    : isReference(input)
+      ? ("NativeReferenceEnvelope" as const)
+      : input.operation === "recover"
+        ? ("NativeCaptureRecoveryEnvelope" as const)
+        : ("NativeCaptureEnvelope" as const);
 }
 export function parseCaptureArguments(
   argv: readonly string[],
@@ -105,6 +114,7 @@ export function parseCaptureArguments(
         "convert",
         "artifact",
         "recover",
+        "reference-recovery-plan",
         ...referenceOperations,
       ].includes(verb)
     )
@@ -121,6 +131,7 @@ export function parseCaptureArguments(
         ![
           "--project",
           "--request-id",
+          ...(verb === "reference-recovery-plan" ? ["--expected-job"] : []),
           ...(verb === "reference-diagnostic-inspect" ? ["--inspection"] : []),
           ...(verb === "reference-approve" ||
           verb === "reference-diagnostic-approve"
@@ -160,6 +171,20 @@ export function parseCaptureArguments(
     )
       throw new ApplicationError("INVALID_INPUT");
     const role = options.get("--role");
+    if (verb === "reference-recovery-plan") {
+      const expectedJob = options.get("--expected-job");
+      if (!expectedJob || !validateContract("Sha256", expectedJob).success)
+        throw new ApplicationError("INVALID_INPUT");
+      return {
+        command: "figma-reference-recovery-plan",
+        project,
+        capture: {
+          operation: "reference-recovery-plan",
+          requestId,
+          expectedJob,
+        },
+      };
+    }
     const referenceOperation = referenceOperations.find(
       (value) => value === verb,
     );
@@ -408,6 +433,7 @@ export async function runCaptureCommand(args: readonly string[]) {
         "figma reference-diagnostic-inspect --project <ID> --request-id <original capture request> --inspection metadata-only",
         "figma reference-diagnostic-approve --project <ID> --request-id <original capture request> --origin https://figma-alpha-api.s3.us-west-2.amazonaws.com --expected-proof <SHA256> --confirm APPROVE-ONE-DIAGNOSTIC-REFERENCE",
         "figma reference-diagnostic-download --project <ID> --request-id <original capture request> --expected-approval <SHA256> --confirm DOWNLOAD-ONE-DIAGNOSTIC-REFERENCE",
+        "figma reference-recovery-plan --project <ID> --request-id <original capture request> --expected-job <Job SHA256>",
       ],
       limitation:
         "Native entry needs an independently approved capture release. Setup/update display an app-owned masked Figma PAT dialog; status reads one owned vault entry; remove deletes only the explicitly confirmed entry. Capture allows at most four calls in 30 seconds. The default empty download-origin policy yields a partial result before CDN contact. Inspection is private metadata only; explicit artifact output stays in the owned private project. Conversion is an unapproved draft, never render-readiness. Recovery additionally requires the installed recovery supplement: it records one exact next-request authorization offline, not a retry, quota assertion, or capture result. Third requests remain blocked.",
@@ -421,6 +447,9 @@ export async function runCaptureCommand(args: readonly string[]) {
     | undefined;
   let dialog: PatDialogRun | undefined;
   let runtime: NativeCaptureRuntime | undefined;
+  let validation:
+    | Awaited<ReturnType<typeof openNativeReferenceValidation>>
+    | undefined;
   let startupCleanup: (() => Promise<void>) | undefined;
   const abort = new AbortController();
   const cancel = () => abort.abort();
@@ -434,6 +463,8 @@ export async function runCaptureCommand(args: readonly string[]) {
     guard = registerCaptureInstallationGuards(installation);
     if (request.command === "figma-recover")
       assertCaptureRecoveryInstallation(installation);
+    if (request.command === "figma-reference-recovery-plan")
+      assertReferenceValidationInstallation(installation);
     if (request.capture && isReference(request.capture))
       assertCaptureReferenceInstallation(installation);
     if (
@@ -456,16 +487,21 @@ export async function runCaptureCommand(args: readonly string[]) {
         privateRoot: path.dirname(project.paths.database),
       };
     } else if (request.capture) {
-      runtime = await openNativeCapture(project);
-      result = isReference(request.capture)
-        ? runtime.reference
-          ? await runtime.reference(request.capture, abort.signal)
-          : (() => {
-              throw new ApplicationError("FORBIDDEN");
-            })()
-        : request.capture.operation === "recover"
-          ? await runtime.recover(request.capture, abort.signal)
-          : await runtime.execute(request.capture, abort.signal);
+      if (request.capture.operation === "reference-recovery-plan") {
+        validation = await openNativeReferenceValidation(project);
+        result = await validation.execute(request.capture, abort.signal);
+      } else {
+        runtime = await openNativeCapture(project);
+        result = isReference(request.capture)
+          ? runtime.reference
+            ? await runtime.reference(request.capture, abort.signal)
+            : (() => {
+                throw new ApplicationError("FORBIDDEN");
+              })()
+          : request.capture.operation === "recover"
+            ? await runtime.recover(request.capture, abort.signal)
+            : await runtime.execute(request.capture, abort.signal);
+      }
     } else {
       if (!["setup", "status", "update", "remove"].includes(request.command))
         throw new ApplicationError("INVALID_INPUT");
@@ -516,6 +552,7 @@ export async function runCaptureCommand(args: readonly string[]) {
           startupCleanup = undefined;
         }
         await runtime?.close();
+        await validation?.close();
         await project?.close();
         guard?.close();
         await installation?.close();
@@ -578,6 +615,7 @@ export async function runCaptureCommand(args: readonly string[]) {
             startupCleanup = undefined;
           }
           await runtime?.close();
+          await validation?.close();
           credentials?.close();
           await project?.close();
           guard?.close();

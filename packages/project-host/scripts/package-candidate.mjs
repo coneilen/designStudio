@@ -37,6 +37,10 @@ import {
   INSTALL_LIMITS,
   relativeName,
 } from "../dist/installation-manifest.js";
+import {
+  REFERENCE_VALIDATION_POLICY_SHA256,
+  referenceValidationPolicyBytes,
+} from "../dist/reference-validation-profile.js";
 
 const bootstrapScripts = fileURLToPath(
   new URL("../bootstrap/", import.meta.url),
@@ -567,6 +571,11 @@ export async function packageCandidate({
       captureDiagnosticPolicyBytes(),
       { flag: "wx" },
     );
+    await writeFile(
+      path.join(payload, "reference-validation-policy.json"),
+      referenceValidationPolicyBytes(),
+      { flag: "wx" },
+    );
   } else {
     await mkdir(path.join(payload, "fixtures"));
     await copyPhysical(
@@ -624,13 +633,14 @@ export async function packageCandidate({
     JSON.stringify(
       capture
         ? {
-            version: 5,
+            version: 6,
             kind: CAPTURE_PROFILE,
             manifestSha256: digest(manifest),
             capturePolicySha256: CAPTURE_POLICY_SHA256,
             captureRecoveryPolicySha256: CAPTURE_RECOVERY_POLICY_SHA256,
             captureReferencePolicySha256: CAPTURE_REFERENCE_POLICY_SHA256,
             captureDiagnosticPolicySha256: CAPTURE_DIAGNOSTIC_POLICY_SHA256,
+            referenceValidationPolicySha256: REFERENCE_VALIDATION_POLICY_SHA256,
           }
         : {
             version: 1,
