@@ -109,25 +109,13 @@ export class ReferenceReader {
     const priorLimit = this.input.maximumFileBytes;
     this.input.maximumFileBytes = maximum;
     try {
-      const artifact = unwrap(
-        await this.store.verify(ref(reference), this.context),
-      );
-      if (
-        artifact.byteLength > maximum ||
-        artifact.byteLength > REFERENCE_LIMITS.maxInputBytes - this.bytes
-      )
-        throw new ApplicationError("INPUT_LIMIT");
-      const bytes = unwrap(
-        await this.files.read(
-          {
-            artifactRootId: this.work.project.artifactRootId,
-            path: artifact.path,
-          },
-          this.context,
-        ),
+      const { artifact, bytes } = unwrap(
+        await this.store.readVerified(ref(reference), this.context),
       );
       try {
         await this.check();
+        if (artifact.byteLength > maximum)
+          throw new ApplicationError("INPUT_LIMIT");
         if (
           bytes.length !== artifact.byteLength ||
           hashBytes(bytes) !== reference.sha256
@@ -198,9 +186,8 @@ export class ReferenceReader {
     const supplement = await this.check();
     const { original, job } = referenceIds(this.work, requestId);
     const record = unwrap(await this.store.jobs.get(original, this.context));
-    const receipt = unwrap(
-      await this.store.jobs.getJobReceipt(original, this.context),
-    );
+    // get already verifies the receipt's exact protected outputs under this context.
+    const receipt = record.job.receipt;
     if (
       record.job.id !== original ||
       record.requestId !== requestId ||
@@ -213,7 +200,6 @@ export class ReferenceReader {
       record.job.status !== "completed" ||
       record.job.attempt !== 1 ||
       !receipt ||
-      !same(record.job.receipt, receipt) ||
       receipt.integrity !== "verified" ||
       receipt.publication !== "atomic" ||
       record.effects.some(

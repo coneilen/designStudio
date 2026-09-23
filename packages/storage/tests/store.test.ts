@@ -109,6 +109,44 @@ const fixture: { payloads: string[] } = JSON.parse(
     "utf8",
   ),
 );
+test("readVerified returns exactly the bytes verified in its single authorized read and rejects corruption", async () => {
+  const { store, disk, options, root } = await setup();
+  const body = bytes("synthetic verified bytes");
+  const output = value(await store.stage(body, context()));
+  const reference = { id: output.artifact.id, sha256: output.artifact.sha256 };
+  value(await store.commit([output], context()));
+  const original = disk.fs.read;
+  let reads = 0;
+  disk.fs.read = async (...args) => {
+    reads++;
+    return original(...args);
+  };
+  const loaded = value(await store.readVerified(reference, context()));
+  expect(loaded.artifact).toEqual(output.artifact);
+  expect(loaded.bytes).toEqual(body);
+  expect(reads).toBe(1);
+  options.authorize = async () => {
+    throw Object.assign(new Error("denied"), { code: "FORBIDDEN" });
+  };
+  expect(await store.readVerified(reference, context())).toMatchObject({
+    status: "failed",
+    error: { code: "FORBIDDEN" },
+  });
+  expect(reads).toBe(1);
+  options.authorize = async () => {};
+  for (const corrupt of [
+    bytes("changed synthetic bytes"),
+    body.subarray(0, body.length - 1),
+    Uint8Array.from([...body, 0]),
+  ]) {
+    await writeFile(join(root, "blobs", output.artifact.sha256), corrupt);
+    expect(await store.readVerified(reference, context())).toMatchObject({
+      status: "failed",
+      error: { code: "ARTIFACT_INTEGRITY" },
+    });
+  }
+  expect(reads).toBe(4);
+});
 test.each([
   { path: "commit", phase: "durability", scope: "root" },
   { path: "commit", phase: "durability", scope: "job" },
@@ -367,58 +405,61 @@ test.each(["reject", "expire", "mutate-auth", "transaction"] as const)(
   },
 );
 
-test("binding snapshots are owned and both logical and physical resolve grants are checked", async () => {
-  const { store, options } = await setup({
-    authorizeArtifactBinding: async () => {},
-  });
-  const outputs = await stage(store);
-  const rev = revision(
-    "logical-owned",
-    outputs.map((s) => s.artifact),
-  );
-  rev.resources.snapshotId = "logical-resource";
-  const physical = required(outputs[2]).artifact;
-  const reference = { id: "logical-resource", sha256: physical.sha256 };
-  const request = {
-    branch: "main",
-    base: null,
-    revision: rev,
-    outputs,
-    referenceBindings: [
-      { reference, artifact: { id: physical.id, sha256: physical.sha256 } },
-    ],
-  };
-  const pending = store.commitRevision(request, context());
-  reference.id = "mutated";
-  value(await pending);
-  const visited: string[] = [];
-  options.authorize = async (_ctx, scope) => {
-    visited.push(scope.resourceId);
-    if (scope.resourceId === physical.id)
-      throw Object.assign(new Error("denied"), { code: "FORBIDDEN" });
-  };
-  expect(
-    await store.verify(
-      { id: "logical-resource", sha256: physical.sha256 },
-      context(),
-    ),
-  ).toMatchObject({ error: { code: "FORBIDDEN" } });
-  expect(visited).toContain("logical-resource");
-  expect(visited).toContain(physical.id);
-  visited.length = 0;
-  options.authorize = async (_ctx, scope) => {
-    visited.push(scope.resourceId);
-    if (scope.resourceId === "logical-resource")
-      throw Object.assign(new Error("denied"), { code: "FORBIDDEN" });
-  };
-  expect(
-    await store.verify(
-      { id: "logical-resource", sha256: physical.sha256 },
-      context(),
-    ),
-  ).toMatchObject({ error: { code: "FORBIDDEN" } });
-  expect(visited).not.toContain(physical.id);
-});
+test.each(["verify", "readVerified"] as const)(
+  "binding snapshots are owned and both logical and physical %s grants are checked",
+  async (read) => {
+    const { store, options } = await setup({
+      authorizeArtifactBinding: async () => {},
+    });
+    const outputs = await stage(store);
+    const rev = revision(
+      "logical-owned",
+      outputs.map((s) => s.artifact),
+    );
+    rev.resources.snapshotId = "logical-resource";
+    const physical = required(outputs[2]).artifact;
+    const reference = { id: "logical-resource", sha256: physical.sha256 };
+    const request = {
+      branch: "main",
+      base: null,
+      revision: rev,
+      outputs,
+      referenceBindings: [
+        { reference, artifact: { id: physical.id, sha256: physical.sha256 } },
+      ],
+    };
+    const pending = store.commitRevision(request, context());
+    reference.id = "mutated";
+    value(await pending);
+    const visited: string[] = [];
+    options.authorize = async (_ctx, scope) => {
+      visited.push(scope.resourceId);
+      if (scope.resourceId === physical.id)
+        throw Object.assign(new Error("denied"), { code: "FORBIDDEN" });
+    };
+    expect(
+      await store[read](
+        { id: "logical-resource", sha256: physical.sha256 },
+        context(),
+      ),
+    ).toMatchObject({ error: { code: "FORBIDDEN" } });
+    expect(visited).toContain("logical-resource");
+    expect(visited).toContain(physical.id);
+    visited.length = 0;
+    options.authorize = async (_ctx, scope) => {
+      visited.push(scope.resourceId);
+      if (scope.resourceId === "logical-resource")
+        throw Object.assign(new Error("denied"), { code: "FORBIDDEN" });
+    };
+    expect(
+      await store[read](
+        { id: "logical-resource", sha256: physical.sha256 },
+        context(),
+      ),
+    ).toMatchObject({ error: { code: "FORBIDDEN" } });
+    expect(visited).not.toContain(physical.id);
+  },
+);
 
 test.each(["hash", "duplicate", "chain", "unreferenced"] as const)(
   "invalid %s binding fails before publication",

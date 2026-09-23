@@ -75,6 +75,43 @@ owned while service cleanup is unconfirmed; it does not reset between internal
 inspection phases. Evidence records private reservations through its preparation;
 later publication and response verification remain subject to that same meter.
 
+Proof parsing uses storage's single `readVerified` result: the bytes returned are
+the exact bytes hashed under the existing native file-identity and authority
+checks, not a second path read after verification. The capture proof uses the
+immutable receipt snapshot already verified by `jobs.get`; reference outcome
+inspection still independently retrieves and compares its receipt. Downloads
+retain the full last-moment publication inventory check,
+but omit the earlier duplicate inventory used by planning/approval. After the
+handler settles, the same invocation awaits a fresh job/receipt/output verification
+and evidence read against its already-bound immutable proof instead of recursively
+reloading the entire capture/predecessor graph. No authorization result is cached,
+no physical read is omitted from accounting, and uncertain publication still
+interrupts/quarantines without manufacturing a receipt.
+
+Fresh download outcomes and operation failures include closed `inputAccounting` for the **current
+invocation**: charged private bytes (including EOF reservations), received network
+bytes, the unchanged limit, phase, and the first rejected shared-meter reservation
+when available. This is not historical persisted job usage. Other bounded
+storage/decoder limits can still report `INPUT_LIMIT` without a shared-meter
+rejection. A failed final response can follow a committed transaction; inspect
+rather than inferring receipt absence or authorizing a retry.
+
+`figma reference-diagnostic-inspect --project <ID> --request-id <original-request>
+--inspection metadata-only` is an explicit, read-only **metadata** mode; the
+default inspector retains its full proof/evidence semantics. The native owner
+derives the sole diagnostic slot from the original reference's stored receipt
+identity, checks current reference/diagnostic authority and exact owner/project,
+and rechecks unchanged metadata before returning. This mode performs no artifact
+body reads, effect reservation, staging, job submission, reconciliation, or
+network/credential access. It returns only job ID/digest/status/attempt/error code,
+stored usage, at most one fixed-name effect with reserved/actual usage, at most two
+stage hashes/lengths/dispositions, and receipt presence. Encoded job/receipt/stage
+metadata is bounded before parsing and overflow fails rather than truncating.
+Both completed and interrupted results carry `verification: "metadata-only"`;
+receipt presence and stage metadata **do not attest current artifact bytes,
+availability, HTTP/DNS/body counters, successful publication, or recoverability**.
+No arbitrary job ID, source version, or replacement slot can be selected.
+
 Reopen is read-only for admitted jobs, including queued/interrupted jobs and
 unknown effects; it cannot redispatch network work. A known no-HTTP effect is
 distinct from a known denied response or unknown effect. Stages/orphan

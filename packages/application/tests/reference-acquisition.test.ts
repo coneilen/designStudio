@@ -1,16 +1,19 @@
 import {
+  link,
   mkdir,
   mkdtemp,
   readdir,
   readFile,
+  rename,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { NativeReferenceEnvelope } from "@design-studio/contracts";
 import { fakeComplete } from "@design-studio/contracts/testing";
-import { canonicalBytes } from "@design-studio/design-ir";
+import { canonicalBytes, hashBytes } from "@design-studio/design-ir";
 import { HostBoundaryError, ProjectFileSystem } from "@design-studio/host";
 import { JobService } from "@design-studio/jobs";
 import type { CaptureProject, CaptureWork } from "@design-studio/project-host";
@@ -35,6 +38,7 @@ import {
   assembleNativeCapture,
   type NativeCaptureRuntime,
 } from "../src/capture-runtime-internal.js";
+import { ReferenceInput } from "../src/reference-input.js";
 import { ReferenceReader } from "../src/reference-proof.js";
 import {
   DIAGNOSTIC_APPROVAL_CONFIRMATION,
@@ -47,6 +51,7 @@ const seam = vi.hoisted(() => ({
   work: undefined as CaptureWork | undefined,
   physicalReads: 0,
   measureReads: false,
+  afterRead: undefined as ((file: unknown) => Promise<void>) | undefined,
 }));
 vi.mock("node:fs/promises", async (original) => {
   const actual = await original<typeof import("node:fs/promises")>();
@@ -58,6 +63,7 @@ vi.mock("node:fs/promises", async (original) => {
       Object.defineProperty(handle, "read", {
         value: async (...input: unknown[]) => {
           const result: unknown = await Reflect.apply(read, handle, input);
+          await seam.afterRead?.(args[0]);
           if (
             seam.measureReads &&
             result &&
@@ -95,6 +101,7 @@ afterEach(async () => {
     seam.work = undefined;
     seam.measureReads = false;
     seam.physicalReads = 0;
+    seam.afterRead = undefined;
   }
 });
 const origin = "https://figma-alpha-api.s3.us-west-2.amazonaws.com";
@@ -105,8 +112,11 @@ function required<T>(value: T | undefined): T {
 async function fixture(
   options: {
     large?: boolean;
+    nodeBytes?: number;
     url?: string;
     dimensions?: number;
+    frameSize?: number;
+    durabilityReads?: boolean;
     nodeVersion?: string;
     renderNode?: string;
     diagnostic?: boolean;
@@ -149,7 +159,7 @@ async function fixture(
       ...o,
       publicationProfile: "portable-atomic",
       reserveRead: (bytes, context) => {
-        const event = { bytes, allowed: false };
+        const event: (typeof reads)[number] = { bytes, allowed: false };
         reads.push(event);
         o.reserveRead?.(bytes, context);
         event.allowed = true;
@@ -159,9 +169,29 @@ async function fixture(
   vi.spyOn(
     ProjectFileSystem.prototype,
     "ensurePublicationDurable",
-  ).mockImplementation(async (_root, _artifacts, context) =>
-    fakeComplete(context, { durable: true }),
-  );
+  ).mockImplementation(async function (
+    this: ProjectFileSystem,
+    root,
+    artifacts,
+    context,
+  ) {
+    // Portable synthetic publication still exercises the native barrier's body reread.
+    if (options.durabilityReads)
+      for (const artifact of artifacts) {
+        const result = await this.read(
+          { artifactRootId: root, path: artifact.path },
+          context,
+        );
+        if (result.status !== "complete")
+          throw new HostBoundaryError(
+            result.error.code,
+            "Synthetic durability body read failed.",
+          );
+        expect(hashBytes(result.value)).toBe(artifact.sha256);
+        result.value.fill(0);
+      }
+    return fakeComplete(context, { durable: true });
+  });
   const openStore = LocalStore.open.bind(LocalStore);
   let currentStore: LocalStore | undefined;
   vi.spyOn(LocalStore, "open").mockImplementation(async (o) => {
@@ -259,11 +289,15 @@ async function fixture(
                       absoluteBoundingBox: {
                         x: 10,
                         y: 20,
-                        width: 2,
-                        height: 2,
+                        width: options.frameSize ?? 2,
+                        height: options.frameSize ?? 2,
                       },
-                      ...(options.large
-                        ? { description: "x".repeat(300000) }
+                      ...(options.large || options.nodeBytes
+                        ? {
+                            description: "x".repeat(
+                              options.nodeBytes ?? 300000,
+                            ),
+                          }
                         : {}),
                     },
                   },
@@ -472,14 +506,44 @@ async function fixture(
     advanceClock: (milliseconds: number) => {
       clockOffset += milliseconds;
     },
-    corruptNodes: async () => {
+    corruptNodes: async (
+      kind:
+        | "truncate"
+        | "grow"
+        | "replace"
+        | "hardlink"
+        | "swap"
+        | "junction" = "truncate",
+    ) => {
       const artifact = required(
         capture.value?.artifacts.find((a) => a.role === "nodes"),
       ).artifact;
-      await writeFile(
-        path.join(root, "artifacts", "blobs", artifact.sha256),
-        Buffer.from("tampered synthetic nodes"),
-      );
+      const target = path.join(root, "artifacts", "blobs", artifact.sha256);
+      if (kind === "hardlink") {
+        await link(target, path.join(root, "extra-link"));
+      } else if (kind === "swap") {
+        seam.afterRead = async (file) => {
+          if (file !== target) return;
+          seam.afterRead = undefined;
+          const bytes = await readFile(target);
+          await rename(target, path.join(root, "old-node"));
+          await writeFile(target, bytes);
+        };
+      } else if (kind === "junction") {
+        const previous = path.join(root, "old-blobs");
+        await rename(path.dirname(target), previous);
+        await symlink(previous, path.dirname(target), "junction");
+      } else {
+        const original = await readFile(target);
+        await writeFile(
+          target,
+          kind === "grow"
+            ? Buffer.concat([original, Buffer.of(0)])
+            : kind === "replace"
+              ? Buffer.alloc(original.length, 120)
+              : Buffer.from("tampered synthetic nodes"),
+        );
+      }
     },
     deny: () => {
       admitted = false;
@@ -706,6 +770,324 @@ async function legacyReferenceFailure(f: Awaited<ReturnType<typeof fixture>>) {
     legacy.mockRestore();
   }
 }
+
+it("completes a diagnostic with realistic synthetic source bytes within the invocation input budget", async () => {
+  const f = await fixture({
+    diagnostic: true,
+    nodeBytes: 2400000,
+    frameSize: 460,
+    durabilityReads: true,
+  });
+  const predecessor = await legacyReferenceFailure(f);
+  const approved = await f.diagnosticApprove();
+  const before = await f.blobs();
+  f.reads.length = 0;
+  seam.physicalReads = 0;
+  const raw = Buffer.alloc((460 * 4 + 1) * 460);
+  let seed = 42;
+  for (let y = 0; y < 460; y++)
+    for (let x = 1; x <= 460 * 4; x++) {
+      seed ^= seed << 13;
+      seed ^= seed >>> 17;
+      seed ^= seed << 5;
+      raw[y * (460 * 4 + 1) + x] = seed & 255;
+    }
+  const pngBytes = authoredPng(6, 8, raw, [srgb()], [], 460, 460);
+  f.image.mockImplementation(async (_url, budget) => {
+    budget.check();
+    budget.dnsQuery();
+    budget.receive(pngBytes.length);
+    budget.decoded(pngBytes.length);
+    return { status: 200, mediaType: "image/png", bytes: pngBytes };
+  });
+  const result = await f.diagnosticDownload(approved);
+  const allowed = f.reads.filter((read) => read.allowed);
+  const measurement = JSON.stringify({
+    status: result.status,
+    error: result.error?.code,
+    job: result.value?.job?.status,
+    jobError: result.value?.job?.error?.code,
+    charged: allowed.reduce((sum, read) => sum + read.bytes, 0),
+    physical: seam.physicalReads,
+    pngBytes: pngBytes.length,
+    largeReads: allowed.filter((read) => read.bytes >= 2000000).length,
+    denied: f.reads.filter((read) => !read.allowed),
+    networkCalls: f.image.mock.calls.length,
+  });
+  expect(result.status, measurement).toBe("complete");
+  expect(result.value?.receipt).toBeDefined();
+  const charged = allowed.reduce((sum, read) => sum + read.bytes, 0);
+  expect(result.inputAccounting, measurement).toEqual({
+    limitBytes: 26214400,
+    privateBytes: charged,
+    networkBytes: pngBytes.length,
+    phase: "inspection",
+  });
+  expect(result.inputAccounting).toMatchInlineSnapshot(`
+    {
+      "limitBytes": 26214400,
+      "networkBytes": 847196,
+      "phase": "inspection",
+      "privateBytes": 18048077,
+    }
+  `);
+  expect(allowed.filter((read) => read.bytes >= 2400000)).toHaveLength(5);
+  expect({
+    physicalBytes: seam.physicalReads,
+    eofReservations: allowed.filter((read) => read.bytes === 1).length,
+    privateBytes: charged,
+    networkBytes: pngBytes.length,
+    totalBytes: charged + pngBytes.length,
+  }).toMatchInlineSnapshot(`
+    {
+      "eofReservations": 73,
+      "networkBytes": 847196,
+      "physicalBytes": 18048004,
+      "privateBytes": 18048077,
+      "totalBytes": 18895273,
+    }
+  `);
+  expect(charged + pngBytes.length).toBeLessThanOrEqual(26214400);
+  expect(charged).toBe(
+    seam.physicalReads + allowed.filter((read) => read.bytes === 1).length,
+  );
+  expect(f.reads.every((read) => read.allowed)).toBe(true);
+  const after = new Map(await f.blobs());
+  for (const [hash, bytes] of before) expect(after.get(hash)).toEqual(bytes);
+  const original = await f.run({
+    operation: "reference-inspect",
+    requestId: "original",
+  });
+  expect(original.value?.job).toEqual(predecessor.value?.job);
+  expect(original.value?.receipt).toEqual(predecessor.value?.receipt);
+  expect(original.value?.evidence).toEqual(predecessor.value?.evidence);
+  expect(f.image).toHaveBeenCalledTimes(2);
+  expect(f.api).not.toHaveBeenCalled();
+  expect(f.vault).not.toHaveBeenCalled();
+});
+
+it.each(["private", "network"] as const)(
+  "keeps exact aggregate and EOF boundaries closed for %s input",
+  (kind) => {
+    const input = new ReferenceInput();
+    input.phase = "commit";
+    input.reserveRead(26214400 - 2);
+    input.reserveNetwork(1);
+    if (kind === "private") input.reserveRead(1);
+    else input.reserveNetwork(1);
+    expect(input.privateBytes + input.networkBytes).toBe(26214400);
+    expect(() =>
+      kind === "private" ? input.reserveRead(1) : input.reserveNetwork(1),
+    ).toThrow();
+    expect(input.snapshot().rejected).toEqual({
+      kind,
+      bytes: 1,
+      limit: "aggregate",
+      phase: "commit",
+    });
+    expect(input.privateBytes + input.networkBytes).toBe(26214400);
+  },
+);
+
+it("reports per-read and invalid charges without accepting unmetered bytes", () => {
+  const input = new ReferenceInput();
+  input.maximumFileBytes = 262144;
+  expect(() => input.reserveRead(262145)).toThrow();
+  expect(input.snapshot().rejected).toMatchObject({
+    limit: "per-read",
+    bytes: 262145,
+  });
+  for (const value of [-1, 0.5, Number.NaN, Number.POSITIVE_INFINITY])
+    expect(() => input.reserveNetwork(value)).toThrow();
+  expect(input.privateBytes + input.networkBytes).toBe(0);
+});
+
+it.each([false, true])(
+  "inspects only closed derived-slot metadata without artifact reads, interrupted=%s",
+  async (interrupted) => {
+    const f = await fixture({ diagnostic: true });
+    await legacyReferenceFailure(f);
+    const approved = await f.diagnosticApprove();
+    if (interrupted) f.setFault("job-after-artifacts");
+    const result = await f.diagnosticDownload(approved);
+    f.setFault();
+    expect(result.status).toBe(interrupted ? "interrupted" : "complete");
+    const defaultInspection = await f.run({
+      operation: "reference-diagnostic-inspect",
+      requestId: "original",
+    });
+    expect(defaultInspection.value).toEqual(result.value);
+    expect(defaultInspection.value?.metadata).toBeUndefined();
+    const before = await f.blobs();
+    f.reads.length = 0;
+    seam.physicalReads = 0;
+    const inspect = () =>
+      f.run({
+        operation: "reference-diagnostic-inspect",
+        requestId: "original",
+        inspection: "metadata-only",
+      });
+    const inspected = await inspect();
+    expect(inspected.status).toBe(interrupted ? "interrupted" : "complete");
+    expect(inspected.value).toEqual({
+      phase: interrupted ? "admitted" : "completed",
+      consumed: true,
+      metadata: {
+        verification: "metadata-only",
+        jobId: result.value?.job?.id,
+        jobSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        status: interrupted ? "interrupted" : "completed",
+        attempt: 1,
+        ...(interrupted ? { errorCode: "INTERNAL_ERROR" } : {}),
+        usage: {
+          inputBytes: expect.any(Number),
+          outputBytes: expect.any(Number),
+          externalCalls: 1,
+          modelTokens: 0,
+          costMicros: 0,
+        },
+        effects: [
+          {
+            id: "reference-image-get",
+            state: "settled",
+            reserved: {
+              inputBytes: 0,
+              outputBytes: 0,
+              externalCalls: 1,
+              modelTokens: 0,
+              costMicros: 0,
+            },
+            actual: {
+              inputBytes: 0,
+              outputBytes: 0,
+              externalCalls: 1,
+              modelTokens: 0,
+              costMicros: 0,
+            },
+          },
+        ],
+        stages: expect.arrayContaining([
+          expect.objectContaining({
+            sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+            byteLength: expect.any(Number),
+            disposition: interrupted ? "recovery-needed" : "retained",
+          }),
+        ]),
+        receiptPresent: !interrupted,
+      },
+    });
+    expect(f.reads).toHaveLength(0);
+    const closed = {
+      operation: "reference-diagnostic-plan" as const,
+      requestId: "original",
+      inspection: "metadata-only" as const,
+    };
+    expect(await f.run(closed)).toMatchObject({
+      status: "failed",
+      error: { code: "INVALID_INPUT" },
+    });
+    const foreign = {
+      operation: "reference-diagnostic-inspect" as const,
+      requestId: "original",
+      inspection: "metadata-only" as const,
+      projectId: "foreign",
+    };
+    expect(await f.run(foreign)).toMatchObject({
+      status: "failed",
+      error: { code: "INVALID_INPUT" },
+    });
+    const cancelled = new AbortController();
+    cancelled.abort();
+    expect(
+      await f.run(
+        {
+          operation: "reference-diagnostic-inspect",
+          requestId: "original",
+          inspection: "metadata-only",
+        },
+        cancelled.signal,
+      ),
+    ).toMatchObject({ status: "cancelled" });
+    expect(seam.physicalReads).toBe(0);
+    expect(Buffer.byteLength(JSON.stringify(inspected))).toBeLessThan(8192);
+    expect(JSON.stringify(inspected)).not.toMatch(
+      /synthetic-only|https:|blobs|paths|headers|selectionUrl/,
+    );
+    expect(await f.blobs()).toEqual(before);
+    await f.reopen();
+    f.reads.length = 0;
+    expect((await inspect()).value).toEqual(inspected.value);
+    expect(f.reads).toHaveLength(0);
+    expect(
+      await f.run({
+        operation: "reference-diagnostic-inspect",
+        requestId: required(result.value?.job?.id),
+        inspection: "metadata-only",
+      }),
+    ).toMatchObject({ status: "failed" });
+    f.deny();
+    expect(await inspect()).toMatchObject({
+      status: "failed",
+      error: { code: "FORBIDDEN" },
+    });
+
+    expect(f.image).toHaveBeenCalledTimes(2);
+    expect(f.api).not.toHaveBeenCalled();
+    expect(f.vault).not.toHaveBeenCalled();
+  },
+);
+
+it("keeps the input meter active through post-commit inspection and reports a real receipt separately", async () => {
+  const f = await fixture({ diagnostic: true, nodeBytes: 1200000 });
+  await legacyReferenceFailure(f);
+  const approval = await f.diagnosticApprove();
+  const nodes = required(approval.value?.proposal?.binding.nodes);
+  const contract = ReferenceReader.prototype.contract;
+  const excess = vi
+    .spyOn(ReferenceReader.prototype, "contract")
+    .mockImplementation(async function (this: ReferenceReader, ...args) {
+      if (this.input.phase === "inspection")
+        for (let i = 0; i < 30; i++) await this.json(nodes, 26214400);
+      return contract.apply(this, args);
+    });
+  f.reads.length = 0;
+  seam.physicalReads = 0;
+  const result = await f.diagnosticDownload(approval);
+  expect(result).toMatchObject({
+    status: "failed",
+    error: { code: "INPUT_LIMIT" },
+    inputAccounting: {
+      phase: "inspection",
+      rejected: {
+        kind: "private",
+        limit: "aggregate",
+        phase: "inspection",
+      },
+    },
+  });
+  const charged = f.reads
+    .filter((read) => read.allowed)
+    .reduce((sum, read) => sum + read.bytes, 0);
+  expect(result.inputAccounting?.privateBytes).toBe(charged);
+  expect(seam.physicalReads).toBeLessThanOrEqual(charged);
+  expect(
+    charged + required(result.inputAccounting).networkBytes,
+  ).toBeLessThanOrEqual(26214400);
+  expect(result.value?.receipt).toBeUndefined();
+  excess.mockRestore();
+  f.reads.length = 0;
+  const inspected = await f.run({
+    operation: "reference-diagnostic-inspect",
+    requestId: "original",
+    inspection: "metadata-only",
+  });
+  expect(inspected.value?.metadata).toMatchObject({
+    status: "completed",
+    receiptPresent: true,
+  });
+  expect(f.reads).toHaveLength(0);
+  expect(f.image).toHaveBeenCalledTimes(2);
+});
 
 it.each([false, true])(
   "consumes exactly one server-derived diagnostic slot, including failed successor=%s",
@@ -982,6 +1364,8 @@ it("preserves proven no-effect failure as a consumed attempt rather than unknown
 it("cancels in-flight reference work, joins it and prevents a second admitted invocation", async () => {
   const f = await fixture();
   const approved = await f.approve();
+  f.reads.length = 0;
+  seam.physicalReads = 0;
   const abort = new AbortController();
   let entered: (() => void) | undefined;
   const started = new Promise<void>((resolve) => {
@@ -1001,7 +1385,14 @@ it("cancels in-flight reference work, joins it and prevents a second admitted in
     code: "FORBIDDEN",
   });
   abort.abort();
-  expect((await running).status).not.toBe("complete");
+  const cancelled = await running;
+  expect(cancelled.status).not.toBe("complete");
+  const charged = f.reads
+    .filter((read) => read.allowed)
+    .reduce((sum, read) => sum + read.bytes, 0);
+  expect(cancelled.inputAccounting?.privateBytes).toBe(charged);
+  expect(seam.physicalReads).toBeLessThanOrEqual(charged);
+  expect(charged).toBeLessThanOrEqual(26214400);
   await f.reopen();
   expect(await f.download(approved)).toMatchObject({
     status: "interrupted",
@@ -1142,6 +1533,58 @@ it("checks small control-artifact bounds before storage verification reads the b
   expect(seam.physicalReads).toBe(0);
   expect(f.image).not.toHaveBeenCalled();
 });
+
+it("rechecks current reference authority after the single verified read before using its bytes", async () => {
+  const f = await fixture();
+  const read = LocalStore.prototype.readVerified;
+  const probe = vi
+    .spyOn(LocalStore.prototype, "readVerified")
+    .mockImplementation(async function (this: LocalStore, ...args) {
+      const result = await read.apply(this, args);
+      f.deny();
+      return result;
+    });
+  expect(await f.plan()).toMatchObject({
+    status: "failed",
+    error: { code: "FORBIDDEN" },
+  });
+  expect(probe).toHaveBeenCalledTimes(1);
+  expect(f.image).not.toHaveBeenCalled();
+});
+
+it.each([
+  "truncate",
+  "grow",
+  "replace",
+  "hardlink",
+  "swap",
+  "junction",
+] as const)(
+  "rejects %s at the native single verified proof-read boundary",
+  async (kind) => {
+    const f = await fixture({ large: true });
+    const planned = await f.plan();
+    const nodes = required(planned.value?.proposal?.binding.nodes);
+    const read = ReferenceReader.prototype.json;
+    vi.spyOn(ReferenceReader.prototype, "json").mockImplementation(
+      async function (this: ReferenceReader, reference, maximum) {
+        if (reference.id === nodes.id) await f.corruptNodes(kind);
+        return read.call(this, reference, maximum);
+      },
+    );
+    const result = await f.plan();
+    expect(result).toMatchObject({
+      status: "failed",
+      error: {
+        code:
+          kind === "hardlink" || kind === "junction"
+            ? "PATH_FORBIDDEN"
+            : "ARTIFACT_INTEGRITY",
+      },
+    });
+    expect(f.image).not.toHaveBeenCalled();
+  },
+);
 
 it("shares actual private-read charges with image allowance and does not turn local revocation into remote denial", async () => {
   const f = await fixture();

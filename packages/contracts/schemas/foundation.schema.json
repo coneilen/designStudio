@@ -2831,6 +2831,144 @@
         }
       }
     },
+    "ReferenceInputAccounting": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["limitBytes", "privateBytes", "networkBytes", "phase"],
+      "properties": {
+        "limitBytes": {
+          "type": "integer",
+          "minimum": 26214400,
+          "maximum": 26214400
+        },
+        "privateBytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 26214400
+        },
+        "networkBytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 26214400
+        },
+        "phase": {
+          "enum": [
+            "proof",
+            "history",
+            "inventory",
+            "admission",
+            "acquisition",
+            "commit",
+            "inspection"
+          ]
+        },
+        "rejected": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "bytes", "limit", "phase"],
+          "properties": {
+            "kind": { "enum": ["private", "network"] },
+            "bytes": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "limit": { "enum": ["aggregate", "per-read"] },
+            "phase": {
+              "enum": [
+                "proof",
+                "history",
+                "inventory",
+                "admission",
+                "acquisition",
+                "commit",
+                "inspection"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "ReferenceJobUsage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "inputBytes",
+        "outputBytes",
+        "externalCalls",
+        "modelTokens",
+        "costMicros"
+      ],
+      "properties": {
+        "inputBytes": { "type": "integer", "minimum": 0, "maximum": 26214400 },
+        "outputBytes": { "type": "integer", "minimum": 0, "maximum": 26214400 },
+        "externalCalls": { "type": "integer", "minimum": 0, "maximum": 1 },
+        "modelTokens": { "const": 0 },
+        "costMicros": { "const": 0 }
+      }
+    },
+    "ReferenceJobMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "verification",
+        "jobId",
+        "jobSha256",
+        "status",
+        "attempt",
+        "usage",
+        "effects",
+        "stages",
+        "receiptPresent"
+      ],
+      "properties": {
+        "verification": { "const": "metadata-only" },
+        "jobId": { "$ref": "#/definitions/StableId" },
+        "jobSha256": { "$ref": "#/definitions/Sha256" },
+        "status": { "$ref": "#/definitions/JobStatus" },
+        "attempt": { "type": "integer", "minimum": 0, "maximum": 1 },
+        "errorCode": { "$ref": "#/definitions/ErrorCode" },
+        "usage": { "$ref": "#/definitions/ReferenceJobUsage" },
+        "effects": {
+          "type": "array",
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "state", "reserved"],
+            "properties": {
+              "id": { "const": "reference-image-get" },
+              "state": {
+                "enum": ["reserved", "settled", "no-effect", "unknown"]
+              },
+              "reserved": { "$ref": "#/definitions/ReferenceJobUsage" },
+              "actual": { "$ref": "#/definitions/ReferenceJobUsage" }
+            }
+          }
+        },
+        "stages": {
+          "type": "array",
+          "maxItems": 2,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["sha256", "byteLength", "disposition"],
+            "properties": {
+              "sha256": { "$ref": "#/definitions/Sha256" },
+              "byteLength": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 26214400
+              },
+              "disposition": {
+                "enum": ["retained", "recovery-needed", "authorized-abandoned"]
+              }
+            }
+          }
+        },
+        "receiptPresent": { "type": "boolean" }
+      }
+    },
     "NativeReferenceEnvelope": {
       "type": "object",
       "additionalProperties": false,
@@ -2857,6 +2995,7 @@
         },
         "projectId": { "$ref": "#/definitions/StableId" },
         "requestId": { "$ref": "#/definitions/StableId" },
+        "inputAccounting": { "$ref": "#/definitions/ReferenceInputAccounting" },
         "referenceDiagnostic": { "$ref": "#/definitions/ReferenceDiagnostic" },
         "status": {
           "enum": [
@@ -2882,7 +3021,8 @@
             "expiresAt": { "$ref": "#/definitions/Timestamp" },
             "job": { "$ref": "#/definitions/Job" },
             "evidence": { "$ref": "#/definitions/FigmaReferenceEvidence" },
-            "receipt": { "$ref": "#/definitions/CommitReceipt" }
+            "receipt": { "$ref": "#/definitions/CommitReceipt" },
+            "metadata": { "$ref": "#/definitions/ReferenceJobMetadata" }
           }
         },
         "error": { "$ref": "#/definitions/ContractError" }

@@ -7,6 +7,7 @@ import type {
   NativeReferenceEnvelope,
   OperationContext,
   ReferenceDiagnostic,
+  ReferenceJobUsage,
   ResourceSnapshot,
 } from "@design-studio/contracts";
 import {
@@ -73,6 +74,7 @@ export interface NativeReferenceInput {
   expectedProof?: string;
   expectedApproval?: string;
   confirmation?: string;
+  inspection?: "metadata-only";
 }
 type Prepared = Awaited<ReturnType<typeof acquireReference>>;
 export class NativeReference {
@@ -304,6 +306,137 @@ export class NativeReference {
       cursor = page.nextCursor ?? undefined;
     } while (cursor);
   }
+  private async inspectMetadata(
+    input: NativeReferenceInput,
+    signal: AbortSignal,
+    inputBudget: ReferenceInput,
+  ): Promise<NonNullable<NativeReferenceEnvelope["value"]>> {
+    const original = referenceIds(this.work, input.requestId);
+    const read = async (jobId: string) => {
+      const context = await this.work.policy.issue({
+        jobId: original.approval,
+        requestId: original.approval,
+        jobReads: [jobId],
+        signal,
+        ...(this.diagnosticDeadline
+          ? { deadline: this.diagnosticDeadline }
+          : {}),
+      });
+      const reader = new ReferenceReader(
+        this.work,
+        this.store,
+        this.files,
+        context,
+        inputBudget,
+        true,
+      );
+      this.inspections.set(context.authorization, {
+        reader,
+        stages: undefined,
+      });
+      try {
+        return unwrap(await this.store.referenceJobMetadata(jobId, context));
+      } finally {
+        this.inspections.delete(context.authorization);
+        await reader.close();
+      }
+    };
+    const predecessor = await read(original.job);
+    if (
+      !predecessor?.receipt ||
+      !this.work.referenceAuthority ||
+      predecessor.record.authorityRef !==
+        `reference_${await this.work.referenceAuthority()}` ||
+      predecessor.record.handlerId !== REFERENCE_HANDLER ||
+      predecessor.record.handlerVersion !== "1.0.0" ||
+      predecessor.record.job.operation !== "reference-download" ||
+      predecessor.record.job.status !== "completed" ||
+      predecessor.record.job.outputState !== "partial-inspection" ||
+      predecessor.record.job.attempt !== 1 ||
+      predecessor.record.requestId !== original.job ||
+      !same(predecessor.record.resourceKeys, [`reference_${original.original}`])
+    )
+      throw new ApplicationError("ACTION_REQUIRED");
+    const jobId = diagnosticReferenceId(
+      this.work,
+      original.job,
+      predecessor.receipt,
+    );
+    const state = await read(jobId);
+    if (!state) throw new ApplicationError("EVIDENCE_MISSING");
+    const record = state.record;
+    if (
+      !this.work.diagnosticAuthority ||
+      record.handlerId !== DIAGNOSTIC_REFERENCE_HANDLER ||
+      record.handlerVersion !== "1.0.0" ||
+      record.authorityRef !==
+        `diagnostic_${await this.work.diagnosticAuthority()}` ||
+      record.job.operation !== "reference-download" ||
+      record.job.id !== jobId ||
+      record.job.projectId !== this.work.project.projectId ||
+      record.job.actorId !== this.work.actorId ||
+      record.requestId !== jobId ||
+      !same(record.job.budget, REFERENCE_LIMITS) ||
+      !same(record.resourceKeys, [`diagnostic_${original.job}`]) ||
+      record.effects.length > 1 ||
+      record.effects.some((effect) => effect.id !== "reference-image-get") ||
+      state.stages.some(
+        (stage) =>
+          stage.jobId !== jobId ||
+          stage.requestId !== jobId ||
+          stage.artifactRootId !== this.work.project.artifactRootId ||
+          stage.attempt !== record.job.attempt,
+      )
+    )
+      throw new ApplicationError("ARTIFACT_INTEGRITY");
+    const usage = (value: StoredJob["usage"]): ReferenceJobUsage => {
+      const projected = {
+        inputBytes: value.inputBytes,
+        outputBytes: value.outputBytes,
+        externalCalls: value.externalCalls,
+        modelTokens: value.modelTokens,
+        costMicros: value.costMicros,
+      };
+      const parsed = validateContract("ReferenceJobUsage", projected);
+      if (!parsed.success) throw new ApplicationError("ARTIFACT_INTEGRITY");
+      return parsed.value;
+    };
+    const metadata = validateContract("ReferenceJobMetadata", {
+      verification: "metadata-only",
+      jobId,
+      jobSha256: canonicalDigest(record.job),
+      status: record.job.status,
+      attempt: record.job.attempt,
+      ...(record.job.error ? { errorCode: record.job.error.code } : {}),
+      usage: usage(record.usage),
+      effects: record.effects.map((effect) => ({
+        id: effect.id,
+        state: effect.state,
+        reserved: usage(effect.reserved),
+        ...(effect.actual ? { actual: usage(effect.actual) } : {}),
+      })),
+      stages: state.stages.map((stage) => ({
+        sha256: stage.staged.artifact.sha256,
+        byteLength: stage.staged.artifact.byteLength,
+        disposition: stage.disposition,
+      })),
+      receiptPresent: state.receipt !== null,
+    });
+    if (!metadata.success) throw new ApplicationError("ARTIFACT_INTEGRITY");
+    if (canonicalBytes(metadata.value).length > 8192)
+      throw new ApplicationError("INPUT_LIMIT");
+    if (
+      !same(predecessor, await read(original.job)) ||
+      !same(state, await read(jobId))
+    )
+      throw new ApplicationError("CONFLICT");
+    await this.work.current();
+    return {
+      phase: record.job.status === "completed" ? "completed" : "admitted",
+      consumed: true,
+      metadata: metadata.value,
+    };
+  }
   async execute(
     input: NativeReferenceInput,
     signal: AbortSignal,
@@ -350,7 +483,9 @@ export class NativeReference {
           ? ["origin", "expectedProof", "confirmation"]
           : operation === "reference-download"
             ? ["expectedApproval", "confirmation"]
-            : [];
+            : diagnostic && operation === "reference-inspect"
+              ? ["inspection"]
+              : [];
       if (
         ![
           "reference-plan",
@@ -362,6 +497,8 @@ export class NativeReference {
         Object.keys(input).some(
           (k) => !["operation", "requestId", ...fields].includes(k),
         ) ||
+        (input.inspection !== undefined &&
+          input.inspection !== "metadata-only") ||
         (operation === "reference-approve" &&
           (input.origin !== REFERENCE_ORIGIN ||
             !validateContract("Sha256", input.expectedProof).success ||
@@ -372,6 +509,30 @@ export class NativeReference {
       )
         throw new ApplicationError("INVALID_INPUT");
       await this.work.referenceAuthority();
+      if (
+        diagnostic &&
+        operation === "reference-inspect" &&
+        input.inspection === "metadata-only"
+      ) {
+        const value = await this.inspectMetadata(input, signal, inputBudget);
+        return {
+          ...base,
+          status: value.phase === "completed" ? "complete" : "interrupted",
+          value,
+          inputAccounting: inputBudget.snapshot(),
+          ...(value.phase === "completed"
+            ? {}
+            : {
+                error: {
+                  code: "ACTION_REQUIRED" as const,
+                  message:
+                    "Metadata only; the consumed diagnostic slot cannot be replayed. Receipt presence does not attest artifact bytes or publication recovery.",
+                  retryable: false,
+                  diagnosticIds: [],
+                },
+              }),
+        };
+      }
       let predecessor: NativeReferenceEnvelope | undefined;
       let diagnosticPolicy: string | undefined;
       const originalIds = referenceIds(this.work, input.requestId);
@@ -437,7 +598,7 @@ export class NativeReference {
       }
       let proposal = loaded.proposal;
       const old = await this.existing(ids.job, context);
-      if (diagnostic && !old)
+      if (diagnostic && !old && operation !== "reference-download")
         await this.settledPublications(reader, loaded.proposal);
       let approvalReceipt: CommitReceipt | null = null;
       let approval: FigmaReferenceApproval | undefined;
@@ -523,7 +684,11 @@ export class NativeReference {
         (!approved || approved.approval.sha256 !== input.expectedApproval)
       )
         throw new ApplicationError("CONFLICT");
-      if (old) {
+      const inspectKnown = async (
+        old: StoredJob,
+      ): Promise<NativeReferenceEnvelope> => {
+        if (!reader) throw new ApplicationError("FORBIDDEN");
+        await reader.check();
         if (
           operation === "reference-approve" &&
           input.expectedProof !== proposal.proofSha256
@@ -622,7 +787,8 @@ export class NativeReference {
             diagnosticIds: [],
           },
         };
-      }
+      };
+      if (old) return await inspectKnown(old);
       if (
         approval &&
         approved &&
@@ -725,8 +891,11 @@ export class NativeReference {
         throw new ApplicationError("ACTION_REQUIRED");
       if (context.clock.now() >= Date.parse(approval.expiresAt))
         throw new ApplicationError("ACTION_REQUIRED");
+      inputBudget.phase = "history";
       await this.cooldowns(context, reader, proposal.binding.fileKey);
+      inputBudget.phase = "inventory";
       await this.settledPublications(reader, proposal);
+      inputBudget.phase = "admission";
       const deadline = new Date(
         Math.min(Date.parse(context.deadline), Date.parse(approval.expiresAt)),
       ).toISOString();
@@ -752,6 +921,7 @@ export class NativeReference {
         version: "1.0.0",
         operation: "reference-download",
         run: async (execution) => {
+          inputBudget.phase = "acquisition";
           const record = execution.record;
           if (
             record.job.id !== ids.job ||
@@ -786,6 +956,7 @@ export class NativeReference {
               record: structuredClone(record),
               handlerId,
             };
+            inputBudget.phase = "commit";
             return {
               kind: "complete",
               completion: {
@@ -896,8 +1067,6 @@ export class NativeReference {
       } finally {
         await this.close();
       }
-      await reader.close();
-      reader = undefined;
       if (this.immediateCode)
         throw new ApplicationError(
           this.immediateCode,
@@ -905,20 +1074,19 @@ export class NativeReference {
           undefined,
           this.immediateDiagnostic,
         );
-      return this.execute(
-        {
-          operation: diagnostic
-            ? "reference-diagnostic-inspect"
-            : "reference-inspect",
-          requestId: input.requestId,
-        },
-        signal,
-      ).then((result) => ({ ...result, operation: input.operation }));
+      // The immutable source/approval proof belongs to this invocation. Re-read the
+      // resulting job and its protected outputs, not the entire predecessor graph.
+      inputBudget.phase = "inspection";
+      const result = await inspectKnown(
+        unwrap(await this.store.jobs.get(ids.job, context)),
+      );
+      return { ...result, inputAccounting: inputBudget.snapshot() };
     } catch (error) {
       const safe = safeError(error);
       const code = safe.code;
       return {
         ...base,
+        inputAccounting: inputBudget.snapshot(),
         status:
           code === "CANCELLED"
             ? "cancelled"

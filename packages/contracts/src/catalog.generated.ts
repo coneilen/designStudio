@@ -92,6 +92,9 @@ export interface ContractTypes {
   FigmaDiagnosticPredecessor: Types.FigmaDiagnosticPredecessor;
   FigmaReferenceRequest: Types.FigmaReferenceRequest;
   FigmaReferenceEvidence: Types.FigmaReferenceEvidence;
+  ReferenceInputAccounting: Types.ReferenceInputAccounting;
+  ReferenceJobUsage: Types.ReferenceJobUsage;
+  ReferenceJobMetadata: Types.ReferenceJobMetadata;
   NativeReferenceEnvelope: Types.NativeReferenceEnvelope;
   Operation: Types.Operation;
   Diagnostic: Types.Diagnostic;
@@ -259,6 +262,9 @@ export const contractNames: readonly ContractName[] = [
   "FigmaDiagnosticPredecessor",
   "FigmaReferenceRequest",
   "FigmaReferenceEvidence",
+  "ReferenceInputAccounting",
+  "ReferenceJobUsage",
+  "ReferenceJobMetadata",
   "NativeReferenceEnvelope",
   "Operation",
   "Diagnostic",

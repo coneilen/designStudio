@@ -838,6 +838,9 @@ export interface ContractCatalog {
   FigmaDiagnosticPredecessor: FigmaDiagnosticPredecessor;
   FigmaReferenceRequest: FigmaReferenceRequest;
   FigmaReferenceEvidence: FigmaReferenceEvidence;
+  ReferenceInputAccounting: ReferenceInputAccounting;
+  ReferenceJobUsage: ReferenceJobUsage;
+  ReferenceJobMetadata: ReferenceJobMetadata;
   NativeReferenceEnvelope: NativeReferenceEnvelope;
   Operation: Operation;
   Diagnostic: Diagnostic;
@@ -2482,6 +2485,84 @@ export interface FigmaReferenceEvidence {
 }
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "ReferenceInputAccounting".
+ */
+export interface ReferenceInputAccounting {
+  limitBytes: number;
+  privateBytes: number;
+  networkBytes: number;
+  phase: "proof" | "history" | "inventory" | "admission" | "acquisition" | "commit" | "inspection";
+  rejected?: {
+    kind: "private" | "network";
+    bytes: number;
+    limit: "aggregate" | "per-read";
+    phase: "proof" | "history" | "inventory" | "admission" | "acquisition" | "commit" | "inspection";
+  };
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "ReferenceJobUsage".
+ */
+export interface ReferenceJobUsage {
+  inputBytes: number;
+  outputBytes: number;
+  externalCalls: number;
+  modelTokens: 0;
+  costMicros: 0;
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "ReferenceJobMetadata".
+ */
+export interface ReferenceJobMetadata {
+  verification: "metadata-only";
+  jobId: StableId;
+  jobSha256: Sha256;
+  status: JobStatus;
+  attempt: number;
+  errorCode?: ErrorCode;
+  usage: ReferenceJobUsage;
+  /**
+   * @maxItems 1
+   */
+  effects:
+    | []
+    | [
+        {
+          id: "reference-image-get";
+          state: "reserved" | "settled" | "no-effect" | "unknown";
+          reserved: ReferenceJobUsage;
+          actual?: ReferenceJobUsage;
+        },
+      ];
+  /**
+   * @maxItems 2
+   */
+  stages:
+    | []
+    | [
+        {
+          sha256: Sha256;
+          byteLength: number;
+          disposition: "retained" | "recovery-needed" | "authorized-abandoned";
+        },
+      ]
+    | [
+        {
+          sha256: Sha256;
+          byteLength: number;
+          disposition: "retained" | "recovery-needed" | "authorized-abandoned";
+        },
+        {
+          sha256: Sha256;
+          byteLength: number;
+          disposition: "retained" | "recovery-needed" | "authorized-abandoned";
+        },
+      ];
+  receiptPresent: boolean;
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "NativeReferenceEnvelope".
  */
 export interface NativeReferenceEnvelope {
@@ -2497,6 +2578,7 @@ export interface NativeReferenceEnvelope {
     | "reference-diagnostic-inspect";
   projectId: StableId;
   requestId: StableId;
+  inputAccounting?: ReferenceInputAccounting;
   referenceDiagnostic?: ReferenceDiagnostic;
   status: "complete" | "partial" | "failed" | "interrupted" | "cancelled" | "unavailable";
   value?: {
@@ -2508,6 +2590,7 @@ export interface NativeReferenceEnvelope {
     job?: Job;
     evidence?: FigmaReferenceEvidence;
     receipt?: CommitReceipt;
+    metadata?: ReferenceJobMetadata;
   };
   error?: ContractError;
 }
