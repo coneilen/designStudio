@@ -95,6 +95,8 @@ export interface ContractTypes {
   ReferenceInputAccounting: Types.ReferenceInputAccounting;
   ReferenceJobUsage: Types.ReferenceJobUsage;
   ReferenceJobMetadata: Types.ReferenceJobMetadata;
+  ReferenceRecoveryPlan: Types.ReferenceRecoveryPlan;
+  NativeReferenceRecoveryPlanEnvelope: Types.NativeReferenceRecoveryPlanEnvelope;
   NativeReferenceEnvelope: Types.NativeReferenceEnvelope;
   Operation: Types.Operation;
   Diagnostic: Types.Diagnostic;
@@ -265,6 +267,8 @@ export const contractNames: readonly ContractName[] = [
   "ReferenceInputAccounting",
   "ReferenceJobUsage",
   "ReferenceJobMetadata",
+  "ReferenceRecoveryPlan",
+  "NativeReferenceRecoveryPlanEnvelope",
   "NativeReferenceEnvelope",
   "Operation",
   "Diagnostic",

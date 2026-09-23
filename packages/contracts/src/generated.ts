@@ -841,6 +841,8 @@ export interface ContractCatalog {
   ReferenceInputAccounting: ReferenceInputAccounting;
   ReferenceJobUsage: ReferenceJobUsage;
   ReferenceJobMetadata: ReferenceJobMetadata;
+  ReferenceRecoveryPlan: ReferenceRecoveryPlan;
+  NativeReferenceRecoveryPlanEnvelope: NativeReferenceRecoveryPlanEnvelope;
   NativeReferenceEnvelope: NativeReferenceEnvelope;
   Operation: Operation;
   Diagnostic: Diagnostic;
@@ -2560,6 +2562,77 @@ export interface ReferenceJobMetadata {
         },
       ];
   receiptPresent: boolean;
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "ReferenceRecoveryPlan".
+ */
+export interface ReferenceRecoveryPlan {
+  verification: "retained-bytes";
+  eligibility: "eligible-for-recovery-review";
+  consumed: true;
+  historicalStatus: "interrupted";
+  jobId: StableId;
+  jobSha256: Sha256;
+  stateSha256: Sha256;
+  identitySha256: Sha256;
+  sourceSha256: Sha256;
+  approvalSha256: Sha256;
+  policySha256: Sha256;
+  proofSha256: Sha256;
+  referenceStatus: "complete" | "partial";
+  pixelWidth: number;
+  pixelHeight: number;
+  colorSpace: "srgb" | "unknown";
+  /**
+   * @minItems 2
+   * @maxItems 2
+   */
+  stages: [
+    {
+      role: "reference" | "evidence";
+      sha256: Sha256;
+      byteLength: number;
+      disposition: "recovery-needed";
+      publication: "stage-only" | "published-only";
+    },
+    {
+      role: "reference" | "evidence";
+      sha256: Sha256;
+      byteLength: number;
+      disposition: "recovery-needed";
+      publication: "stage-only" | "published-only";
+    },
+  ];
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "NativeReferenceRecoveryPlanEnvelope".
+ */
+export interface NativeReferenceRecoveryPlanEnvelope {
+  schemaVersion: SchemaVersion;
+  operation: "reference-recovery-plan";
+  projectId: StableId;
+  requestId: StableId;
+  status: "complete" | "failed" | "interrupted" | "cancelled";
+  value?: ReferenceRecoveryPlan;
+  reason?:
+    | "invalid-input"
+    | "authority-denied"
+    | "ineligible-job"
+    | "job-changed"
+    | "source-proof-invalid"
+    | "inventory-invalid"
+    | "evidence-invalid"
+    | "png-invalid"
+    | "known-pair-native-read-blocked"
+    | "state-changed"
+    | "input-limit"
+    | "cancelled"
+    | "deadline-exceeded"
+    | "cleanup-incomplete";
+  inputAccounting?: ReferenceInputAccounting;
+  error?: ContractError;
 }
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema

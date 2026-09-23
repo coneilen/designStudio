@@ -7,6 +7,44 @@ const base = [
   "--request-id",
   "original",
 ];
+it("requires a Job digest for the separately admitted read-only recovery plan and rejects write/URL overrides", () => {
+  const args = [
+    "figma",
+    "reference-recovery-plan",
+    ...base,
+    "--expected-job",
+    "a".repeat(64),
+  ];
+  expect(parseCaptureArguments(args)).toMatchObject({
+    command: "figma-reference-recovery-plan",
+    capture: {
+      operation: "reference-recovery-plan",
+      requestId: "original",
+      expectedJob: "a".repeat(64),
+    },
+  });
+  expect(() =>
+    parseCaptureArguments(["figma", "reference-recovery-plan", ...base]),
+  ).toThrow();
+  for (const extra of [
+    ["--job-id", "diagnostic_arbitrary"],
+    ["--url", "https://private.invalid"],
+    ["--confirm", "DOWNLOAD-ONE-DIAGNOSTIC-REFERENCE"],
+    ["--path", "private"],
+    ["--inspection", "metadata-only"],
+    ["--expected-job", "b".repeat(64)],
+  ])
+    expect(() => parseCaptureArguments([...args, ...extra])).toThrow();
+  expect(() =>
+    parseCaptureArguments([
+      "figma",
+      "reference-diagnostic-inspect",
+      ...base,
+      "--expected-job",
+      "a".repeat(64),
+    ]),
+  ).toThrow();
+});
 it("gates metadata-only inspection without changing the default or admitting arbitrary jobs", () => {
   expect(
     parseCaptureArguments(["figma", "reference-diagnostic-inspect", ...base]),

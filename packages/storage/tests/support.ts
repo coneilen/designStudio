@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
+  lstat,
   mkdir,
   readdir,
   readFile,
@@ -7,7 +8,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import {
   type Artifact,
   DEFAULT_BUDGETS,
@@ -21,6 +22,65 @@ import { storageTestSignal } from "./lifetime.js";
 export const hash = (bytes: Uint8Array | string) =>
   createHash("sha256").update(bytes).digest("hex");
 export const bytes = (text: string) => new TextEncoder().encode(text);
+// Synthetic identity observation, not a native owner/DACL or file-lock assertion.
+export async function syntheticImmutableSnapshot(filename: string) {
+  const before = await lstat(filename);
+  let closed = false;
+  return {
+    identitySha256: hash(
+      JSON.stringify([
+        filename,
+        before.dev,
+        before.ino,
+        before.size,
+        before.mtimeMs,
+      ]),
+    ),
+    async check() {
+      if (closed) throw new Error("Synthetic immutable pin closed");
+      const names = (await readdir(dirname(filename))).map((name) =>
+        name.toLowerCase(),
+      );
+      if (
+        ["-wal", "-shm", "-journal"].some((suffix) =>
+          names.includes(`${basename(filename).toLowerCase()}${suffix}`),
+        )
+      )
+        throw new Error("Synthetic SQLite sidecar denied");
+      const after = await lstat(filename);
+      if (
+        after.ino !== before.ino ||
+        after.dev !== before.dev ||
+        after.size !== before.size ||
+        after.mtimeMs !== before.mtimeMs ||
+        after.nlink !== 1
+      )
+        throw new Error(
+          `Synthetic immutable database changed: ${JSON.stringify({
+            before: [
+              before.dev,
+              before.ino,
+              before.size,
+              before.mtimeMs,
+              before.ctimeMs,
+              before.nlink,
+            ],
+            after: [
+              after.dev,
+              after.ino,
+              after.size,
+              after.mtimeMs,
+              after.ctimeMs,
+              after.nlink,
+            ],
+          })}`,
+        );
+    },
+    close() {
+      closed = true;
+    },
+  };
+}
 export function context(id = "request1"): OperationContext {
   return {
     schemaVersion: "1.0",

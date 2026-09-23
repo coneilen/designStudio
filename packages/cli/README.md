@@ -1,5 +1,25 @@
 # @design-studio/cli
 
+## Offline retained-reference validation
+
+```text
+figma reference-recovery-plan --project <existing ID> --request-id <original capture request> --expected-job <metadata Job SHA256>
+```
+
+This separate v6 native read-only command validates retained physical outputs,
+source/approval lineage and PNG evidence without another provider request.
+Exit 0 means a closed `eligible-for-recovery-review` plan, not acquisition
+completion, publication, usable-image export or conversion readiness. The old
+interrupted job and consumed history remain unchanged. No apply/download
+confirmation, arbitrary job/path/URL or metadata-mode override is accepted.
+Old releases cannot mint validation authority.
+
+Use a cold dedicated command process. A previously initialized SQLite addon,
+retained WAL/SHM/journal (even empty), incompatible schema, live writer, unsafe
+publication or changed authority fails closed. The command never checkpoints,
+migrates or deletes sidecars. It returns safe hashes/counts/dimensions and proof,
+not image bytes or private text. Recovery/apply is a separate future capability.
+
 ## Explicit selected-reference attachment
 
 A separately inventory-bound version-5 diagnostic supplement also exposes:

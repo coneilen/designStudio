@@ -5001,6 +5001,125 @@
               "receiptPresent": { "type": "boolean" }
             }
           },
+          "ReferenceRecoveryPlan": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "verification",
+              "eligibility",
+              "consumed",
+              "historicalStatus",
+              "jobId",
+              "jobSha256",
+              "stateSha256",
+              "identitySha256",
+              "sourceSha256",
+              "approvalSha256",
+              "policySha256",
+              "proofSha256",
+              "referenceStatus",
+              "pixelWidth",
+              "pixelHeight",
+              "colorSpace",
+              "stages"
+            ],
+            "properties": {
+              "verification": { "const": "retained-bytes" },
+              "eligibility": { "const": "eligible-for-recovery-review" },
+              "consumed": { "const": true },
+              "historicalStatus": { "const": "interrupted" },
+              "jobId": { "$ref": "#/definitions/StableId" },
+              "jobSha256": { "$ref": "#/definitions/Sha256" },
+              "stateSha256": { "$ref": "#/definitions/Sha256" },
+              "identitySha256": { "$ref": "#/definitions/Sha256" },
+              "sourceSha256": { "$ref": "#/definitions/Sha256" },
+              "approvalSha256": { "$ref": "#/definitions/Sha256" },
+              "policySha256": { "$ref": "#/definitions/Sha256" },
+              "proofSha256": { "$ref": "#/definitions/Sha256" },
+              "referenceStatus": { "enum": ["complete", "partial"] },
+              "pixelWidth": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 6553600
+              },
+              "pixelHeight": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 6553600
+              },
+              "colorSpace": { "enum": ["srgb", "unknown"] },
+              "stages": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 2,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "role",
+                    "sha256",
+                    "byteLength",
+                    "disposition",
+                    "publication"
+                  ],
+                  "properties": {
+                    "role": { "enum": ["reference", "evidence"] },
+                    "sha256": { "$ref": "#/definitions/Sha256" },
+                    "byteLength": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 26214400
+                    },
+                    "disposition": { "const": "recovery-needed" },
+                    "publication": { "enum": ["stage-only", "published-only"] }
+                  }
+                }
+              }
+            }
+          },
+          "NativeReferenceRecoveryPlanEnvelope": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "schemaVersion",
+              "operation",
+              "projectId",
+              "requestId",
+              "status"
+            ],
+            "properties": {
+              "schemaVersion": { "$ref": "#/definitions/SchemaVersion" },
+              "operation": { "const": "reference-recovery-plan" },
+              "projectId": { "$ref": "#/definitions/StableId" },
+              "requestId": { "$ref": "#/definitions/StableId" },
+              "status": {
+                "enum": ["complete", "failed", "interrupted", "cancelled"]
+              },
+              "value": { "$ref": "#/definitions/ReferenceRecoveryPlan" },
+              "reason": {
+                "enum": [
+                  "invalid-input",
+                  "authority-denied",
+                  "ineligible-job",
+                  "job-changed",
+                  "source-proof-invalid",
+                  "inventory-invalid",
+                  "evidence-invalid",
+                  "png-invalid",
+                  "known-pair-native-read-blocked",
+                  "state-changed",
+                  "input-limit",
+                  "cancelled",
+                  "deadline-exceeded",
+                  "cleanup-incomplete"
+                ]
+              },
+              "inputAccounting": {
+                "$ref": "#/definitions/ReferenceInputAccounting"
+              },
+              "error": { "$ref": "#/definitions/ContractError" }
+            }
+          },
           "NativeReferenceEnvelope": {
             "type": "object",
             "additionalProperties": false,

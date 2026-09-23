@@ -3,6 +3,55 @@ import { referenceDiagnosticFields, validateContract } from "../src/index.js";
 import { DEFAULT_BUDGETS } from "../src/profile.js";
 
 const artifact = { id: `sha256_${"a".repeat(64)}`, sha256: "a".repeat(64) };
+it("keeps retained-byte plans closed and distinct from recovered acquisition receipts", () => {
+  const stage = {
+    role: "evidence",
+    sha256: artifact.sha256,
+    byteLength: 128,
+    disposition: "recovery-needed",
+    publication: "published-only",
+  };
+  const plan = {
+    verification: "retained-bytes",
+    eligibility: "eligible-for-recovery-review",
+    consumed: true,
+    historicalStatus: "interrupted",
+    jobId: "diagnostic_synthetic",
+    jobSha256: artifact.sha256,
+    stateSha256: artifact.sha256,
+    identitySha256: artifact.sha256,
+    sourceSha256: artifact.sha256,
+    approvalSha256: artifact.sha256,
+    policySha256: artifact.sha256,
+    proofSha256: artifact.sha256,
+    referenceStatus: "complete",
+    pixelWidth: 2,
+    pixelHeight: 2,
+    colorSpace: "srgb",
+    stages: [stage, { ...stage, role: "reference" }],
+  };
+  expect(validateContract("ReferenceRecoveryPlan", plan).success).toBe(true);
+  for (const bad of [
+    { ...plan, bytes: "private" },
+    { ...plan, url: "private" },
+    { ...plan, receipt: {} },
+    { ...plan, eligibility: "recovered" },
+    { ...plan, historicalStatus: "completed" },
+    { ...plan, consumed: false },
+    { ...plan, pixelWidth: 6553601 },
+    { ...plan, stages: [stage] },
+    { ...plan, stages: [stage, stage, stage] },
+    { ...plan, stages: [{ ...stage, path: "private" }, stage] },
+    {
+      ...plan,
+      stages: [
+        { ...stage, publication: "known-pair-native-read-blocked" },
+        stage,
+      ],
+    },
+  ])
+    expect(validateContract("ReferenceRecoveryPlan", bad).success).toBe(false);
+});
 it("closes diagnostic job metadata and input accounting against payloads and oversized projections", () => {
   const usage = {
     inputBytes: 0,

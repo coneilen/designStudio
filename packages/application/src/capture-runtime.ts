@@ -20,6 +20,10 @@ export {
   REFERENCE_APPROVAL_CONFIRMATION,
   REFERENCE_DOWNLOAD_CONFIRMATION,
 } from "./reference-runtime.js";
+export {
+  type NativeReferenceRecoveryPlanInput,
+  openNativeReferenceValidation,
+} from "./reference-validation.js";
 
 /** Public native factory has no test policy, transport, root, vault or authorization overrides. */
 export function openNativeCapture(project: CaptureProject) {

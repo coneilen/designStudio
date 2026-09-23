@@ -70,6 +70,8 @@ const publicArtifacts = [
   "FigmaReferenceRequest",
   "FigmaReferenceEvidence",
   "NativeReferenceEnvelope",
+  "ReferenceRecoveryPlan",
+  "NativeReferenceRecoveryPlanEnvelope",
   "FigmaIntakeManifest",
   "FigmaSourceMap",
   "FigmaConversionEvidence",

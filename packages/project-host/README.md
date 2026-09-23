@@ -1,5 +1,42 @@
 # @design-studio/project-host
 
+## Version-6 retained-validation supplement
+
+`reference-validation-policy.json` is separately inventory-bound by release
+policy v6. It adds only `figma-reference-recovery-plan`, read-only grants,
+deny-egress, zero calls/publications, and unchanged 30-second/25 MiB/raster
+limits. All four older policy files/digests and namespaces remain immutable;
+v1-v5 leases and structural objects cannot acquire this capability.
+
+The native work owner pins the canonical main database and parent directory
+for read with write/delete sharing denied. It rejects any WAL, SHM or rollback
+journal before/after admission, including empty companions. Current installation,
+principal, owner/DACL, ancestor/project authority, native file identity,
+device/inode, single link, size and modification time are rechecked. It never
+repairs security, copies/checkpoints a database or changes old project records.
+The main metadata database itself is bounded to 25 MiB before SQLite integrity
+inspection; its page reads are not misreported as metered artifact-body reads.
+For this pinned immutable **database only**, ctime is not a content-equality
+criterion: synthetic reads observed ctime-only drift with unchanged data,
+identity, size and mtime; its cause is unknown. Ordinary artifact ctime/link
+checks are unchanged. Native tests must independently prove writes, truncate,
+delete, rename and live-writer admission are denied and source bytes preserved.
+
+The v6 command explicitly initializes the exact pinned SQLite addon in a cold
+main-thread command process, before any other addon load. A synchronous,
+no-await environment scope enables URI parsing during native require and restores
+the previous process environment even on failure. **SQLite URI parsing remains
+process-global thereafter**; environment restoration does not undo it. Unknown
+prior loads, binding aliases/identity changes and Worker initialization deny.
+Ordinary store paths still reject caller URIs and require native attestation.
+The only new URI is generated internally from the pinned canonical database
+path with fixed `mode=ro&immutable=1`. No existing WAL is ignored.
+
+All native pins, including fresh recheck pins whose close fails, remain owned.
+Close attempts independent pins, retains failures and releases work authority
+only after actual closure. This capability does not adopt historical staging
+ownership or authorize an offline recovery write.
+
 ## Separate native credential capture profile
 
 `figma-capture-v1` is a closed Windows x64 profile distinct from the fixture

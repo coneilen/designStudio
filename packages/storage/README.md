@@ -1,5 +1,24 @@
 # @design-studio/storage
 
+## Explicit immutable read-only composition
+
+`access: "read-only"` requires a host-held immutable main-database snapshot and
+the separate cold-command initializer. It opens an existing current-schema
+database using an internally generated immutable read-only URI and query-only
+protection; no migration, initialization, journal-mode change, checkpoint,
+backup or write fallback runs. Every storage write operation is denied before
+its callback. Ordinary database opening and its absolute-path/native-attestation
+checks are unchanged.
+
+This mode is not ordinary SQLite `readonly: true`: that can create WAL/SHM
+files for a WAL-mode database. The native owner must instead pin the main file
+against write/delete, repeatedly prove current authority and identity, and
+refuse **all** existing WAL/SHM/journal companions, even zero-byte files.
+Immutable mode must never hide committed WAL data. The owner holds its pins
+until the SQLite connection closes and verifies unchanged source state after
+close. Tests cover cold initialization, environment restoration, preloaded
+addon/Worker/alias/URI denial and actual native source-file preservation.
+
 F03 local storage core, package version 1.0.0. Shared artifact/revision/review
 contracts remain `@design-studio/contracts` schema 1.0. The private SQLite schema
 is version 4. No renderer, asset decoder, authorization issuer, job scheduler,

@@ -10,6 +10,7 @@ test("built package exposes only the trusted Windows factory, never native/path/
     "assertCaptureRecoveryInstallation",
     "assertCaptureReferenceInstallation",
     "assertCaptureWork",
+    "assertReferenceValidationInstallation",
     "openCaptureCredentials",
     "openCaptureProject",
     "registerCaptureInstallationGuards",
@@ -19,8 +20,11 @@ test("built package exposes only the trusted Windows factory, never native/path/
     "verifyFixtureInstallation",
   ]);
   expect(typeof api.WindowsFixtureProjects.open).toBe("function");
+  expect(typeof api.assertReferenceValidationInstallation).toBe("function");
   expect("openInternal" in api.WindowsFixtureProjects).toBe(false);
   expect("openAtTestRoot" in api).toBe(false);
   expect("loadNative" in api).toBe(false);
   expect("nativeCapturePolicy" in api).toBe(false);
+  expect("pinImmutableReferenceDatabase" in api).toBe(false);
+  expect("referenceValidationPolicyBytes" in api).toBe(false);
 });

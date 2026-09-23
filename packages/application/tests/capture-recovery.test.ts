@@ -1,5 +1,6 @@
 import {
   link,
+  lstat,
   mkdir,
   mkdtemp,
   readdir,
@@ -29,10 +30,11 @@ import type { CaptureProject, CaptureWork } from "@design-studio/project-host";
 import {
   type JobWorkerExpected,
   LocalStore,
+  type StorageOptions,
   type StoredJob,
   type StoredJobStage,
 } from "@design-studio/storage";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, aroundEach, expect, vi, it as vitestIt } from "vitest";
 import * as referenceDecoder from "../../figma-capture/dist/decode.js";
 import {
   CaptureHttpError,
@@ -43,7 +45,10 @@ import { nativeCapturePolicy } from "../../project-host/dist/capture-authority.j
 import { CAPTURE_DIAGNOSTIC_POLICY_SHA256 } from "../../project-host/src/capture-diagnostic-profile.js";
 import { CAPTURE_RECOVERY_POLICY_SHA256 } from "../../project-host/src/capture-recovery-profile.js";
 import { CAPTURE_REFERENCE_POLICY_SHA256 } from "../../project-host/src/capture-reference-profile.js";
+import { REFERENCE_VALIDATION_POLICY_SHA256 } from "../../project-host/src/reference-validation-profile.js";
+import { initializeImmutableSqlite } from "../../storage/dist/immutable-sqlite.js";
 import {
+  addSyntheticCaptureProtection,
   addSyntheticStoppedCaptures,
   corruptSyntheticCapture,
   corruptSyntheticCaptureStage,
@@ -51,12 +56,18 @@ import {
   removeSyntheticCaptureProtection,
 } from "../../storage/tests/capture-recovery-corruption.js";
 import {
+  closeSettledStores,
+  joinSettledStores,
+} from "../../storage/tests/lifetime.js";
+import { syntheticImmutableSnapshot } from "../../storage/tests/support.js";
+import {
   CAPTURE_RECOVERY_CONFIRMATION,
   nativeCaptureResources,
 } from "../src/capture-recovery.js";
 import {
   assembleNativeCapture,
   type NativeCaptureRuntime,
+  NativeCaptureStartupCleanupRequired,
 } from "../src/capture-runtime-internal.js";
 import { RecoveryDecisions } from "../src/recovery.js";
 import {
@@ -65,8 +76,19 @@ import {
   REFERENCE_APPROVAL_CONFIRMATION,
   REFERENCE_DOWNLOAD_CONFIRMATION,
 } from "../src/reference-runtime.js";
+import { openNativeReferenceValidation } from "../src/reference-validation.js";
+import {
+  AsyncTestScope,
+  captureTestScope,
+  inCaptureTest,
+  ownCaptureTests,
+  ownCaptureWork,
+} from "./capture-test-scope.js";
 
-const seam = vi.hoisted(() => ({ work: undefined as CaptureWork | undefined }));
+const seam = vi.hoisted(() => ({
+  work: undefined as CaptureWork | undefined,
+  onCurrent: undefined as (() => Promise<void>) | undefined,
+}));
 vi.mock("@design-studio/project-host", async (original) => ({
   ...(await original<typeof import("@design-studio/project-host")>()),
   acquireCaptureWork: () => {
@@ -80,13 +102,28 @@ vi.mock("../../project-host/dist/capture-work.js", () => ({
   },
 }));
 const cleanups: (() => Promise<void>)[] = [];
+const it = ownCaptureTests(vitestIt);
+aroundEach((run, context) => {
+  if (cleanups.length)
+    throw new Error("Previous capture fixture has not quiesced.");
+  return inCaptureTest(new AsyncTestScope(context.signal), run);
+});
 afterEach(async () => {
-  try {
-    for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
-  } finally {
-    vi.restoreAllMocks();
-    seam.work = undefined;
+  await captureTestScope().close();
+  const errors: unknown[] = [];
+  for (const cleanup of [...cleanups].reverse()) {
+    try {
+      await cleanup();
+      cleanups.splice(cleanups.indexOf(cleanup), 1);
+    } catch (error) {
+      errors.push(error);
+    }
   }
+  if (errors.length)
+    throw new AggregateError(errors, "Capture fixture cleanup did not settle.");
+  vi.restoreAllMocks();
+  seam.work = undefined;
+  seam.onCurrent = undefined;
 });
 function value<T>(outcome: Outcome<T>): T {
   expect(outcome.status, JSON.stringify(outcome)).toBe("complete");
@@ -116,7 +153,11 @@ const call = {
   costMicros: 0,
 };
 
-async function fixture(
+function fixture(...args: Parameters<typeof createFixture>) {
+  return ownCaptureWork(createFixture)(...args);
+}
+
+async function createFixture(
   retainStage = true,
   cooldown?: "future" | "unknown" | "elapsed",
   history: {
@@ -125,9 +166,51 @@ async function fixture(
     stageCount?: number;
   } = {},
 ) {
+  const scope = captureTestScope();
+  initializeImmutableSqlite(
+    path.resolve(
+      ".tools\\sqlite-prebuild\\build\\Release\\better_sqlite3.node",
+    ),
+  );
   const root = await mkdtemp(
     path.join(tmpdir(), "capture-recovery-synthetic-"),
   );
+  const stores: LocalStore[] = [];
+  const runtimes: NativeCaptureRuntime[] = [];
+  const services: JobService[] = [];
+  const stopRequests: Promise<
+    { outcome: Awaited<ReturnType<JobService["stop"]>> } | { error: unknown }
+  >[] = [];
+  const validations: Awaited<
+    ReturnType<typeof openNativeReferenceValidation>
+  >[] = [];
+  const startupClosures: (() => Promise<void>)[] = [];
+  cleanups.push(async () => {
+    await scope.close();
+    const stopped = await Promise.all(stopRequests.splice(0));
+    for (const service of services) value(await service.stop());
+    const stopErrors: unknown[] = [];
+    for (const result of stopped) {
+      try {
+        if ("error" in result) throw result.error;
+        value(result.outcome);
+      } catch (error) {
+        stopErrors.push(error);
+      }
+    }
+    if (stopErrors.length)
+      throw new AggregateError(
+        stopErrors,
+        "Original synthetic service stop failed.",
+      );
+    await joinSettledStores(stores);
+    for (const close of startupClosures) await close();
+    for (const validation of validations) await validation.close();
+    for (const runtime of runtimes) await runtime.close();
+    await closeSettledStores(stores);
+    await rm(root, { recursive: true, force: true });
+  });
+  scope.signal.throwIfAborted();
   const artifacts = path.join(root, "artifacts");
   const outputs = path.join(root, "outputs");
   await mkdir(artifacts);
@@ -155,6 +238,11 @@ async function fixture(
     ".tools\\sqlite-prebuild\\build\\Release\\better_sqlite3.node",
   );
   let runtime: NativeCaptureRuntime;
+  let validation:
+    | Awaited<ReturnType<typeof openNativeReferenceValidation>>
+    | undefined;
+  let validationMode = false;
+  let clockOffset = 0;
   let store: LocalStore;
   let policy: ReturnType<typeof nativeCapturePolicy>;
   let credentialSha256 = "b".repeat(64);
@@ -194,9 +282,11 @@ async function fixture(
         if (point === fault) throw new Error("Synthetic storage interruption");
       },
     });
+    stores.push(store);
     return store;
   });
   const open = async () => {
+    scope.signal.throwIfAborted();
     let current = true;
     const work: CaptureWork = {
       project,
@@ -213,11 +303,45 @@ async function fixture(
       current: async () => {
         if (!current)
           throw new HostBoundaryError("FORBIDDEN", "Closed synthetic work");
+        await seam.onCurrent?.();
       },
       readyCredential: ready,
       referenceAuthority: async () => CAPTURE_REFERENCE_POLICY_SHA256,
       diagnosticAuthority: async () => CAPTURE_DIAGNOSTIC_POLICY_SHA256,
+      referenceValidationAuthority: async () =>
+        REFERENCE_VALIDATION_POLICY_SHA256,
+      pinReferenceValidationDatabase: () =>
+        syntheticImmutableSnapshot(project.paths.database),
+      pinReferenceValidationEntry: async (rootId, relative) => {
+        const filename = path.join(
+          rootId === project.artifactRootId ? artifacts : outputs,
+          ...relative.split("/"),
+        );
+        const stat = await lstat(filename);
+        if (stat.isSymbolicLink() || (!stat.isDirectory() && stat.nlink !== 1))
+          throw new HostBoundaryError(
+            "PATH_FORBIDDEN",
+            "Synthetic retained pin refused.",
+          );
+        return {
+          handle: 1,
+          byteLength: stat.size,
+          identity: {
+            path: filename,
+            volume: stat.dev,
+            file: String(stat.ino),
+          },
+          read: () => {
+            throw new Error("Synthetic native pin has no body reader");
+          },
+          close: () => {},
+        };
+      },
       recoveryAuthority: async () => {
+        if (validationMode)
+          throw new Error(
+            "Read-only validation must not inspect the credential journal",
+          );
         if (!admitted)
           throw new HostBoundaryError(
             "ACTION_REQUIRED",
@@ -249,14 +373,45 @@ async function fixture(
     };
     seam.work = work;
     policy = nativeCapturePolicy(work);
-    runtime = await assembleNativeCapture(project);
+    const now = policy.clock.now.bind(policy.clock);
+    vi.spyOn(policy.clock, "now").mockImplementation(() => now() + clockOffset);
+    try {
+      if (validationMode) {
+        validation = await openNativeReferenceValidation(project);
+        validations.push(validation);
+      } else {
+        const native = await assembleNativeCapture(project);
+        runtimes.push(native);
+        runtime = {
+          execute: ownCaptureWork((input, signal) =>
+            native.execute(input, AbortSignal.any([signal, scope.signal])),
+          ),
+          recover: ownCaptureWork((input, signal) =>
+            native.recover(input, AbortSignal.any([signal, scope.signal])),
+          ),
+          ...(native.reference
+            ? {
+                reference: ownCaptureWork((input, signal) => {
+                  if (!native.reference)
+                    throw new Error("Missing native reference facade");
+                  return native.reference(
+                    input,
+                    AbortSignal.any([signal, scope.signal]),
+                  );
+                }),
+              }
+            : {}),
+          close: () => native.close(),
+        };
+      }
+    } catch (error) {
+      if (error instanceof NativeCaptureStartupCleanupRequired)
+        startupClosures.push(error.close);
+      throw error;
+    }
     return { policy, store, runtime };
   };
   const initialOwners = await open();
-  cleanups.push(async () => {
-    await runtime.close();
-    await rm(root, { recursive: true, force: true });
-  });
   const originalRequestId = "failed_request";
   const originalJobId = `capture_${canonicalDigest([project.projectId, project.principal.actorId, originalRequestId])}`;
   const url =
@@ -285,7 +440,7 @@ async function fixture(
   const seed = await initialOwners.policy.issue({
     jobId: seedId,
     requestId: seedId,
-    signal: new AbortController().signal,
+    signal: scope.signal,
   });
   const receipt = value(
     await initialOwners.store.commit(
@@ -299,7 +454,7 @@ async function fixture(
   const context = await initialOwners.policy.issue({
     jobId: originalJobId,
     requestId: originalRequestId,
-    signal: new AbortController().signal,
+    signal: scope.signal,
   });
   let record = value(
     await initialOwners.store.jobs.create(
@@ -333,7 +488,7 @@ async function fixture(
     const priorContext = await initialOwners.policy.issue({
       jobId: "synthetic_resource_predecessor",
       requestId: "synthetic_resource_predecessor",
-      signal: new AbortController().signal,
+      signal: scope.signal,
     });
     let prior = value(
       await initialOwners.store.jobs.create(
@@ -391,19 +546,26 @@ async function fixture(
       clock: initialOwners.policy.clock,
       executionAuthority: {
         verify: initialOwners.policy.verify,
-        observe: (signal) =>
-          initialOwners.policy.issue({
+        // Stop observation must outlive the cancelled execution signal.
+        observe: async (signal) => {
+          const issued = await initialOwners.policy.issue({
             jobId: originalJobId,
             requestId: originalRequestId,
             signal,
-          }),
-        issue: (_record, signal) =>
-          initialOwners.policy.issue({
+          });
+          expect(issued.signal).toBe(signal);
+          return issued;
+        },
+        issue: async (_record, signal) => {
+          const issued = await initialOwners.policy.issue({
             jobId: originalJobId,
             requestId: originalRequestId,
             signal,
             deadline: record.job.deadline,
-          }),
+          });
+          expect(issued.signal).toBe(signal);
+          return issued;
+        },
       },
       recoveryAuthority: {
         async issue(record, signal) {
@@ -412,6 +574,7 @@ async function fixture(
             requestId: record.requestId,
             signal,
           });
+          expect(recoveryContext.signal).toBe(signal);
           decisions.register(record, recoveryContext);
           return recoveryContext;
         },
@@ -447,6 +610,16 @@ async function fixture(
           },
         },
       ],
+    });
+    services.push(service);
+    scope.releaseOnEnd(() => {
+      const stopping = service.stop();
+      stopRequests.push(
+        stopping.then(
+          (outcome) => ({ outcome }),
+          (error: unknown) => ({ error }),
+        ),
+      );
     });
     try {
       value(await service.runOnce());
@@ -589,7 +762,7 @@ async function fixture(
     failedJobId: originalJobId,
     nextRequestId: "next_request",
   };
-  return {
+  const helpers = {
     root,
     artifacts,
     outputs,
@@ -607,7 +780,18 @@ async function fixture(
       return store;
     },
     get policy() {
-      return policy;
+      const current = policy;
+      return {
+        ...current,
+        issue: ownCaptureWork(
+          (input: Parameters<typeof policy.issue>[0]) =>
+            current.issue({
+              ...input,
+              signal: AbortSignal.any([input.signal, scope.signal]),
+            }),
+          scope,
+        ),
+      };
     },
     setAdmitted(value: boolean) {
       admitted = value;
@@ -620,6 +804,26 @@ async function fixture(
     },
     setFault(value: string | undefined) {
       fault = value;
+    },
+    advanceClock(milliseconds: number) {
+      clockOffset += milliseconds;
+    },
+    async validateRetained(expectedJob: string) {
+      await runtime.close();
+      validationMode = true;
+      await open();
+      try {
+        return await required(validation).execute(
+          {
+            operation: "reference-recovery-plan",
+            requestId: input.nextRequestId,
+            expectedJob,
+          },
+          scope.signal,
+        );
+      } finally {
+        await validation?.close();
+      }
     },
     raceBeforeCommit(nextOnly = false) {
       beforeCommit = () =>
@@ -635,14 +839,16 @@ async function fixture(
         );
     },
     async reopen() {
+      await validation?.close();
       await runtime.close();
+      validationMode = false;
       await open();
     },
     async record() {
       const context = await policy.issue({
         jobId: originalJobId,
         requestId: originalRequestId,
-        signal: new AbortController().signal,
+        signal: scope.signal,
       });
       return value(await store.jobs.get(originalJobId, context));
     },
@@ -650,7 +856,7 @@ async function fixture(
       const context = await policy.issue({
         jobId: originalJobId,
         requestId: originalRequestId,
-        signal: new AbortController().signal,
+        signal: scope.signal,
       });
       return value(await store.jobs.getStages(originalJobId, context));
     },
@@ -658,7 +864,7 @@ async function fixture(
       const context = await policy.issue({
         jobId: id,
         requestId: id,
-        signal: new AbortController().signal,
+        signal: scope.signal,
       });
       const stage = value(
         await store.stage(canonicalBytes({ ordinary: true, id }), context),
@@ -697,12 +903,217 @@ async function fixture(
       await open();
     },
     async propose() {
-      const result = await runtime.recover(input, new AbortController().signal);
+      const result = await runtime.recover(input, scope.signal);
       expect(result.status, JSON.stringify(result)).toBe("complete");
       return required(result.value).proposal;
     },
   };
+  Object.assign(helpers, {
+    validateRetained: ownCaptureWork(helpers.validateRetained),
+    reopen: ownCaptureWork(helpers.reopen),
+    record: ownCaptureWork(helpers.record),
+    stages: ownCaptureWork(helpers.stages),
+    ordinaryReceipt: ownCaptureWork(helpers.ordinaryReceipt),
+    mutate: ownCaptureWork(helpers.mutate),
+    mutateStage: ownCaptureWork(helpers.mutateStage),
+    addHistory: ownCaptureWork(helpers.addHistory),
+    propose: ownCaptureWork(helpers.propose),
+  });
+  return helpers;
 }
+
+it.each(["setup", "storage", "native"] as const)(
+  "joins cancelled original capture fixture %s work before owner close and spy restoration",
+  async (kind) => {
+    const runner = new AbortController();
+    const scope = new AsyncTestScope(runner.signal);
+    let release!: () => void;
+    let enter!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    captureTestScope().releaseOnEnd(release);
+    let observedSignal: AbortSignal | undefined;
+    let settled = false;
+    let completed = false;
+    let restored = false;
+    let rejected: unknown;
+    let result: unknown;
+    const begin = () => {
+      if (kind === "setup") {
+        seam.onCurrent = async () => {
+          seam.onCurrent = undefined;
+          enter();
+          await gate;
+        };
+        return fixture();
+      }
+      return Promise.resolve(undefined);
+    };
+    const construction = inCaptureTest(scope, begin);
+    const f =
+      kind === "setup"
+        ? undefined
+        : await inCaptureTest(scope, () => fixture());
+    if (kind === "storage" && f) {
+      const options: unknown = Reflect.get(f.store, "options");
+      const authority = (
+        value: unknown,
+      ): value is Pick<StorageOptions, "authorize"> =>
+        !!value &&
+        typeof value === "object" &&
+        "authorize" in value &&
+        typeof value.authorize === "function";
+      if (!authority(options))
+        throw new Error("Missing synthetic storage authority");
+      const original = options.authorize;
+      vi.spyOn(options, "authorize").mockImplementationOnce(
+        async (...args: unknown[]) => {
+          const context = args[0];
+          if (
+            !context ||
+            typeof context !== "object" ||
+            !("signal" in context) ||
+            !(context.signal instanceof AbortSignal)
+          )
+            throw new Error("Missing original signal");
+          observedSignal = context.signal;
+          enter();
+          await gate;
+          return Reflect.apply(original, options, args);
+        },
+      );
+    }
+    if (kind === "native") {
+      const inspect = ProjectFileSystem.prototype.inspectCaptureRecovery;
+      vi.spyOn(
+        ProjectFileSystem.prototype,
+        "inspectCaptureRecovery",
+      ).mockImplementationOnce(async function (
+        this: ProjectFileSystem,
+        stages,
+        context,
+      ) {
+        observedSignal = context.signal;
+        enter();
+        await gate;
+        return inspect.call(this, stages, context);
+      });
+    }
+    const operation =
+      kind === "setup"
+        ? construction
+        : kind === "storage"
+          ? required(f).record()
+          : required(f).runtime.recover(
+              required(f).input,
+              new AbortController().signal,
+            );
+    const pending = operation
+      .then(
+        (value) => {
+          result = value;
+        },
+        (error: unknown) => {
+          rejected = error;
+        },
+      )
+      .finally(() => {
+        settled = true;
+      });
+    await entered;
+    const storeClose = LocalStore.prototype.close;
+    const closeOrder: boolean[] = [];
+    vi.spyOn(LocalStore.prototype, "close").mockImplementation(function (
+      this: LocalStore,
+    ) {
+      closeOrder.push(settled);
+      return storeClose.call(this);
+    });
+    const cleanup = required(cleanups.at(-1));
+    runner.abort(new Error("Synthetic original runner abort"));
+    expect(scope.signal.aborted).toBe(true);
+    if (kind !== "setup") expect(observedSignal?.aborted).toBe(true);
+    const closing = cleanup().then(() => {
+      completed = true;
+      vi.restoreAllMocks();
+      restored = true;
+    });
+    try {
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      expect(completed).toBe(false);
+      expect(restored).toBe(false);
+      expect(closeOrder).toEqual([]);
+      expect(vi.isMockFunction(LocalStore.open)).toBe(true);
+      await expect(
+        ownCaptureWork(async () => "late work", scope)(),
+      ).rejects.toBe(scope.signal.reason);
+      release();
+      await pending;
+      await closing;
+      cleanups.splice(cleanups.indexOf(cleanup), 1);
+      expect(settled).toBe(true);
+      expect(completed).toBe(true);
+      expect(restored).toBe(true);
+      expect(closeOrder.length).toBeGreaterThan(0);
+      expect(closeOrder.every(Boolean)).toBe(true);
+      if (kind === "native") {
+        expect(rejected).toBeUndefined();
+        expect(result).toMatchObject({
+          error: { code: expect.stringMatching(/^(CANCELLED|FORBIDDEN)$/) },
+        });
+      } else if (kind === "setup") {
+        expect(rejected).toMatchObject({ code: "CANCELLED" });
+      } else expect(rejected).toBeDefined();
+    } finally {
+      release();
+      await pending;
+      await closing;
+    }
+  },
+);
+
+it("joining cancelled capture work preserves its original rejection", async () => {
+  const runner = new AbortController();
+  const scope = new AsyncTestScope(runner.signal);
+  const primary = new Error("Synthetic original failure");
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  captureTestScope().releaseOnEnd(release);
+  let entered!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const original = ownCaptureWork(async () => {
+    entered();
+    await gate;
+    throw primary;
+  }, scope)();
+  const rejection = expect(original).rejects.toBe(primary);
+  await ready;
+  runner.abort();
+  const closing = scope.close();
+  release();
+  await rejection;
+  await closing;
+});
+
+it("caller cancellation does not cancel the original capture test scope", async () => {
+  const f = await fixture();
+  const caller = new AbortController();
+  caller.abort();
+  expect(await f.runtime.recover(f.input, caller.signal)).toMatchObject({
+    error: { code: "CANCELLED" },
+  });
+  expect(captureTestScope().signal.aborted).toBe(false);
+  await f.propose();
+});
 
 it.each([false, true])(
   "records offline authorization with retained stages=%s and replays exactly after reopen",
@@ -1357,6 +1768,11 @@ it("keeps unsupported generation histories refused and accepts independent resou
 it.each([
   "valid",
   "diagnostic-valid",
+  "diagnostic-retained-valid",
+  "diagnostic-retained-unknown-stage",
+  "diagnostic-retained-missing-protection",
+  "diagnostic-retained-extra-input",
+  "diagnostic-retained-extra-output",
   "diagnostic-unknown-stage",
   "diagnostic-missing-protection",
   "diagnostic-receipt-mutation",
@@ -1371,6 +1787,7 @@ it.each([
 ] as const)(
   "authenticates retained predecessor stages after successor conversion and private exports: %s",
   async (fault) => {
+    const retained = fault.startsWith("diagnostic-retained-");
     const f = await fixture(true, undefined, { repaired: true });
     const beforeRecord = await f.record();
     const beforeStages = await f.stages();
@@ -1460,7 +1877,7 @@ it.each([
     );
     expect(next.status, JSON.stringify(next)).toBe("partial");
     expect(next.value?.jobStatus).toBe("completed");
-    if (fault === "valid" || fault === "diagnostic-valid") {
+    if (fault === "valid" || fault === "diagnostic-valid" || retained) {
       const convert = figmaImport.convertFigmaStructure;
       vi.spyOn(figmaImport, "convertFigmaStructure").mockImplementation(
         (...args) => {
@@ -1503,7 +1920,7 @@ it.each([
     if (!currentProjection.success)
       throw new Error("Invalid synthetic conversion evidence");
     expect(currentProjection.value.adapter).toBe("figma-structure-fixed-v2");
-    if (fault === "valid" || fault === "diagnostic-valid")
+    if (fault === "valid" || fault === "diagnostic-valid" || retained)
       expect(
         converted.value?.artifacts.find((entry) => entry.role === "report")
           ?.artifact.byteLength,
@@ -1675,7 +2092,7 @@ it.each([
         { operation: "reference-diagnostic-plan", requestId },
         new AbortController().signal,
       );
-      if (fault !== "diagnostic-valid") {
+      if (fault !== "diagnostic-valid" && !retained) {
         expect(planned.status, JSON.stringify(planned)).toBe("failed");
         expect(image).toHaveBeenCalledTimes(1);
         expect(await f.record()).toEqual(beforeRecord);
@@ -1705,6 +2122,7 @@ it.each([
         new AbortController().signal,
       );
       expect(approved.status, JSON.stringify(approved)).toBe("complete");
+      if (retained) f.setFault("job-after-artifacts");
       const downloaded = await run(
         {
           operation: "reference-diagnostic-download",
@@ -1714,17 +2132,72 @@ it.each([
         },
         new AbortController().signal,
       );
-      expect(downloaded.status, JSON.stringify(downloaded)).toBe("complete");
+      expect(downloaded.status, JSON.stringify(downloaded)).toBe(
+        retained ? "interrupted" : "complete",
+      );
+      if (retained) {
+        f.setFault(undefined);
+        f.advanceClock(40000);
+        const metadata = await run(
+          {
+            operation: "reference-diagnostic-inspect",
+            requestId,
+            inspection: "metadata-only",
+          },
+          new AbortController().signal,
+        );
+        if (fault === "diagnostic-retained-unknown-stage") {
+          const extra = path.join(
+            f.artifacts,
+            ".host-11111111-1111-4111-8111-111111111111",
+          );
+          await mkdir(extra);
+          await writeFile(
+            path.join(extra, "22222222-2222-4222-8222-222222222222"),
+            beforeBytes,
+          );
+        }
+        if (fault === "diagnostic-retained-missing-protection")
+          removeSyntheticCaptureProtection(
+            f.store,
+            required(downloaded.value?.job?.id),
+          );
+        if (
+          fault === "diagnostic-retained-extra-input" ||
+          fault === "diagnostic-retained-extra-output"
+        )
+          addSyntheticCaptureProtection(
+            f.store,
+            required(downloaded.value?.job?.id),
+            fault === "diagnostic-retained-extra-input" ? "job-input" : "job",
+          );
+        const recovered = await f.validateRetained(
+          required(metadata.value?.metadata?.jobSha256),
+        );
+        expect(recovered.status, JSON.stringify(recovered)).toBe(
+          fault === "diagnostic-retained-valid" ? "complete" : "failed",
+        );
+        if (fault === "diagnostic-retained-valid") {
+          expect(recovered.value).toMatchObject({
+            historicalStatus: "interrupted",
+            eligibility: "eligible-for-recovery-review",
+          });
+          expect(recovered.inputAccounting?.privateBytes).toBeLessThan(
+            26214400,
+          );
+        }
+      }
       await f.reopen();
       const inspect = required(f.runtime.reference).bind(f.runtime);
-      expect(
-        (
-          await inspect(
-            { operation: "reference-diagnostic-inspect", requestId },
-            new AbortController().signal,
-          )
-        ).value?.receipt,
-      ).toEqual(downloaded.value?.receipt);
+      if (!retained)
+        expect(
+          (
+            await inspect(
+              { operation: "reference-diagnostic-inspect", requestId },
+              new AbortController().signal,
+            )
+          ).value?.receipt,
+        ).toEqual(downloaded.value?.receipt);
       const original = await inspect(
         { operation: "reference-inspect", requestId },
         new AbortController().signal,
