@@ -27,6 +27,218 @@ import { createRetainedOwnerFixture } from "./retained-owner-fixture.js";
 import { retainedSecurityFixture } from "./retained-security-fixture.js";
 import { ownedTest, weakenTestAcl } from "./support.js";
 
+const historyReads = vi.hoisted(() => ({ active: false, physical: 0 }));
+vi.mock("node:fs/promises", async (original) => {
+  const actual = await original<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    open: async (...args: Parameters<typeof actual.open>) => {
+      const handle = await actual.open(...args);
+      const read = handle.read;
+      Object.defineProperty(handle, "read", {
+        value: async (...input: unknown[]) => {
+          const result: unknown = await Reflect.apply(read, handle, input);
+          if (
+            historyReads.active &&
+            result &&
+            typeof result === "object" &&
+            "bytesRead" in result &&
+            typeof result.bytesRead === "number"
+          )
+            historyReads.physical += result.bytesRead;
+          return result;
+        },
+      });
+      return handle;
+    },
+  };
+});
+
+test.each(["valid", "blob-security", "blob-reparse"] as const)(
+  "native historical coexistence requires both current owned bodies: %s",
+  async (kind) => {
+    await ownedTest(async (root, _own, beforeCleanup) => {
+      const owner = await declaredOwnerFixture(root);
+      await owner.declareTree("outputs");
+      beforeCleanup(() => owner.close());
+      const native = await loadNative();
+      const artifacts = path.join(root, "artifacts"),
+        outputs = path.join(root, "outputs");
+      native.createDirectory(artifacts, owner.sid);
+      native.createDirectory(outputs, owner.sid);
+      const context = syntheticContext();
+      context.authorization.grants.push(
+        ...["artifacts", "outputs"].map((resourceId) => ({
+          resourceKind: "artifact" as const,
+          resourceId,
+          operations: ["read", "write"] as ["read", "write"],
+        })),
+      );
+      const roots = [
+        {
+          id: "artifacts",
+          path: artifacts,
+          access: "read-write" as const,
+          trustedExclusiveAccess: true as const,
+          managedBlobs: true,
+        },
+        {
+          id: "outputs",
+          path: outputs,
+          access: "read-write" as const,
+          trustedExclusiveAccess: true as const,
+        },
+      ];
+      const producer = await ProjectFileSystem.create({
+        projectId: context.projectId,
+        authority: () => true,
+        roots,
+        publicationProfile: WINDOWS_PUBLICATION_PROFILE,
+        captureRecoveryInspection: {
+          artifactRootId: "artifacts",
+          outputRootId: "outputs",
+          authorize: async () => {},
+        },
+      });
+      let inspector: ProjectFileSystem | undefined;
+      let restoreSecurity: (() => Promise<void>) | undefined;
+      let restoreDirectory: (() => Promise<void>) | undefined;
+      const pins = new Set<ReadLease>();
+      try {
+        const stage = async (bytes: Buffer) => {
+          const result = await producer.stage(
+            {
+              artifactRootId: "artifacts",
+              path: `blobs/${createHash("sha256").update(bytes).digest("hex")}`,
+            },
+            bytes,
+            context,
+          );
+          if (result.status !== "complete")
+            throw new Error("Synthetic stage failed");
+          return result.value;
+        };
+        const bytes = Buffer.alloc(1024, 42);
+        const committed = await producer.publish(await stage(bytes), context);
+        if (committed.status !== "complete")
+          throw new Error("Synthetic commit failed");
+        const historical = await stage(bytes);
+        const targets = [
+          await stage(Buffer.of(1)),
+          await stage(Buffer.of(2, 3)),
+        ];
+        const descriptor = (staged: typeof historical, jobId: string) => ({
+          stagingId: staged.stagingId,
+          artifact: staged.artifact,
+          jobId,
+          requestId: jobId,
+        });
+        const input = {
+          artifacts: [committed.value],
+          committedHistoryArtifacts: [committed.value],
+          history: [descriptor(historical, "original_failed")],
+          targets: targets.map((entry) =>
+            descriptor(entry, "retained_diagnostic"),
+          ),
+        };
+        const legacy = await producer.inspectCaptureRecovery(
+          [...input.history, ...input.targets],
+          context,
+        );
+        expect(legacy.status).toBe("complete");
+        if (legacy.status === "complete")
+          for (const entry of legacy.value.stages) entry.bytes.fill(0);
+        await producer.closePreservingStages();
+        await owner.prepare();
+        const before = await owner.inspect();
+        if (kind === "blob-security") {
+          const security = await retainedSecurityFixture(
+            root,
+            path.join(artifacts, ...committed.value.path.split("/")),
+          );
+          restoreSecurity = security.restore;
+          await security.set("D:P(A;;FA;;;WD)", true);
+        }
+        if (kind === "blob-reparse") {
+          const original = path.join(artifacts, "blobs");
+          const moved = path.join(root, "outside-declared-blobs");
+          await rename(original, moved);
+          await symlink(moved, original, "junction");
+          restoreDirectory = async () => {
+            await rm(original);
+            await rename(moved, original);
+          };
+        }
+        let charged = 0;
+        let eof = 0;
+        inspector = await ProjectFileSystem.create({
+          projectId: context.projectId,
+          authority: () => true,
+          roots: roots.map((entry) => ({ ...entry, access: "read" as const })),
+          reserveRead: (length) => {
+            charged += length;
+            if (length === 1) eof++;
+          },
+          retainedReferenceInspection: {
+            artifactRootId: "artifacts",
+            outputRootId: "outputs",
+            authorize: async (actual) => {
+              expect(actual).toEqual(input);
+            },
+            pin: (id, relative, directory) =>
+              pinRetainedReferenceEntry({
+                root: id === "artifacts" ? artifacts : outputs,
+                relative,
+                directory,
+                sid: owner.sid,
+                retainedPins: pins,
+                authorize: async () => {},
+              }),
+          },
+        });
+        historyReads.physical = 0;
+        historyReads.active = true;
+        const result = await inspector.inspectRetainedReference(input, context);
+        if (kind !== "valid") {
+          expect(result.status).toBe("failed");
+          if (result.status === "failed")
+            expect(result.error.code).toBe(
+              kind === "blob-security" ? "ACTION_REQUIRED" : "PATH_FORBIDDEN",
+            );
+          expect(charged).toBe(0);
+          expect(historyReads.physical).toBe(0);
+          return;
+        }
+        expect(result.status, JSON.stringify(result)).toBe("complete");
+        if (result.status !== "complete")
+          throw new Error("Synthetic native coexistence failed");
+        try {
+          await result.value.check();
+          expect(historyReads.physical).toBe(2051);
+          expect(charged).toBe(2055);
+          expect(eof).toBe(5); // Four EOF probes plus one 1-byte target reservation.
+          expect(charged - historyReads.physical).toBe(4);
+          expect(
+            result.value.targets.map((entry) => entry.publication),
+          ).toEqual(["stage-only", "stage-only"]);
+        } finally {
+          result.value.close();
+        }
+        historyReads.active = false;
+        expect(pins.size).toBe(0);
+        expect(await owner.inspect()).toEqual(before);
+      } finally {
+        historyReads.active = false;
+        await inspector?.closePreservingStages();
+        await producer.closePreservingStages();
+        for (const pin of pins) pin.close();
+        await restoreSecurity?.();
+        await restoreDirectory?.();
+      }
+    });
+  },
+);
+
 async function declaredOwnerFixture(root: string) {
   const owner = await createRetainedOwnerFixture(root);
   await owner.declareTree("artifacts");

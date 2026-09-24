@@ -1,4 +1,7 @@
-import type { FigmaReferenceProposal } from "@design-studio/contracts";
+import type {
+  Artifact,
+  FigmaReferenceProposal,
+} from "@design-studio/contracts";
 import { canonicalDigest } from "@design-studio/design-ir";
 import type { CaptureRecoveryStage } from "@design-studio/host";
 import {
@@ -97,6 +100,17 @@ export async function retainedReferenceStages(
   state: CaptureRecoveryState,
   proposal: FigmaReferenceProposal,
 ): Promise<CaptureRecoveryStage[]> {
+  return (await retainedReferenceInventory(reader, state, proposal)).stages;
+}
+
+export async function retainedReferenceInventory(
+  reader: ReferenceReader,
+  state: CaptureRecoveryState,
+  proposal: FigmaReferenceProposal,
+): Promise<{
+  stages: CaptureRecoveryStage[];
+  committedHistoryArtifacts: Artifact[];
+}> {
   const successor = state.jobs.find(
     (record) => record.job.id === proposal.binding.originalJobId,
   );
@@ -125,7 +139,7 @@ export async function retainedReferenceStages(
   });
   if (!binding) {
     if (pending.length) throw new ApplicationError("ACTION_REQUIRED");
-    return [];
+    return { stages: [], committedHistoryArtifacts: [] };
   }
   const key = recoveryKey(binding.originalJobId);
   const receipts = state.receipts.filter(
@@ -226,12 +240,20 @@ export async function retainedReferenceStages(
       )
       .map((entry) => entry.artifactId),
   );
+  const historicalArtifacts = historic.artifacts.filter((artifact) =>
+    ids.has(artifact.id),
+  );
   if (
     canonicalDigest({
-      artifacts: historic.artifacts.filter((artifact) => ids.has(artifact.id)),
+      artifacts: historicalArtifacts,
       stages: descriptors,
     }) !== grant.filesystemSha256
   )
     throw new ApplicationError("ARTIFACT_INTEGRITY");
-  return descriptors;
+  return {
+    stages: descriptors,
+    committedHistoryArtifacts: historicalArtifacts.filter((artifact) =>
+      descriptors.some((stage) => same(stage.artifact, artifact)),
+    ),
+  };
 }

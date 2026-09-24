@@ -118,6 +118,8 @@ export interface RetainedReferenceInput {
   artifacts: readonly Artifact[];
   targets: readonly CaptureRecoveryStage[];
   history: readonly CaptureRecoveryStage[];
+  /** Exact artifact records authenticated in the historical recovery grant. */
+  committedHistoryArtifacts?: readonly Artifact[];
 }
 export interface RetainedReferenceInspection {
   identitySha256: string;
@@ -1423,6 +1425,7 @@ export class ProjectFileSystem implements FileSystemBoundary {
         !config ||
         input.targets.length !== 2 ||
         input.history.length > 128 ||
+        (input.committedHistoryArtifacts?.length ?? 0) > 128 ||
         input.artifacts.length > 20000
       )
         throw new HostBoundaryError(
@@ -1467,6 +1470,36 @@ export class ProjectFileSystem implements FileSystemBoundary {
           "descriptor",
           "committed-inventory",
           "Invalid retained artifact inventory.",
+        );
+      const sameArtifact = (a: Artifact, b: Artifact | undefined) =>
+        b !== undefined &&
+        a.id === b.id &&
+        a.sha256 === b.sha256 &&
+        a.path === b.path &&
+        a.byteLength === b.byteLength &&
+        a.mediaType === b.mediaType;
+      const committedHistory = new Map(
+        (input.committedHistoryArtifacts ?? []).map((artifact) => [
+          artifact.sha256,
+          artifact,
+        ]),
+      );
+      if (
+        committedHistory.size !==
+          (input.committedHistoryArtifacts?.length ?? 0) ||
+        [...committedHistory.values()].some(
+          (artifact) =>
+            !validateContract("Artifact", artifact).success ||
+            !sameArtifact(artifact, artifacts.get(artifact.sha256)) ||
+            !input.history.some((stage) =>
+              sameArtifact(stage.artifact, artifact),
+            ),
+        )
+      )
+        reject(
+          "descriptor",
+          "history-stage",
+          "Invalid authenticated historical blob inventory.",
         );
       const pins: RetainedReadPin[] = [];
       const targets: RetainedReferenceInspection["targets"] = [];
@@ -1641,6 +1674,7 @@ export class ProjectFileSystem implements FileSystemBoundary {
         const entries = await scan();
         const identitySha256 = fingerprint(entries);
         const paired = new Set<Entry>();
+        const independentHistory: { stage: Entry; blob: Entry }[] = [];
         const reads: {
           descriptor: CaptureRecoveryStage;
           entry: Entry;
@@ -1661,6 +1695,19 @@ export class ProjectFileSystem implements FileSystemBoundary {
           const isTarget = input.targets.some(
             (s) => s.stagingId === descriptor.stagingId,
           );
+          const historyCoexists =
+            !isTarget &&
+            stage &&
+            blob &&
+            sameArtifact(
+              descriptor.artifact,
+              committedHistory.get(descriptor.artifact.sha256),
+            ) &&
+            !sameFile(stage.stat, blob.stat) &&
+            stage.stat.nlink === 1 &&
+            blob.stat.nlink === 1 &&
+            stage.stat.size === descriptor.artifact.byteLength &&
+            blob.stat.size === descriptor.artifact.byteLength;
           if (stage && blob && isTarget) {
             if (
               !sameFile(stage.stat, blob.stat) ||
@@ -1685,7 +1732,7 @@ export class ProjectFileSystem implements FileSystemBoundary {
           const entry = stage ?? (isTarget ? blob : undefined);
           if (
             !entry ||
-            (stage && blob) ||
+            (stage && blob && !historyCoexists) ||
             entry.stat.nlink !== 1 ||
             entry.stat.size !== descriptor.artifact.byteLength
           )
@@ -1704,8 +1751,13 @@ export class ProjectFileSystem implements FileSystemBoundary {
             : undefined;
           if (target) targets.push(target);
           reads.push({ descriptor, entry, ...(target ? { target } : {}) });
+          if (historyCoexists) {
+            independentHistory.push({ stage, blob });
+            reads.push({ descriptor, entry: blob });
+          }
         }
         const nativeIdentities: RetainedReadPin["identity"][] = [];
+        const entryIdentities = new Map<Entry, RetainedReadPin["identity"]>();
         const proofKeys = new Set(this.proofReads.keys());
         const category = (
           entry: Entry,
@@ -1775,6 +1827,22 @@ export class ProjectFileSystem implements FileSystemBoundary {
             );
           proofKeys.delete(proofKey);
           nativeIdentities.push(pin.identity);
+          entryIdentities.set(entry, pin.identity);
+        }
+        for (const { stage, blob } of independentHistory) {
+          const staged = entryIdentities.get(stage);
+          const committed = entryIdentities.get(blob);
+          if (
+            !staged ||
+            !committed ||
+            (staged.volume === committed.volume &&
+              staged.file === committed.file)
+          )
+            reject(
+              "publication-shape",
+              "history-stage",
+              "Historical stage and committed blob identities are not independent.",
+            );
         }
         if (proofKeys.size)
           reject(

@@ -70,6 +70,7 @@ import {
   NativeCaptureStartupCleanupRequired,
 } from "../src/capture-runtime-internal.js";
 import { RecoveryDecisions } from "../src/recovery.js";
+import { ReferenceInput } from "../src/reference-input.js";
 import {
   DIAGNOSTIC_APPROVAL_CONFIRMATION,
   DIAGNOSTIC_DOWNLOAD_CONFIRMATION,
@@ -88,7 +89,34 @@ import {
 const seam = vi.hoisted(() => ({
   work: undefined as CaptureWork | undefined,
   onCurrent: undefined as (() => Promise<void>) | undefined,
+  measureReads: false,
+  physicalReads: 0,
 }));
+vi.mock("node:fs/promises", async (original) => {
+  const actual = await original<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    open: async (...args: Parameters<typeof actual.open>) => {
+      const handle = await actual.open(...args);
+      const read = handle.read;
+      Object.defineProperty(handle, "read", {
+        value: async (...input: unknown[]) => {
+          const result: unknown = await Reflect.apply(read, handle, input);
+          if (
+            seam.measureReads &&
+            result &&
+            typeof result === "object" &&
+            "bytesRead" in result &&
+            typeof result.bytesRead === "number"
+          )
+            seam.physicalReads += result.bytesRead;
+          return result;
+        },
+      });
+      return handle;
+    },
+  };
+});
 vi.mock("@design-studio/project-host", async (original) => ({
   ...(await original<typeof import("@design-studio/project-host")>()),
   acquireCaptureWork: () => {
@@ -164,6 +192,7 @@ async function createFixture(
     repaired?: boolean;
     priorResourceUse?: boolean;
     stageCount?: number;
+    committedStageBytes?: boolean;
   } = {},
 ) {
   const scope = captureTestScope();
@@ -597,11 +626,15 @@ async function createFixture(
               for (let index = 0; index < (history.stageCount ?? 1); index++)
                 value(
                   await execution.stage(
-                    canonicalBytes({
-                      file: { version: "synthetic_version" },
-                      index,
-                      privateNode: "DO-NOT-EMIT-PROVIDER-DATA",
-                    }),
+                    canonicalBytes(
+                      history.committedStageBytes
+                        ? resources
+                        : {
+                            file: { version: "synthetic_version" },
+                            index,
+                            privateNode: "DO-NOT-EMIT-PROVIDER-DATA",
+                          },
+                    ),
                   ),
                 );
             throw new HostBoundaryError(
@@ -861,15 +894,16 @@ async function createFixture(
       });
       return value(await store.jobs.getStages(originalJobId, context));
     },
-    async ordinaryReceipt(id: string) {
+    async ordinaryReceipt(
+      id: string,
+      bytes = canonicalBytes({ ordinary: true, id }),
+    ) {
       const context = await policy.issue({
         jobId: id,
         requestId: id,
         signal: scope.signal,
       });
-      const stage = value(
-        await store.stage(canonicalBytes({ ordinary: true, id }), context),
-      );
+      const stage = value(await store.stage(bytes, context));
       return store.commit([stage], context);
     },
     async mutate(change: (record: StoredJob) => void) {
@@ -1770,6 +1804,8 @@ it.each([
   "valid",
   "diagnostic-valid",
   "diagnostic-retained-valid",
+  "diagnostic-retained-coexisting-history",
+  "diagnostic-retained-coexisting-current-only",
   "diagnostic-retained-unknown-stage",
   "diagnostic-retained-missing-protection",
   "diagnostic-retained-extra-input",
@@ -1789,7 +1825,11 @@ it.each([
   "authenticates retained predecessor stages after successor conversion and private exports: %s",
   async (fault) => {
     const retained = fault.startsWith("diagnostic-retained-");
-    const f = await fixture(true, undefined, { repaired: true });
+    const coexistence = fault === "diagnostic-retained-coexisting-history";
+    const f = await fixture(true, undefined, {
+      repaired: true,
+      committedStageBytes: coexistence,
+    });
     const beforeRecord = await f.record();
     const beforeStages = await f.stages();
     const stage = required(beforeStages[0]);
@@ -1814,6 +1854,20 @@ it.each([
       stage.stagingId,
     );
     const beforeBytes = await readFile(stagePath);
+    const committedPath = path.join(
+      f.artifacts,
+      ...stage.staged.artifact.path.split("/"),
+    );
+    const beforeStageIdentity = await lstat(stagePath);
+    const beforeCommittedIdentity = coexistence
+      ? await lstat(committedPath)
+      : undefined;
+    if (coexistence) {
+      expect(beforeStageIdentity.nlink).toBe(1);
+      expect(beforeCommittedIdentity?.nlink).toBe(1);
+      expect(beforeCommittedIdentity?.ino).not.toBe(beforeStageIdentity.ino);
+      expect(await readFile(committedPath)).toEqual(beforeBytes);
+    }
     if (fault === "timestamp-tie-unrelated") {
       const now = f.policy.clock.now();
       vi.spyOn(f.policy.clock, "now").mockReturnValue(now);
@@ -2138,6 +2192,18 @@ it.each([
       );
       if (retained) {
         f.setFault(undefined);
+        if (fault === "diagnostic-retained-coexisting-current-only") {
+          value(
+            await f.ordinaryReceipt(
+              "later_unprotected_same_content",
+              beforeBytes,
+            ),
+          );
+          expect(await readFile(committedPath)).toEqual(beforeBytes);
+          expect((await lstat(committedPath)).ino).not.toBe(
+            (await lstat(stagePath)).ino,
+          );
+        }
         f.advanceClock(40000);
         const metadata = await run(
           {
@@ -2172,13 +2238,40 @@ it.each([
             required(downloaded.value?.job?.id),
             fault === "diagnostic-retained-extra-input" ? "job-input" : "job",
           );
-        const recovered = await f.validateRetained(
-          required(metadata.value?.metadata?.jobSha256),
-        );
+        const charges: number[] = [];
+        const reserve = ReferenceInput.prototype.reserveRead;
+        const meter = coexistence
+          ? vi
+              .spyOn(ReferenceInput.prototype, "reserveRead")
+              .mockImplementation(function (this: ReferenceInput, count) {
+                reserve.call(this, count);
+                charges.push(count);
+              })
+          : undefined;
+        seam.physicalReads = 0;
+        seam.measureReads = coexistence;
+        const recovered = await f
+          .validateRetained(required(metadata.value?.metadata?.jobSha256))
+          .finally(() => {
+            seam.measureReads = false;
+            meter?.mockRestore();
+          });
         expect(recovered.status, JSON.stringify(recovered)).toBe(
-          fault === "diagnostic-retained-valid" ? "complete" : "failed",
+          fault === "diagnostic-retained-valid" || coexistence
+            ? "complete"
+            : "failed",
         );
-        if (fault === "diagnostic-retained-valid") {
+        if (fault === "diagnostic-retained-coexisting-current-only")
+          expect(recovered).toMatchObject({
+            status: "failed",
+            reason: "inventory-invalid",
+            error: { code: "ARTIFACT_INTEGRITY" },
+            inventoryFailure: {
+              check: "publication-shape",
+              category: "history-stage",
+            },
+          });
+        if (fault === "diagnostic-retained-valid" || coexistence) {
           expect(recovered.value).toMatchObject({
             historicalStatus: "interrupted",
             eligibility: "eligible-for-recovery-review",
@@ -2186,6 +2279,35 @@ it.each([
           expect(recovered.inputAccounting?.privateBytes).toBeLessThan(
             26214400,
           );
+          expect(recovered.inputAccounting?.networkBytes).toBe(0);
+          expect(recovered.inventoryFailure).toBeUndefined();
+          if (coexistence) {
+            const charged = charges.reduce((sum, count) => sum + count, 0);
+            const eof = charges.filter((count) => count === 1).length;
+            expect(recovered.inputAccounting?.privateBytes).toBe(charged);
+            expect(charged).toBe(seam.physicalReads + eof);
+            expect(
+              charges.filter((count) => count === beforeBytes.length).length,
+            ).toBeGreaterThanOrEqual(2);
+            expect({
+              physical: seam.physicalReads,
+              eof,
+              charged,
+              network: recovered.inputAccounting?.networkBytes,
+            }).toEqual({
+              physical: 54713,
+              eof: 32,
+              charged: 54745,
+              network: 0,
+            });
+            expect(await readFile(committedPath)).toEqual(beforeBytes);
+            expect((await lstat(committedPath)).ino).toBe(
+              beforeCommittedIdentity?.ino,
+            );
+            expect((await lstat(stagePath)).ino).toBe(beforeStageIdentity.ino);
+            expect((await lstat(committedPath)).nlink).toBe(1);
+            expect((await lstat(stagePath)).nlink).toBe(1);
+          }
         }
       }
       await f.reopen();

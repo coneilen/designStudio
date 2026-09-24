@@ -12,6 +12,14 @@ the requested retained bytes and necessary historical stages. Unknown,
 duplicate, foreign, reparse or ambiguous publications deny. Single-link
 stage-only/published-only reads preserve all names; an exact-looking nlink2
 pair is classified as native-read-blocked without reading or unlinking it.
+Historical stages may coexist with an independently committed same-content blob
+only when trusted composition supplies its exact artifact record from the
+authenticated historical recovery-grant inventory. Both must match the current
+registered artifact and historical descriptor, have distinct stat **and native**
+identities, and each remain single-link, pinned, current-owned and byte/hash/length
+verified. Both bodies and EOF probes are metered even if the committed blob was
+already read as source proof. This is not target publication reconciliation:
+target stage/blob ambiguity and all hardlink pairs retain their prior denials.
 Ordinary inspection and publication/reconciliation rules are unchanged.
 Physical reads include shared-meter EOF reservations, and returned read leases
 must be checked and closed. Failed closes stay owned for close-only retry,

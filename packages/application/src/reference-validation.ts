@@ -52,7 +52,7 @@ import {
   renewalProposal,
   same,
 } from "./reference-proof.js";
-import { retainedReferenceStages } from "./reference-publications.js";
+import { retainedReferenceInventory } from "./reference-publications.js";
 import {
   DIAGNOSTIC_APPROVAL_CONFIRMATION,
   REFERENCE_APPROVAL_CONFIRMATION,
@@ -710,7 +710,7 @@ export async function openNativeReferenceValidation(project: CaptureProject) {
           DIAGNOSTIC_APPROVAL_CONFIRMATION,
         );
         reason = "inventory-invalid";
-        const history = await retainedReferenceStages(
+        const history = await retainedReferenceInventory(
           proof,
           {
             ...state,
@@ -719,7 +719,12 @@ export async function openNativeReferenceValidation(project: CaptureProject) {
           },
           proposal,
         );
-        expectedInspection = { artifacts: state.artifacts, targets, history };
+        expectedInspection = {
+          artifacts: state.artifacts,
+          targets,
+          history: history.stages,
+          committedHistoryArtifacts: history.committedHistoryArtifacts,
+        };
         input.phase = "inspection";
         const inspected = await fs.inspectRetainedReference(
           expectedInspection,

@@ -18,6 +18,21 @@ color and partial-reference limitations remain explicit. Unrelated committed
 blobs/exports receive bounded namespace/identity checks, not a misleading
 whole-project body-integrity claim; necessary historical stages are verified.
 
+A failed historical capture can legitimately retain a stage whose bytes already
+exist in a separately committed blob (for example a protected input snapshot).
+The ordinary recovery grant authenticated both objects. Retained validation
+derives a narrow committed-history artifact list only **after** verifying that
+grant's original filesystem digest and protected historical reference graph.
+Current inventory membership alone, a later same-content receipt, or a caller
+list cannot establish historical membership. Both independent single-link
+bodies are pinned and read/hash-verified; neither is adopted, removed or modified.
+The full synthetic grant/successor/conversion/reference/diagnostic regression
+charges 54,713 physical bytes plus 32 EOF reservations = 54,745 private bytes,
+zero network, including both historical reads. Its negative control rejects an
+otherwise identical blob committed only after the grant. The separate real-native
+dual-read fixture charges 2,051 physical bytes plus four EOF probes = 2,055.
+These are synthetic measurements, not proof of the live history's physical shape.
+
 Single-link stage-only and published-only outputs can yield
 `eligible-for-recovery-review`. An exact-looking two-name/two-link publication
 is explicitly `known-pair-native-read-blocked`: the native owner/DACL helper

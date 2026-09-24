@@ -518,6 +518,223 @@ it.each([
     }
   },
 );
+it.each([
+  "valid",
+  "unproven",
+  "foreign-artifact",
+  "extra-proof",
+  "duplicate-proof",
+  "unregistered",
+  "blob-corrupt",
+  "stage-corrupt",
+  "blob-size",
+  "stage-size",
+  "linked",
+  "missing-history",
+  "target-copy",
+  "native-same-identity",
+  "blob-swap",
+] as const)(
+  "history coexistence requires authenticated independent single-link bodies: %s",
+  async (kind) => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), "retained-history-synthetic-"),
+    );
+    const artifacts = path.join(directory, "artifacts");
+    const outputs = path.join(directory, "outputs");
+    const staging = ".host-00000000-0000-4000-8000-000000000001";
+    await mkdir(path.join(artifacts, staging), { recursive: true });
+    await mkdir(path.join(artifacts, "blobs"));
+    await mkdir(outputs);
+    const bodies = [Buffer.of(1), Buffer.of(2), Buffer.of(3, 4)];
+    const descriptors = bodies.map((bytes, index) => {
+      const hash = createHash("sha256").update(bytes).digest("hex");
+      return {
+        stagingId: `00000000-0000-4000-8000-00000000000${index + 2}`,
+        jobId: index === 2 ? "historical_failed" : "diagnostic_target",
+        requestId: index === 2 ? "historical_failed" : "diagnostic_target",
+        artifact: {
+          id: `sha256_${hash}`,
+          sha256: hash,
+          path: `blobs/${hash}`,
+          byteLength: bytes.length,
+          mediaType: "application/octet-stream",
+        },
+      };
+    });
+    const [first, second, historical] = descriptors;
+    if (!first || !second || !historical)
+      throw new Error("Missing synthetic history descriptor.");
+    const historyPath = path.join(artifacts, staging, historical.stagingId);
+    const blobPath = path.join(
+      artifacts,
+      ...historical.artifact.path.split("/"),
+    );
+    for (const [index, descriptor] of descriptors.entries())
+      await writeFile(
+        path.join(artifacts, staging, descriptor.stagingId),
+        bodies[index] ?? Buffer.alloc(0),
+      );
+    await writeFile(blobPath, bodies[2] ?? Buffer.alloc(0));
+    const input: RetainedReferenceInput = {
+      targets: [first, second],
+      history: [historical],
+      artifacts: [historical.artifact],
+      committedHistoryArtifacts: [historical.artifact],
+    };
+    if (kind === "unproven") input.committedHistoryArtifacts = [];
+    if (kind === "foreign-artifact")
+      input.committedHistoryArtifacts = [
+        { ...historical.artifact, id: "foreign" },
+      ];
+    if (kind === "extra-proof")
+      input.committedHistoryArtifacts = [historical.artifact, first.artifact];
+    if (kind === "duplicate-proof")
+      input.committedHistoryArtifacts = [
+        historical.artifact,
+        historical.artifact,
+      ];
+    if (kind === "unregistered") {
+      input.artifacts = [];
+      input.committedHistoryArtifacts = [];
+    }
+    if (kind === "blob-corrupt") await writeFile(blobPath, Buffer.of(4, 3));
+    if (kind === "stage-corrupt") await writeFile(historyPath, Buffer.of(4, 3));
+    if (kind === "blob-size") await writeFile(blobPath, Buffer.of(3));
+    if (kind === "stage-size") await writeFile(historyPath, Buffer.of(3));
+    if (kind === "linked") {
+      await rm(blobPath);
+      await link(historyPath, blobPath);
+    }
+    if (kind === "missing-history") await rm(historyPath);
+    if (kind === "target-copy")
+      await writeFile(
+        path.join(artifacts, ...first.artifact.path.split("/")),
+        bodies[0] ?? Buffer.alloc(0),
+      );
+    const context = syntheticContext();
+    context.authorization.grants.push(
+      ...["artifacts", "outputs"].map((resourceId) => ({
+        resourceKind: "artifact" as const,
+        resourceId,
+        operations: ["read"] as ["read"],
+      })),
+    );
+    const before = await lstat(historyPath).catch(() => undefined);
+    let charged = 0;
+    let reads = 0;
+    let pins = 0;
+    let swapped = false;
+    const files = await ProjectFileSystem.create({
+      projectId: context.projectId,
+      authority: () => true,
+      roots: [
+        {
+          id: "artifacts",
+          path: artifacts,
+          access: "read",
+          trustedExclusiveAccess: true,
+          managedBlobs: true,
+        },
+        {
+          id: "outputs",
+          path: outputs,
+          access: "read",
+          trustedExclusiveAccess: true,
+        },
+      ],
+      reserveRead: (bytes) => {
+        charged += bytes;
+        if (bytes === 1) reads++;
+      },
+      retainedReferenceInspection: {
+        artifactRootId: "artifacts",
+        outputRootId: "outputs",
+        authorize: async (actual) => {
+          expect(actual).toEqual(input);
+        },
+        pin: async (id, relative) => {
+          const filename = path.join(
+            id === "artifacts" ? artifacts : outputs,
+            ...relative.split("/"),
+          );
+          const stat = await lstat(filename);
+          pins++;
+          let closed = false;
+          return {
+            identity: {
+              path: filename,
+              volume: stat.dev,
+              file:
+                kind === "native-same-identity" && filename === blobPath
+                  ? String(before?.ino)
+                  : String(stat.ino),
+            },
+            check: async () => {
+              if (kind === "blob-swap" && filename === blobPath && !swapped) {
+                swapped = true;
+                await rename(blobPath, path.join(directory, "previous"));
+                await writeFile(blobPath, Buffer.of(3, 4));
+              }
+            },
+            close: () => {
+              if (!closed) {
+                closed = true;
+                pins--;
+              }
+            },
+          };
+        },
+      },
+    });
+    try {
+      const result = await files.inspectRetainedReference(input, context);
+      if (kind === "valid") {
+        expect(result.status, JSON.stringify(result)).toBe("complete");
+        if (result.status !== "complete")
+          throw new Error("Missing valid inspection.");
+        try {
+          expect(charged).toBe(10); // Two 1-byte targets, two 2-byte history bodies, four EOF probes.
+          expect(reads).toBe(6);
+          expect(
+            result.value.targets.map((entry) => entry.publication),
+          ).toEqual(["stage-only", "stage-only"]);
+          await result.value.check();
+          expect((await lstat(historyPath)).ino).toBe(before?.ino);
+          expect(await readFile(historyPath)).toEqual(Buffer.of(3, 4));
+          expect(await readFile(blobPath)).toEqual(Buffer.of(3, 4));
+        } finally {
+          result.value.close();
+        }
+      } else {
+        expect(result.status, kind).not.toBe("complete");
+        if (kind === "target-copy")
+          expect(result.inventoryFailure).toEqual({
+            check: "publication-shape",
+            category: "retained-target",
+          });
+        if (
+          [
+            "unproven",
+            "linked",
+            "blob-size",
+            "stage-size",
+            "native-same-identity",
+          ].includes(kind)
+        )
+          expect(result.inventoryFailure).toEqual({
+            check: "publication-shape",
+            category: "history-stage",
+          });
+      }
+      expect(pins).toBe(0);
+    } finally {
+      await files.closePreservingStages();
+      await rm(directory, { recursive: true });
+    }
+  },
+);
+
 it("post-crash pair recovery requires a trusted reservation and exact hash/inode pair", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "studio-crash-owned-"));
   const context = syntheticContext();
