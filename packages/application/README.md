@@ -26,6 +26,22 @@ grant's original filesystem digest and protected historical reference graph.
 Current inventory membership alone, a later same-content receipt, or a caller
 list cannot establish historical membership. Both independent single-link
 bodies are pinned and read/hash-verified; neither is adopted, removed or modified.
+An additional, separate provenance may establish a blob created after the grant:
+an exact `metadata`, `nodes` or `render-map` output of the grant's authorized
+successful successor capture. A same-reader opaque token is minted only after
+the existing full physical capture receipt, request, manifest, source/version
+proof succeeds. Current captured record/receipt digests, receipt scope,
+project/actor/request, protected input/output edges and exact artifact records
+must still match that snapshot. A foreign/serialized/closed-reader token or a
+generic later receipt cannot supply this authority. The old grant filesystem
+digest is never changed; it proves the old stage, not later blob existence.
+The two artifact-provenance lists stay separate. Exact overlap prefers the old
+grant and is omitted from the successor list; the host rejects duplicate or
+overlapping supplied lists. Neither source admits conversion/report/control
+outputs or unrelated captures. No additional source-proof body pass is performed;
+the existing independent historical stage/blob reads remain fully metered.
+The full synthetic successor-output case charges 53,879 physical bytes plus
+32 EOF reservations = 53,911 private bytes, zero network.
 The full synthetic grant/successor/conversion/reference/diagnostic regression
 charges 54,713 physical bytes plus 32 EOF reservations = 54,745 private bytes,
 zero network, including both historical reads. Its negative control rejects an

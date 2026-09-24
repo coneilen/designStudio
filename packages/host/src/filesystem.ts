@@ -120,6 +120,8 @@ export interface RetainedReferenceInput {
   history: readonly CaptureRecoveryStage[];
   /** Exact artifact records authenticated in the historical recovery grant. */
   committedHistoryArtifacts?: readonly Artifact[];
+  /** Separately verified provider outputs of the grant's exact successor capture. */
+  successorCaptureHistoryArtifacts?: readonly Artifact[];
 }
 export interface RetainedReferenceInspection {
   identitySha256: string;
@@ -1427,6 +1429,7 @@ export class ProjectFileSystem implements FileSystemBoundary {
         input.targets.length !== 2 ||
         input.history.length > 128 ||
         (input.committedHistoryArtifacts?.length ?? 0) > 128 ||
+        (input.successorCaptureHistoryArtifacts?.length ?? 0) > 128 ||
         input.artifacts.length > 20000
       )
         throw new HostBoundaryError(
@@ -1485,10 +1488,21 @@ export class ProjectFileSystem implements FileSystemBoundary {
           artifact,
         ]),
       );
+      const successorHistory = new Map(
+        (input.successorCaptureHistoryArtifacts ?? []).map((artifact) => [
+          artifact.sha256,
+          artifact,
+        ]),
+      );
       if (
         committedHistory.size !==
           (input.committedHistoryArtifacts?.length ?? 0) ||
-        [...committedHistory.values()].some(
+        successorHistory.size !==
+          (input.successorCaptureHistoryArtifacts?.length ?? 0) ||
+        [...successorHistory.keys()].some((hash) =>
+          committedHistory.has(hash),
+        ) ||
+        [...committedHistory.values(), ...successorHistory.values()].some(
           (artifact) =>
             !validateContract("Artifact", artifact).success ||
             !sameArtifact(artifact, artifacts.get(artifact.sha256)) ||
@@ -1702,7 +1716,8 @@ export class ProjectFileSystem implements FileSystemBoundary {
             blob &&
             sameArtifact(
               descriptor.artifact,
-              committedHistory.get(descriptor.artifact.sha256),
+              committedHistory.get(descriptor.artifact.sha256) ??
+                successorHistory.get(descriptor.artifact.sha256),
             ) &&
             !sameFile(stage.stat, blob.stat) &&
             stage.stat.nlink === 1 &&
@@ -1753,7 +1768,8 @@ export class ProjectFileSystem implements FileSystemBoundary {
                     !historyCoexists &&
                     !sameArtifact(
                       descriptor.artifact,
-                      committedHistory.get(descriptor.artifact.sha256),
+                      committedHistory.get(descriptor.artifact.sha256) ??
+                        successorHistory.get(descriptor.artifact.sha256),
                     )
                   ? "unproven-history-coexistence"
                   : entry.stat.nlink !== 1 ||

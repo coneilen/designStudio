@@ -718,12 +718,15 @@ export async function openNativeReferenceValidation(project: CaptureProject) {
             stages: state.stages.filter((s) => s.jobId !== jobId),
           },
           proposal,
+          source.verifiedCapture,
         );
         expectedInspection = {
           artifacts: state.artifacts,
           targets,
           history: history.stages,
           committedHistoryArtifacts: history.committedHistoryArtifacts,
+          successorCaptureHistoryArtifacts:
+            history.successorCaptureHistoryArtifacts,
         };
         input.phase = "inspection";
         const inspected = await fs.inspectRetainedReference(

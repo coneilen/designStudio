@@ -544,6 +544,10 @@ it.each([
 );
 it.each([
   "valid",
+  "valid-successor",
+  "cross-provenance",
+  "successor-foreign-artifact",
+  "successor-duplicate",
   "unproven",
   "unproven-wrong-length",
   "linked-wrong-length",
@@ -609,6 +613,23 @@ it.each([
       artifacts: [historical.artifact],
       committedHistoryArtifacts: [historical.artifact],
     };
+    if (
+      kind === "valid-successor" ||
+      kind === "successor-foreign-artifact" ||
+      kind === "successor-duplicate"
+    )
+      input.committedHistoryArtifacts = [];
+    if (kind === "valid-successor" || kind === "cross-provenance")
+      input.successorCaptureHistoryArtifacts = [historical.artifact];
+    if (kind === "successor-foreign-artifact")
+      input.successorCaptureHistoryArtifacts = [
+        { ...historical.artifact, id: "foreign" },
+      ];
+    if (kind === "successor-duplicate")
+      input.successorCaptureHistoryArtifacts = [
+        historical.artifact,
+        historical.artifact,
+      ];
     if (kind === "unproven" || kind === "unproven-wrong-length")
       input.committedHistoryArtifacts = [];
     if (kind === "unproven-wrong-length")
@@ -731,7 +752,7 @@ it.each([
     });
     try {
       const result = await files.inspectRetainedReference(input, context);
-      if (kind === "valid") {
+      if (kind === "valid" || kind === "valid-successor") {
         expect(result.status, JSON.stringify(result)).toBe("complete");
         if (result.status !== "complete")
           throw new Error("Missing valid inspection.");

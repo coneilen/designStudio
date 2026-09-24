@@ -47,6 +47,15 @@ acceptance predicates, error codes, read order and cleanup are unchanged.
 The diagnostic does not add scans, reads or permissions, and a retained target
 category is not an assertion of its eventual image/evidence role.
 
+Trusted retained composition may separately provide
+`successorCaptureHistoryArtifacts`: exact provider artifacts from the same
+invocation's verified, grant-bound successor capture proof, not arbitrary later
+receipts. The host bounds and validates each provenance list against current
+artifact metadata and historical descriptors, refusing duplicates within or
+across lists. Either valid provenance uses the identical distinct-native/stat,
+single-link, current-owner pins and independently metered dual-body checks.
+The host does not infer provenance from content equality or the current map.
+
 `authorizeOperation(context, scope, authority)` throws `HostBoundaryError` with
 a contract `ErrorCode`. `Authority` is `(AuthorizationContext) => boolean` and
 is **mandatory**: the host cannot infer authenticity from valid JSON, a session

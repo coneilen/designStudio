@@ -54,7 +54,7 @@ vi.mock("node:fs/promises", async (original) => {
   };
 });
 
-test.each(["valid", "blob-security", "blob-reparse"] as const)(
+test.each(["valid", "successor", "blob-security", "blob-reparse"] as const)(
   "native historical coexistence requires both current owned bodies: %s",
   async (kind) => {
     await ownedTest(async (root, _own, beforeCleanup) => {
@@ -135,7 +135,10 @@ test.each(["valid", "blob-security", "blob-reparse"] as const)(
         });
         const input = {
           artifacts: [committed.value],
-          committedHistoryArtifacts: [committed.value],
+          committedHistoryArtifacts:
+            kind === "successor" ? [] : [committed.value],
+          successorCaptureHistoryArtifacts:
+            kind === "successor" ? [committed.value] : [],
           history: [descriptor(historical, "original_failed")],
           targets: targets.map((entry) =>
             descriptor(entry, "retained_diagnostic"),
@@ -199,7 +202,7 @@ test.each(["valid", "blob-security", "blob-reparse"] as const)(
         historyReads.physical = 0;
         historyReads.active = true;
         const result = await inspector.inspectRetainedReference(input, context);
-        if (kind !== "valid") {
+        if (kind !== "valid" && kind !== "successor") {
           expect(result.status).toBe("failed");
           if (result.status === "failed")
             expect(result.error.code).toBe(

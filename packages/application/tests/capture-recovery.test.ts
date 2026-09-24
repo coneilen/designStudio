@@ -71,6 +71,8 @@ import {
 } from "../src/capture-runtime-internal.js";
 import { RecoveryDecisions } from "../src/recovery.js";
 import { ReferenceInput } from "../src/reference-input.js";
+import { ReferenceReader } from "../src/reference-proof.js";
+import * as referencePublications from "../src/reference-publications.js";
 import {
   DIAGNOSTIC_APPROVAL_CONFIRMATION,
   DIAGNOSTIC_DOWNLOAD_CONFIRMATION,
@@ -193,6 +195,7 @@ async function createFixture(
     priorResourceUse?: boolean;
     stageCount?: number;
     committedStageBytes?: boolean;
+    successorStageBytes?: boolean;
     fixedClock?: boolean;
   } = {},
 ) {
@@ -633,11 +636,13 @@ async function createFixture(
                     canonicalBytes(
                       history.committedStageBytes
                         ? resources
-                        : {
-                            file: { version: "synthetic_version" },
-                            index,
-                            privateNode: "DO-NOT-EMIT-PROVIDER-DATA",
-                          },
+                        : history.successorStageBytes
+                          ? { file: { version: "v1" } }
+                          : {
+                              file: { version: "synthetic_version" },
+                              index,
+                              privateNode: "DO-NOT-EMIT-PROVIDER-DATA",
+                            },
                     ),
                   ),
                 );
@@ -1810,6 +1815,14 @@ it.each([
   "diagnostic-retained-valid",
   "diagnostic-retained-coexisting-history",
   "diagnostic-retained-coexisting-current-only",
+  "diagnostic-retained-successor-output",
+  "diagnostic-retained-successor-record",
+  "diagnostic-retained-successor-receipt",
+  "diagnostic-retained-successor-protection",
+  "diagnostic-retained-successor-extra-output",
+  "diagnostic-retained-successor-version",
+  "diagnostic-retained-successor-foreign-job",
+  "diagnostic-retained-successor-authority",
   "diagnostic-reference-lease-expired",
   "diagnostic-retained-unknown-stage",
   "diagnostic-retained-missing-protection",
@@ -1831,9 +1844,14 @@ it.each([
   async (fault) => {
     const retained = fault.startsWith("diagnostic-retained-");
     const coexistence = fault === "diagnostic-retained-coexisting-history";
+    const successorCoexistence = fault.startsWith(
+      "diagnostic-retained-successor-",
+    );
+    const validSuccessor = fault === "diagnostic-retained-successor-output";
     const f = await fixture(true, undefined, {
       repaired: true,
       committedStageBytes: coexistence,
+      successorStageBytes: successorCoexistence,
       fixedClock: true,
     });
     const beforeRecord = await f.record();
@@ -1868,6 +1886,10 @@ it.each([
     const beforeCommittedIdentity = coexistence
       ? await lstat(committedPath)
       : undefined;
+    if (successorCoexistence)
+      await expect(lstat(committedPath)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
     if (coexistence) {
       expect(beforeStageIdentity.nlink).toBe(1);
       expect(beforeCommittedIdentity?.nlink).toBe(1);
@@ -2088,6 +2110,14 @@ it.each([
     if (fault === "missing-protection")
       removeSyntheticCaptureProtection(f.store, f.initial.job.id);
     const run = required(f.runtime.reference).bind(f.runtime);
+    let closedProof: (() => unknown) | undefined;
+    if (successorCoexistence) {
+      expect(await readFile(committedPath)).toEqual(beforeBytes);
+      expect((await lstat(committedPath)).ino).not.toBe(
+        beforeStageIdentity.ino,
+      );
+      expect((await lstat(committedPath)).nlink).toBe(1);
+    }
     const planned = await run(
       { operation: "reference-plan", requestId },
       new AbortController().signal,
@@ -2284,9 +2314,161 @@ it.each([
             required(downloaded.value?.job?.id),
             fault === "diagnostic-retained-extra-input" ? "job-input" : "job",
           );
+        if (successorCoexistence) {
+          const inventory = referencePublications.retainedReferenceInventory;
+          vi.spyOn(
+            referencePublications,
+            "retainedReferenceInventory",
+          ).mockImplementationOnce(async (reader, state, proposal, token) => {
+            expect(token).toBeDefined();
+            closedProof = () =>
+              reader.verifiedCaptureOutputs(required(token), proposal);
+            const originalBinding = structuredClone(proposal);
+            expect(() => reader.verifiedCaptureOutputs({}, proposal)).toThrow();
+            expect(() =>
+              reader.verifiedCaptureOutputs({ ...token }, proposal),
+            ).toThrow();
+            expect(() =>
+              reader.verifiedCaptureOutputs(
+                JSON.parse(JSON.stringify(token)),
+                proposal,
+              ),
+            ).toThrow();
+            const outputs = reader.verifiedCaptureOutputs(
+              required(token),
+              proposal,
+            );
+            outputs.artifacts.length = 0;
+            expect(
+              reader.verifiedCaptureOutputs(required(token), proposal).artifacts
+                .length,
+            ).toBeGreaterThan(0);
+            for (const field of [
+              "sourceVersion",
+              "originalJobId",
+              "originalRecordSha256",
+              "originalReceiptSha256",
+              "acquisitionId",
+            ] as const)
+              expect(() =>
+                reader.verifiedCaptureOutputs(required(token), {
+                  ...proposal,
+                  binding: { ...proposal.binding, [field]: "wrong" },
+                }),
+              ).toThrow();
+            const foreign = new ReferenceReader(
+              reader.work,
+              reader.store,
+              reader.files,
+              reader.context,
+              reader.input,
+              true,
+              true,
+            );
+            try {
+              expect(() =>
+                foreign.verifiedCaptureOutputs(required(token), proposal),
+              ).toThrow();
+            } finally {
+              await foreign.close();
+            }
+            expect(proposal).toEqual(originalBinding);
+            const current = vi
+              .spyOn(reader.work, "isCurrent")
+              .mockReturnValue(false);
+            try {
+              expect(() =>
+                reader.verifiedCaptureOutputs(required(token), proposal),
+              ).toThrow();
+            } finally {
+              current.mockRestore();
+            }
+            const altered = structuredClone(state);
+            const successor = required(
+              altered.jobs.find(
+                (r) => r.job.id === proposal.binding.originalJobId,
+              ),
+            );
+            const receipt = required(
+              altered.receipts.find(
+                (entry) => entry.receipt.jobId === successor.job.id,
+              ),
+            );
+            if (fault === "diagnostic-retained-successor-record")
+              successor.rowVersion++;
+            if (fault === "diagnostic-retained-successor-receipt")
+              receipt.receipt.idempotency.payloadSha256 = "f".repeat(64);
+            if (fault === "diagnostic-retained-successor-protection")
+              altered.references = altered.references.filter(
+                (entry) =>
+                  !(
+                    entry.kind === "job" &&
+                    entry.owner === receipt.receipt.id &&
+                    entry.artifactId === stage.staged.artifact.id
+                  ),
+              );
+            if (fault === "diagnostic-retained-successor-extra-output")
+              receipt.receipt.outputs.push(
+                structuredClone(stage.staged.artifact),
+              );
+            if (fault === "diagnostic-retained-successor-foreign-job")
+              successor.job.id = "foreign_capture";
+            const actualProposal =
+              fault === "diagnostic-retained-successor-version"
+                ? {
+                    ...proposal,
+                    binding: { ...proposal.binding, sourceVersion: "wrong" },
+                  }
+                : proposal;
+            if (fault === "diagnostic-retained-successor-authority") {
+              const beforeBytes = reader.bytes;
+              const revoked = vi
+                .spyOn(reader.work, "referenceValidationAuthority")
+                .mockRejectedValue(
+                  new HostBoundaryError(
+                    "FORBIDDEN",
+                    "Synthetic current async validation authority revoked.",
+                  ),
+                );
+              try {
+                await expect(
+                  inventory(reader, altered, actualProposal, token),
+                ).rejects.toThrow();
+                expect(reader.bytes).toBe(beforeBytes);
+                throw new HostBoundaryError(
+                  "FORBIDDEN",
+                  "Synthetic current async validation authority revoked.",
+                );
+              } finally {
+                revoked.mockRestore();
+              }
+            }
+            const inventoryResult = await inventory(
+              reader,
+              altered,
+              actualProposal,
+              token,
+            );
+            if (validSuccessor) {
+              expect(inventoryResult.committedHistoryArtifacts).toEqual([]);
+              expect(inventoryResult.successorCaptureHistoryArtifacts).toEqual([
+                stage.staged.artifact,
+              ]);
+              const providerArtifacts = reader
+                .verifiedCaptureOutputs(required(token), proposal)
+                .artifacts.filter((item) =>
+                  ["metadata", "nodes", "render-map"].includes(item.role),
+                )
+                .map((item) => item.artifact);
+              expect(providerArtifacts).toContainEqual(stage.staged.artifact);
+            }
+            return inventoryResult;
+          });
+        }
+        const measured = coexistence || validSuccessor;
         const charges: number[] = [];
         const reserve = ReferenceInput.prototype.reserveRead;
-        const meter = coexistence
+        const meter = measured
           ? vi
               .spyOn(ReferenceInput.prototype, "reserveRead")
               .mockImplementation(function (this: ReferenceInput, count) {
@@ -2295,15 +2477,16 @@ it.each([
               })
           : undefined;
         seam.physicalReads = 0;
-        seam.measureReads = coexistence;
+        seam.measureReads = measured;
         const recovered = await f
           .validateRetained(required(metadata.value?.metadata?.jobSha256))
           .finally(() => {
             seam.measureReads = false;
             meter?.mockRestore();
           });
+        if (closedProof) expect(closedProof).toThrow();
         expect(recovered.status, JSON.stringify(recovered)).toBe(
-          fault === "diagnostic-retained-valid" || coexistence
+          fault === "diagnostic-retained-valid" || coexistence || validSuccessor
             ? "complete"
             : "failed",
         );
@@ -2318,7 +2501,11 @@ it.each([
               detail: "unproven-history-coexistence",
             },
           });
-        if (fault === "diagnostic-retained-valid" || coexistence) {
+        if (
+          fault === "diagnostic-retained-valid" ||
+          coexistence ||
+          validSuccessor
+        ) {
           expect(recovered.value).toMatchObject({
             historicalStatus: "interrupted",
             eligibility: "eligible-for-recovery-review",
@@ -2328,7 +2515,7 @@ it.each([
           );
           expect(recovered.inputAccounting?.networkBytes).toBe(0);
           expect(recovered.inventoryFailure).toBeUndefined();
-          if (coexistence) {
+          if (measured) {
             const charged = charges.reduce((sum, count) => sum + count, 0);
             const eof = charges.filter((count) => count === 1).length;
             expect(recovered.inputAccounting?.privateBytes).toBe(charged);
@@ -2336,21 +2523,31 @@ it.each([
             expect(
               charges.filter((count) => count === beforeBytes.length).length,
             ).toBeGreaterThanOrEqual(2);
-            expect({
+            const measurement = {
               physical: seam.physicalReads,
               eof,
               charged,
               network: recovered.inputAccounting?.networkBytes,
-            }).toEqual({
-              physical: 54713,
-              eof: 32,
-              charged: 54745,
-              network: 0,
-            });
+            };
+            if (coexistence)
+              expect(measurement).toEqual({
+                physical: 54713,
+                eof: 32,
+                charged: 54745,
+                network: 0,
+              });
+            else
+              expect(measurement).toEqual({
+                physical: 53879,
+                eof: 32,
+                charged: 53911,
+                network: 0,
+              });
             expect(await readFile(committedPath)).toEqual(beforeBytes);
-            expect((await lstat(committedPath)).ino).toBe(
-              beforeCommittedIdentity?.ino,
-            );
+            if (beforeCommittedIdentity)
+              expect((await lstat(committedPath)).ino).toBe(
+                beforeCommittedIdentity.ino,
+              );
             expect((await lstat(stagePath)).ino).toBe(beforeStageIdentity.ino);
             expect((await lstat(committedPath)).nlink).toBe(1);
             expect((await lstat(stagePath)).nlink).toBe(1);
