@@ -39,6 +39,7 @@ import {
   FigmaHttpsTransport,
 } from "../../figma-capture/dist/transport.js";
 import { png } from "../../figma-capture/tests/support.js";
+import { Execution } from "../../jobs/dist/execution.js";
 import { nativeCapturePolicy } from "../../project-host/dist/capture-authority.js";
 import { CAPTURE_DIAGNOSTIC_POLICY_SHA256 } from "../../project-host/src/capture-diagnostic-profile.js";
 import { CAPTURE_POLICY_SHA256 } from "../../project-host/src/capture-profile.js";
@@ -1096,8 +1097,44 @@ function realisticReferencePng() {
   return authoredPng(6, 8, raw, [srgb()], [], 460, 460);
 }
 
+it("fixed-clock budget setup still rejects an explicitly expired capture execution lease", async () => {
+  const original = Execution.prototype.check;
+  let expired = false;
+  let guardCode: string | undefined;
+  const check = vi
+    .spyOn(Execution.prototype, "check")
+    .mockImplementation(function (this: Execution) {
+      const signal = this.context.signal;
+      if (!expired && this.record.job.operation === "capture") {
+        expired = true;
+        vi.spyOn(this.context.clock, "now").mockReturnValue(
+          Date.parse(required(this.record.job.lease).expiresAt),
+        );
+      }
+      try {
+        return original.call(this);
+      } catch (error) {
+        if (expired && error instanceof HostBoundaryError)
+          guardCode ??= error.code;
+        throw error;
+      } finally {
+        expect(this.context.signal).toBe(signal);
+      }
+    });
+  try {
+    await expect(fixture({ fixedClock: true })).rejects.toThrow(
+      /capture-not-committed/,
+    );
+    expect(expired).toBe(true);
+    expect(guardCode).toBe("LEASE_LOST");
+  } finally {
+    check.mockRestore();
+  }
+});
+
 it("completes a diagnostic with realistic synthetic source bytes within the invocation input budget", async () => {
   const f = await fixture({
+    fixedClock: true,
     diagnostic: true,
     nodeBytes: 2400000,
     frameSize: 460,

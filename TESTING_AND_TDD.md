@@ -92,6 +92,22 @@ driver keep their limits. All assertions and sequential phases remain failure-
 gated; no retries, `continue-on-error`, worker, partition, skip or cache changes
 are introduced.
 
+Two non-timing reference-fixture groups explicitly use a fixed synthetic policy
+clock: the realistic diagnostic input-budget case, and the retained predecessor
+proof/state/graph/export table. Their prerequisite captures and legacy-reference
+receipts must be established before those assertions are meaningful; hosted I/O
+duration is not the behavior these cases measure. Default fixture clocks, real
+clock sleeps, native performance/cold validation, scheduler/deadline tests and
+all operation/test limits are unchanged. Explicit logical advances still expire
+jobs and approvals, and the timestamp-tie negative remains exercised.
+Separate controls advance the actual capture execution clock to lease expiry
+and the legacy-reference clock by 5001 ms before effect settlement: the real
+`Execution.check` still rejects with `LEASE_LOST`, and the real settlement ledger
+still rejects with `CONFLICT` before decoding. Outer envelope translations can
+differ; these synthetic controls establish the mechanism, not the exact timing
+or translated cause of an earlier CI run. Physical byte-budget and history
+integrity assertions remain unchanged.
+
 `tests/unit-partition.ts` is the reviewed exact-file inventory. The checker uses
 the original `packages/**/*.test.ts` discovery minus the original smoke/default
 exclusions, then compares that set against **actual Vitest project discovery**.

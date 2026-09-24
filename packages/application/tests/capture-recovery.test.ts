@@ -193,6 +193,7 @@ async function createFixture(
     priorResourceUse?: boolean;
     stageCount?: number;
     committedStageBytes?: boolean;
+    fixedClock?: boolean;
   } = {},
 ) {
   const scope = captureTestScope();
@@ -272,6 +273,7 @@ async function createFixture(
     | undefined;
   let validationMode = false;
   let clockOffset = 0;
+  const fixedNow = history.fixedClock ? Date.now() : undefined;
   let store: LocalStore;
   let policy: ReturnType<typeof nativeCapturePolicy>;
   let credentialSha256 = "b".repeat(64);
@@ -404,7 +406,9 @@ async function createFixture(
     seam.work = work;
     policy = nativeCapturePolicy(work);
     const now = policy.clock.now.bind(policy.clock);
-    vi.spyOn(policy.clock, "now").mockImplementation(() => now() + clockOffset);
+    vi.spyOn(policy.clock, "now").mockImplementation(
+      () => (fixedNow ?? now()) + clockOffset,
+    );
     try {
       if (validationMode) {
         validation = await openNativeReferenceValidation(project);
@@ -1806,6 +1810,7 @@ it.each([
   "diagnostic-retained-valid",
   "diagnostic-retained-coexisting-history",
   "diagnostic-retained-coexisting-current-only",
+  "diagnostic-reference-lease-expired",
   "diagnostic-retained-unknown-stage",
   "diagnostic-retained-missing-protection",
   "diagnostic-retained-extra-input",
@@ -1829,6 +1834,7 @@ it.each([
     const f = await fixture(true, undefined, {
       repaired: true,
       committedStageBytes: coexistence,
+      fixedClock: true,
     });
     const beforeRecord = await f.record();
     const beforeStages = await f.stages();
@@ -2016,6 +2022,25 @@ it.each([
     required(seam.work).recoveryAuthority = async () => {
       throw new Error("Reference must not inspect the credential journal");
     };
+    const settlementFailures: string[] = [];
+    const update = f.store.jobs.update.bind(f.store.jobs);
+    const settlement =
+      fault === "diagnostic-reference-lease-expired"
+        ? vi
+            .spyOn(f.store.jobs, "update")
+            .mockImplementation(async (...args) => {
+              const signal = args[3].signal;
+              const result = await update(...args);
+              expect(args[3].signal).toBe(signal);
+              if (
+                args[2].kind === "settle-usage" &&
+                result.status !== "complete" &&
+                result.status !== "partial"
+              )
+                settlementFailures.push(result.error.code);
+              return result;
+            })
+        : undefined;
     const image = vi
       .spyOn(FigmaHttpsTransport.prototype, "image")
       .mockImplementation(async (_url, budget) => {
@@ -2023,6 +2048,8 @@ it.each([
         const bytes = png(true, 2, 2);
         budget.receive(bytes.length);
         budget.decoded(bytes.length);
+        if (fault === "diagnostic-reference-lease-expired")
+          f.advanceClock(5001);
         return { status: 200, mediaType: "image/png", bytes };
       });
     if (fault === "unknown-stage") {
@@ -2102,7 +2129,26 @@ it.each([
       },
       new AbortController().signal,
     );
+    const decoderCalls = legacy?.mock.calls.length;
     legacy?.mockRestore();
+    settlement?.mockRestore();
+    if (fault === "diagnostic-reference-lease-expired") {
+      expect(result.status).toBe("failed");
+      expect(result.value).toBeUndefined();
+      expect(result.inputAccounting).toMatchObject({
+        phase: "acquisition",
+        networkBytes: 87,
+      });
+      expect(settlementFailures).toEqual(["CONFLICT"]);
+      expect(decoderCalls).toBe(0);
+      expect(image).toHaveBeenCalledTimes(1);
+      expect(api).not.toHaveBeenCalled();
+      expect(f.vault).not.toHaveBeenCalled();
+      expect(await f.record()).toEqual(beforeRecord);
+      expect(await f.stages()).toEqual(beforeStages);
+      expect(await readFile(stagePath)).toEqual(beforeBytes);
+      return;
+    }
     expect(result.status, JSON.stringify(result)).toBe(
       diagnostic ? "unavailable" : "complete",
     );
