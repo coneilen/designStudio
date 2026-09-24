@@ -7,15 +7,22 @@ import Database from "better-sqlite3";
 import { immutableDatabaseUri } from "../dist/immutable-sqlite.js";
 import { LocalStore } from "../dist/index.js";
 import { referenceRecoveryState } from "../dist/reference-recovery.js";
+import { closeSettledStores } from "./lifetime.js";
 import { revision } from "./support.js";
 
-export async function backupSyntheticOffline(root: string, database: string) {
+export async function backupSyntheticOffline(
+  root: string,
+  database: string,
+  signal: AbortSignal,
+) {
+  signal.throwIfAborted();
   if (
     !/^reference-synthetic-/.test(path.basename(root)) ||
     path.dirname(database) !== root
   )
     throw new Error("Expected generated portable reference fixture.");
   const context = syntheticContext();
+  context.signal = signal;
   context.projectId = "project_synthetic";
   context.authorization.projectId = context.projectId;
   context.authorization.actorId = "actor_synthetic";
@@ -27,6 +34,7 @@ export async function backupSyntheticOffline(root: string, database: string) {
     },
   ];
   const open = async (directory: string, filename: string) => {
+    signal.throwIfAborted();
     const files = await ProjectFileSystem.create({
       projectId: context.projectId,
       authority: () => true,
@@ -350,7 +358,7 @@ export async function backupSyntheticOffline(root: string, database: string) {
             .run(saved.archive, saved.id);
         }
       } finally {
-        repeated.store.close();
+        await closeSettledStores([repeated.store]);
         await repeated.files.closePreservingStages();
       }
       return {
@@ -360,11 +368,11 @@ export async function backupSyntheticOffline(root: string, database: string) {
         tamperedDenied: true,
       };
     } finally {
-      restored.store.close();
+      await closeSettledStores([restored.store]);
       await restored.files.closePreservingStages();
     }
   } finally {
-    source.store.close();
+    await closeSettledStores([source.store]);
     await source.files.closePreservingStages();
   }
 }

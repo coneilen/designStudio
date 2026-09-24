@@ -45,9 +45,12 @@ export function ownTests(test: TestAPI): TestAPI {
       return Reflect.apply(target, receiver, owned);
     },
     get(target, key, receiver) {
-      if (key === "each")
+      if (key === "each" || key === "skipIf" || key === "runIf")
         return (...cases: unknown[]) =>
-          new Proxy(Reflect.apply(target.each, target, cases), handler);
+          new Proxy(
+            Reflect.apply(Reflect.get(target, key), target, cases),
+            handler,
+          );
       return Reflect.get(target, key, receiver);
     },
   };

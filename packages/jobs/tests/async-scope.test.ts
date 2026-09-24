@@ -1,7 +1,8 @@
 import { createFakeClock } from "@design-studio/contracts/testing";
-import { expect, it } from "vitest";
+import { afterEach, aroundEach, describe, expect, it } from "vitest";
 import { deferred } from "../../host/tests/deferred.js";
 import { AsyncTestScope } from "./async-scope.js";
+import { inTestScope, ownTests, testScope } from "./test-scope.js";
 
 it("does not advance before actual fake-clock sleep registration", async ({
   signal,
@@ -80,4 +81,22 @@ it("the original runner signal releases gates and aborts event waits", async () 
   await scope.close();
   await work;
   expect(returned).toBe(true);
+});
+
+describe("owned conditional test bodies", () => {
+  aroundEach((run, context) =>
+    inTestScope(new AsyncTestScope(context.signal), run),
+  );
+  afterEach(async () => {
+    await testScope().close();
+  });
+  const owned = ownTests(it);
+  owned.skipIf(false)("tracks the original skipIf body promise", async () => {
+    const pending: unknown = Reflect.get(testScope(), "pending");
+    expect(pending instanceof Set && pending.size > 0).toBe(true);
+  });
+  owned.runIf(true)("tracks the original runIf body promise", async () => {
+    const pending: unknown = Reflect.get(testScope(), "pending");
+    expect(pending instanceof Set && pending.size > 0).toBe(true);
+  });
 });
