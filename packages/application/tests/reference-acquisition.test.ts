@@ -12,7 +12,10 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { NativeReferenceEnvelope } from "@design-studio/contracts";
+import type {
+  NativeReferenceEnvelope,
+  StagedArtifact,
+} from "@design-studio/contracts";
 import { fakeComplete } from "@design-studio/contracts/testing";
 import { canonicalBytes, hashBytes } from "@design-studio/design-ir";
 import {
@@ -135,6 +138,7 @@ async function fixture(
     nodeVersion?: string;
     renderNode?: string;
     diagnostic?: boolean;
+    fixedClock?: boolean;
   } = {},
 ) {
   const nativeMode = nativeRetainedMode;
@@ -183,7 +187,9 @@ async function fixture(
   let admitted = true;
   let vaultAllowed = true;
   let fault: string | undefined;
+  const faultHits: string[] = [];
   let clockOffset = 0;
+  const fixedNow = options.fixedClock ? Date.now() : undefined;
   let diagnosticPolicy = CAPTURE_DIAGNOSTIC_POLICY_SHA256;
   const vault = vi.fn();
   const ready = vi.fn(async () => undefined);
@@ -235,7 +241,10 @@ async function fixture(
     currentStore = await openStore({
       ...o,
       fault: (point) => {
-        if (point === fault) throw new Error("Synthetic publication fault");
+        if (point === fault) {
+          faultHits.push(point);
+          throw new Error("Synthetic publication fault");
+        }
       },
     });
     return currentStore;
@@ -400,7 +409,7 @@ async function fixture(
     policy = nativeCapturePolicy(work);
     const originalNow = policy.clock.now.bind(policy.clock);
     vi.spyOn(policy.clock, "now").mockImplementation(
-      () => originalNow() + clockOffset,
+      () => (fixedNow ?? originalNow()) + clockOffset,
     );
     if (validationMode)
       validation = await openNativeReferenceValidation(project);
@@ -683,6 +692,75 @@ async function fixture(
       return runtime;
     },
     blobs,
+    faultHits,
+    observeDiagnosticCommit: (expireLease = false) => {
+      const db = required(currentStore);
+      const commit = db.jobs.commitJob.bind(db.jobs);
+      const observed: {
+        staged: StagedArtifact;
+        filename: string;
+        dev: number;
+        ino: number;
+      }[] = [];
+      const spy = vi
+        .spyOn(db.jobs, "commitJob")
+        .mockImplementationOnce(async (...args) => {
+          for (const staged of args[2].outputs) {
+            const names = (await readdir(project.paths.artifacts)).filter(
+              (name) => name.startsWith(".host-"),
+            );
+            const matches: string[] = [];
+            for (const name of names) {
+              if (
+                (
+                  await readdir(path.join(project.paths.artifacts, name))
+                ).includes(staged.stagingId)
+              )
+                matches.push(
+                  path.join(project.paths.artifacts, name, staged.stagingId),
+                );
+            }
+            expect(matches).toHaveLength(1);
+            const filename = required(matches[0]);
+            const stat = await lstat(filename);
+            expect(stat.nlink).toBe(1);
+            observed.push({ staged, filename, dev: stat.dev, ino: stat.ino });
+          }
+          if (expireLease) clockOffset += 5001;
+          return commit(...args);
+        });
+      return {
+        spy,
+        observed,
+        async physical() {
+          return Promise.all(
+            observed.map(async ({ staged, filename, dev, ino }) => {
+              const stageExists = (
+                await readdir(path.dirname(filename))
+              ).includes(path.basename(filename));
+              const target = path.join(
+                project.paths.artifacts,
+                ...staged.artifact.path.split("/"),
+              );
+              const blobExists = (await readdir(path.dirname(target))).includes(
+                path.basename(target),
+              );
+              const actual = blobExists ? target : filename;
+              const stat = await lstat(actual);
+              const bytes = await readFile(actual);
+              expect(hashBytes(bytes)).toBe(staged.artifact.sha256);
+              expect(bytes.length).toBe(staged.artifact.byteLength);
+              expect([stat.dev, stat.ino, stat.nlink]).toEqual([dev, ino, 1]);
+              return {
+                stageExists,
+                blobExists,
+                sha256: staged.artifact.sha256,
+              };
+            }),
+          );
+        },
+      };
+    },
     advanceClock: (milliseconds: number) => {
       clockOffset += milliseconds;
     },
@@ -1057,12 +1135,64 @@ it("completes a diagnostic with realistic synthetic source bytes within the invo
   expect(f.vault).not.toHaveBeenCalled();
 });
 
-it("validates actual published-only retained bytes offline without rewriting the interrupted acquisition", async () => {
-  const f = await fixture({ diagnostic: true });
+it("an expired diagnostic commit cannot stand in for the configured after-artifacts interruption", async () => {
+  const f = await fixture({ diagnostic: true, fixedClock: true });
   await legacyReferenceFailure(f);
   const approved = await f.diagnosticApprove();
+  const observation = f.observeDiagnosticCommit(true);
   f.setFault("job-after-artifacts");
-  expect((await f.diagnosticDownload(approved)).status).toBe("interrupted");
+  try {
+    const result = await f.diagnosticDownload(approved);
+    const physical = await observation.physical();
+    expect(result).toMatchObject({
+      status: "interrupted",
+      error: { code: "ACTION_REQUIRED" },
+      value: { job: { status: "interrupted", error: { code: "CONFLICT" } } },
+    });
+    expect(observation.spy).toHaveBeenCalledTimes(1);
+    expect(observation.observed).toHaveLength(2);
+    expect(f.faultHits).toEqual([]);
+    expect(
+      physical.map(({ stageExists, blobExists }) => ({
+        stageExists,
+        blobExists,
+      })),
+    ).toEqual([
+      { stageExists: true, blobExists: false },
+      { stageExists: true, blobExists: false },
+    ]);
+    expect(result.value?.receipt).toBeUndefined();
+    expect(f.image).toHaveBeenCalledTimes(2);
+    expect(f.api).not.toHaveBeenCalled();
+    expect(f.vault).not.toHaveBeenCalled();
+  } finally {
+    observation.spy.mockRestore();
+  }
+});
+
+it("validates actual published-only retained bytes offline without rewriting the interrupted acquisition", async () => {
+  const f = await fixture({ diagnostic: true, fixedClock: true });
+  await legacyReferenceFailure(f);
+  const approved = await f.diagnosticApprove();
+  const observation = f.observeDiagnosticCommit();
+  f.setFault("job-after-artifacts");
+  const interrupted = await f.diagnosticDownload(approved);
+  observation.spy.mockRestore();
+  expect(interrupted.status, JSON.stringify(interrupted)).toBe("interrupted");
+  expect(f.faultHits).toEqual(["job-after-artifacts"]);
+  expect(interrupted.value?.job?.error?.code).toBe("INTERNAL_ERROR");
+  expect(interrupted.value?.receipt).toBeUndefined();
+  expect(observation.observed).toHaveLength(2);
+  const published = await observation.physical();
+  expect(
+    published.map(({ stageExists, blobExists }) => ({
+      stageExists,
+      blobExists,
+    })),
+  ).toEqual([
+    { stageExists: false, blobExists: true },
+    { stageExists: false, blobExists: true },
+  ]);
   f.setFault();
   f.advanceClock(40000);
   const metadata = await f.run({
@@ -1094,6 +1224,7 @@ it("validates actual published-only retained bytes offline without rewriting the
   const again = await f.validateRetained(expectedJob);
   expect(again.value).toEqual(result.value);
   expect(await f.blobs()).toEqual(before);
+  expect(await observation.physical()).toEqual(published);
   await f.reopen();
   const after = await f.run({
     operation: "reference-diagnostic-inspect",
@@ -1101,6 +1232,7 @@ it("validates actual published-only retained bytes offline without rewriting the
     inspection: "metadata-only",
   });
   expect(after.value).toEqual(metadata.value);
+  expect(await observation.physical()).toEqual(published);
   expect(f.image).not.toHaveBeenCalled();
   expect(f.api).not.toHaveBeenCalled();
   expect(f.vault).not.toHaveBeenCalled();

@@ -51,6 +51,14 @@ verified source scope without another source-body pass.
 The realistic synthetic 2.4 MB source/847,196-byte PNG case charges 5,698,604
 private bytes (5,698,575 physical bytes plus 29 EOF reservations), zero network.
 This is validation-only evidence, not a recovery-commit or live-image claim.
+The published-only retained-state fixture uses a fixed synthetic policy clock
+and explicitly advances it for expired-job validation. It must reach the actual
+`job-after-artifacts` fault exactly once, retain two published files with the
+original staged hashes/inodes, and have no surviving stage names. An independent
+control advances the lease before the actual commit and verifies interruption
+with two stage-only files and no hit of that fault. This distinguishes physical
+states without weakening production lease checks or changing timed test cases;
+an arbitrary `interrupted` result alone does not establish publication.
 Failed cleanup retains ownership and the meter, joins independent cleanup,
 preserves the primary error and rejects further execution until close-only
 continuation succeeds.

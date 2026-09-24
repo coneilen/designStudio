@@ -26,7 +26,11 @@ import {
   type StorageOptions,
   type StoredJob,
 } from "@design-studio/storage";
-import { afterEach } from "vitest";
+import { afterEach, aroundEach } from "vitest";
+import {
+  closeSettledStores,
+  joinSettledStores,
+} from "../../storage/tests/lifetime.js";
 import { diskFixture } from "../../storage/tests/support.js";
 import { createJobService } from "../src/index.js";
 import type {
@@ -36,6 +40,12 @@ import type {
   RecoveryFacts,
   TrustedJobHandler,
 } from "../src/types.js";
+import {
+  AsyncTestScope,
+  inTestScope,
+  ownTestWork,
+  testScope,
+} from "./test-scope.js";
 
 export const output = Uint8Array.of(1, 3, 7);
 const inputBytes = Uint8Array.of(4, 8, 12);
@@ -51,14 +61,35 @@ export function deferred<T>() {
   return { promise, resolve };
 }
 const cleanup: Array<() => Promise<void>> = [];
+export function inJobsTest<T>(signal: AbortSignal, run: () => T) {
+  if (cleanup.length)
+    throw new Error("Previous jobs fixture has not quiesced.");
+  return inTestScope(new AsyncTestScope(signal), run);
+}
+aroundEach((run, context) => inJobsTest(context.signal, run));
 export function ownCleanup(close: () => Promise<void>) {
   cleanup.push(close);
 }
 afterEach(async () => {
-  while (cleanup.length) await cleanup.pop()?.();
+  await testScope().close();
+  const errors: unknown[] = [];
+  for (const close of [...cleanup].reverse()) {
+    try {
+      await close();
+      cleanup.splice(cleanup.indexOf(close), 1);
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  if (errors.length)
+    throw new AggregateError(errors, "Owned jobs fixtures did not close.");
 });
 
-export async function fixture(
+export function fixture(options: Parameters<typeof createFixture>[0] = {}) {
+  return ownTestWork(createFixture)(options);
+}
+
+async function createFixture(
   options: {
     native?: boolean;
     workers?: number;
@@ -66,16 +97,60 @@ export async function fixture(
     seed?: boolean;
   } = {},
 ) {
+  const scope = testScope();
   const clock =
     options.clock ?? createFakeClock(Date.parse("2026-09-17T00:00:00Z"));
   const root = await mkdtemp(join(tmpdir(), "jobs service synthetic "));
   let store: LocalStore | undefined;
   let host: ProjectFileSystem | undefined;
-  ownCleanup(async () => {
-    store?.close();
+  const stores: LocalStore[] = [];
+  const services = new Set<ReturnType<typeof createJobService>>();
+  const openings = new Set<Promise<LocalStore>>();
+  const stops: Promise<
+    Awaited<ReturnType<ReturnType<typeof createJobService>["stop"]>>
+  >[] = [];
+  let closing = false;
+  let closed = false;
+  const current = () => {
+    scope.signal.throwIfAborted();
+    if (closing || closed)
+      throw new Error("Synthetic jobs fixture is closing.");
+  };
+  const stop = () => {
+    for (const service of services) {
+      const stopping = service.stop();
+      stops.push(stopping);
+      void stopping.catch(() => {});
+    }
+  };
+  scope.releaseOnEnd(stop);
+  const close = async () => {
+    if (closed) return;
+    closing = true;
+    stop();
+    await Promise.allSettled([...openings]);
+    const results = await Promise.allSettled(stops.splice(0));
+    const errors: unknown[] = [];
+    for (const result of results) {
+      try {
+        if (result.status === "rejected") throw result.reason;
+        value(result.value);
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    if (errors.length)
+      throw new AggregateError(
+        errors,
+        "Original jobs service stops did not settle successfully.",
+      );
+    await closeSettledStores(stores);
     if (host) await host.close();
     await rm(root, { recursive: true, force: true });
-  });
+    closed = true;
+  };
+  ownCleanup(close);
+  current();
   const artifactRootId = "artifacts";
   const actors = new Set(["actor", "supervisor"]);
   const jobs = new Set([
@@ -104,7 +179,7 @@ export async function fixture(
   let sessionNumber = 0;
   function context(
     id = "work",
-    signal = new AbortController().signal,
+    signal = scope.signal,
     actor = "actor",
   ): OperationContext {
     if (!actors.has(actor))
@@ -292,7 +367,21 @@ export async function fixture(
     },
     fault: (point) => fault?.(point),
   };
-  store = await LocalStore.open(settings);
+  const open = () => {
+    current();
+    const pending = LocalStore.open(settings).then((opened) => {
+      stores.push(opened);
+      current();
+      return opened;
+    });
+    openings.add(pending);
+    void pending.then(
+      () => openings.delete(pending),
+      () => openings.delete(pending),
+    );
+    return pending;
+  };
+  store = await open();
   const input = {
     id: artifactId(inputBytes),
     sha256: createHash("sha256").update(inputBytes).digest("hex"),
@@ -305,9 +394,15 @@ export async function fixture(
   return {
     clock,
     root,
+    close,
     context,
     actors,
     ownCleanup,
+    ownService(service: ReturnType<typeof createJobService>) {
+      current();
+      services.add(service);
+      return service;
+    },
     authenticator,
     executionAuthority,
     recoveryAuthority,
@@ -322,11 +417,15 @@ export async function fixture(
     setFault(callback: StorageOptions["fault"]) {
       fault = callback;
     },
-    async reopen() {
+    reopen: ownTestWork(async () => {
+      current();
       if (!store) throw new Error("Fixture store was not initialized");
+      for (const service of services) value(await service.stop());
+      await joinSettledStores(stores);
+      current();
       store.close();
-      store = await LocalStore.open(settings);
-    },
+      store = await open();
+    }),
     submission(id = "work", keys: string[] = []): JobSubmission {
       return {
         id: `job-${id}`,
@@ -358,18 +457,20 @@ export function makeService(
   run: TrustedJobHandler["run"],
   overrides: Partial<JobServiceOptions> = {},
 ) {
-  return createJobService({
-    projectId: "project",
-    repository: f.store.jobs,
-    clock: f.clock,
-    artifactRootId: f.artifactRootId,
-    ownerId: "worker",
-    handlers: [{ id: "synthetic", version: "v1", operation: "render", run }],
-    executionAuthority: f.executionAuthority,
-    recoveryAuthority: f.recoveryAuthority,
-    leaseMs: 1000,
-    heartbeatMs: 300,
-    pollMs: 50,
-    ...overrides,
-  });
+  return f.ownService(
+    createJobService({
+      projectId: "project",
+      repository: f.store.jobs,
+      clock: f.clock,
+      artifactRootId: f.artifactRootId,
+      ownerId: "worker",
+      handlers: [{ id: "synthetic", version: "v1", operation: "render", run }],
+      executionAuthority: f.executionAuthority,
+      recoveryAuthority: f.recoveryAuthority,
+      leaseMs: 1000,
+      heartbeatMs: 300,
+      pollMs: 50,
+      ...overrides,
+    }),
+  );
 }

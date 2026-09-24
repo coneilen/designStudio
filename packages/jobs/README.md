@@ -6,6 +6,18 @@ process, browser/device/model adapter, or executable discovery is created here.
 Constructing/importing the library is inert. Handlers are trusted application
 callbacks, **not sandboxed arbitrary JavaScript**.
 
+### Synthetic fixture lifetime
+
+The disk-backed jobs test fixture owns setup/reopen promises, every returned
+SQLite instance and service, and the original runner scope. Cleanup cancels
+outer test work, joins late opens and serialized store queues, then closes
+handles before removing the generated root. A database returned after cancellation
+is still registered for cleanup but is never admitted to new fixture work.
+Explicit service-issued signals are preserved unchanged. Cancel-control tests
+track the original test-body promise, not just the runner's timeout wrapper;
+runner-timeout diagnostics report only the pending phase and elapsed timings.
+These guards do not increase any test timeout or claim to explain CI I/O latency.
+
 ## Required composition
 
 `createJobService(JobServiceOptions)` requires:
