@@ -69,6 +69,21 @@ tag to the successful initial outcome. Malformed internal diagnostic metadata is
 discarded while the original failure/error code is retained; it never turns a
 failed inspection into success or legitimizes extra private fields.
 
+Only `publication-shape` may also include an optional closed `detail` enum:
+`missing-stage-or-entry`, `unproven-history-coexistence`,
+`distinct-target-copies`, `link-count-or-shared-identity`,
+`recorded-length-mismatch`, `native-identity-unavailable` or
+`native-identity-not-distinct`. Legacy shape failures without detail remain valid.
+This is the **first satisfied diagnostic predicate**, not a sole-cause claim:
+unproven historical coexistence is reported before link/length defects; target
+copies are reported before link/length defects; link failures precede length
+failures. Native identity availability is checked before distinctness. Missing
+history is normally rejected by the earlier inventory-membership guard, so the
+shape missing-entry label also covers defensive/unreachable historical states.
+Details use only values already inspected by the rejecting guard; no additional
+read, scan or authority is introduced. Success/cancellation and other checks
+cannot carry this field, and no name, path, SID, hash or raw error is exposed.
+
 The closed projection contains hashes, counts, dimensions, dispositions and a
 stable proof, never bytes, paths, private URLs or design text. The proof also
 binds native installation/project/database identities and the full metadata

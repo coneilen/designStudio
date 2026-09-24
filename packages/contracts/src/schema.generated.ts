@@ -5203,6 +5203,29 @@ export const foundationSchema = {
             "committed-inventory",
             "namespace"
           ]
+        },
+        "detail": {
+          "enum": [
+            "missing-stage-or-entry",
+            "unproven-history-coexistence",
+            "distinct-target-copies",
+            "link-count-or-shared-identity",
+            "recorded-length-mismatch",
+            "native-identity-unavailable",
+            "native-identity-not-distinct"
+          ]
+        }
+      },
+      "if": {
+        "required": [
+          "detail"
+        ]
+      },
+      "then": {
+        "properties": {
+          "check": {
+            "const": "publication-shape"
+          }
         }
       }
     },

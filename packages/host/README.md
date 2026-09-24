@@ -40,6 +40,10 @@ observed classified guard records it, and cleanup never overwrites the first
 failure. Successful inspection and unclassified/cancelled failures omit it.
 Tags are returned only with the initial method outcome; later calls to a
 successful inspection's `check()` cannot mutate that prior outcome.
+Publication-shape detail, when present, records the first satisfied predicate
+inside an already-rejecting branch, not proof that other conditions passed.
+It is computed from the same in-memory descriptor/stat/native observations;
+acceptance predicates, error codes, read order and cleanup are unchanged.
 The diagnostic does not add scans, reads or permissions, and a retained target
 category is not an assertion of its eventual image/evidence role.
 

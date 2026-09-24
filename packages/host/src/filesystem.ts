@@ -1400,8 +1400,9 @@ export class ProjectFileSystem implements FileSystemBoundary {
       check: RetainedInventoryFailure["check"],
       category: RetainedInventoryFailure["category"],
       message: string,
+      detail?: RetainedInventoryFailure["detail"],
     ): never {
-      inventoryFailure ??= { check, category };
+      inventoryFailure ??= { check, category, ...(detail ? { detail } : {}) };
       throw new HostBoundaryError("ARTIFACT_INTEGRITY", message);
     }
     function observedFailure(
@@ -1720,6 +1721,11 @@ export class ProjectFileSystem implements FileSystemBoundary {
                 "publication-shape",
                 "retained-target",
                 "Ambiguous retained publication.",
+                !sameFile(stage.stat, blob.stat)
+                  ? "distinct-target-copies"
+                  : stage.stat.nlink !== 2 || blob.stat.nlink !== 2
+                    ? "link-count-or-shared-identity"
+                    : "recorded-length-mismatch",
               );
             paired.add(stage);
             paired.add(blob);
@@ -1740,6 +1746,23 @@ export class ProjectFileSystem implements FileSystemBoundary {
               "publication-shape",
               isTarget ? "retained-target" : "history-stage",
               "Retained publication is missing or ambiguous.",
+              !entry
+                ? "missing-stage-or-entry"
+                : stage &&
+                    blob &&
+                    !historyCoexists &&
+                    !sameArtifact(
+                      descriptor.artifact,
+                      committedHistory.get(descriptor.artifact.sha256),
+                    )
+                  ? "unproven-history-coexistence"
+                  : entry.stat.nlink !== 1 ||
+                      (stage &&
+                        blob &&
+                        (sameFile(stage.stat, blob.stat) ||
+                          blob.stat.nlink !== 1))
+                    ? "link-count-or-shared-identity"
+                    : "recorded-length-mismatch",
             );
           const target = isTarget
             ? {
@@ -1842,6 +1865,9 @@ export class ProjectFileSystem implements FileSystemBoundary {
               "publication-shape",
               "history-stage",
               "Historical stage and committed blob identities are not independent.",
+              !staged || !committed
+                ? "native-identity-unavailable"
+                : "native-identity-not-distinct",
             );
         }
         if (proofKeys.size)

@@ -48,6 +48,47 @@ it("closes inventory failure diagnostics to enum-only failed plans with no value
     }
   }
   const failure = { check: "proof-stat", category: "original-proof" };
+  const shape = { check: "publication-shape", category: "history-stage" };
+  for (const detail of [
+    "missing-stage-or-entry",
+    "unproven-history-coexistence",
+    "distinct-target-copies",
+    "link-count-or-shared-identity",
+    "recorded-length-mismatch",
+    "native-identity-unavailable",
+    "native-identity-not-distinct",
+  ]) {
+    expect(
+      validateContract("NativeReferenceRecoveryPlanEnvelope", {
+        ...envelope,
+        inventoryFailure: { ...shape, detail },
+      }).success,
+    ).toBe(true);
+    expect(
+      validateContract("RetainedInventoryFailure", { ...failure, detail })
+        .success,
+    ).toBe(false);
+    for (const status of ["complete", "cancelled"])
+      expect(
+        validateContract("NativeReferenceRecoveryPlanEnvelope", {
+          ...envelope,
+          status,
+          inventoryFailure: { ...shape, detail },
+        }).success,
+      ).toBe(false);
+  }
+  for (const detail of ["private-path", { path: "private" }, true, 1])
+    expect(
+      validateContract("RetainedInventoryFailure", { ...shape, detail })
+        .success,
+    ).toBe(false);
+  expect(
+    validateContract("RetainedInventoryFailure", {
+      ...shape,
+      detail: "unproven-history-coexistence",
+      path: "private",
+    }).success,
+  ).toBe(false);
   for (const bad of [
     { ...failure, path: "private" },
     { ...failure, sha256: artifact.sha256 },

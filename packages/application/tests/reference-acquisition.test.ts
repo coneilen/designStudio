@@ -1522,7 +1522,13 @@ it("rejects same-byte source inode replacement between verified proof reads and 
   }
 });
 
-it.each(["tagged", "cancelled", "unclassified", "invalid-tag"] as const)(
+it.each([
+  "tagged",
+  "shape-detail",
+  "cancelled",
+  "unclassified",
+  "invalid-tag",
+] as const)(
   "retained inventory failure projection stays local and closed: %s",
   async (kind) => {
     const { f, expectedJob } = await interruptedValidationFixture();
@@ -1549,8 +1555,14 @@ it.each(["tagged", "cancelled", "unclassified", "invalid-tag"] as const)(
         };
         if (kind !== "unclassified")
           Reflect.set(outcome, "inventoryFailure", {
-            check: "missing-recorded-entry",
+            check:
+              kind === "shape-detail"
+                ? "publication-shape"
+                : "missing-recorded-entry",
             category: "history-stage",
+            ...(kind === "shape-detail"
+              ? { detail: "unproven-history-coexistence" }
+              : {}),
             ...(kind === "invalid-tag" ? { path: "synthetic-private" } : {}),
           });
         return outcome;
@@ -1564,9 +1576,15 @@ it.each(["tagged", "cancelled", "unclassified", "invalid-tag"] as const)(
       expect(result.error?.retryable).toBe(false);
       expect(result.value).toBeUndefined();
       expect(result.inventoryFailure).toEqual(
-        kind === "tagged"
-          ? { check: "missing-recorded-entry", category: "history-stage" }
-          : undefined,
+        kind === "shape-detail"
+          ? {
+              check: "publication-shape",
+              category: "history-stage",
+              detail: "unproven-history-coexistence",
+            }
+          : kind === "tagged"
+            ? { check: "missing-recorded-entry", category: "history-stage" }
+            : undefined,
       );
       expect(JSON.stringify(result)).not.toMatch(
         /synthetic-private|private path|SID\/exception/,

@@ -357,15 +357,19 @@ it.each([
       if (kind === "diagnostic-isolation") {
         const bad = {
           ...input,
-          targets: [{ ...first, stagingId: "invalid" }, secondTarget],
+          targets: [
+            { ...first, artifact: { ...first.artifact, byteLength: 2 } },
+            secondTarget,
+          ],
         };
         const [failure, success] = await Promise.all([
           files.inspectRetainedReference(bad, context),
           files.inspectRetainedReference(input, context),
         ]);
         expect(failure.inventoryFailure).toEqual({
-          check: "descriptor",
+          check: "publication-shape",
           category: "retained-target",
+          detail: "recorded-length-mismatch",
         });
         expect(success.status).toBe("complete");
         expect(success.inventoryFailure).toBeUndefined();
@@ -385,7 +389,7 @@ it.each([
       const result = await files.inspectRetainedReference(input, context);
       const expectedDiagnostics: Record<
         string,
-        { check: string; category: string }
+        { check: string; category: string; detail?: string }
       > = {
         descriptor: { check: "descriptor", category: "retained-target" },
         "missing-registered": {
@@ -405,11 +409,31 @@ it.each([
           category: "original-proof",
         },
         "proof-stat": { check: "proof-stat", category: "original-proof" },
-        ambiguous: { check: "publication-shape", category: "retained-target" },
-        missing: { check: "publication-shape", category: "retained-target" },
-        hardlink: { check: "publication-shape", category: "retained-target" },
-        grow: { check: "publication-shape", category: "retained-target" },
-        truncate: { check: "publication-shape", category: "retained-target" },
+        ambiguous: {
+          check: "publication-shape",
+          category: "retained-target",
+          detail: "distinct-target-copies",
+        },
+        missing: {
+          check: "publication-shape",
+          category: "retained-target",
+          detail: "missing-stage-or-entry",
+        },
+        hardlink: {
+          check: "publication-shape",
+          category: "retained-target",
+          detail: "link-count-or-shared-identity",
+        },
+        grow: {
+          check: "publication-shape",
+          category: "retained-target",
+          detail: "recorded-length-mismatch",
+        },
+        truncate: {
+          check: "publication-shape",
+          category: "retained-target",
+          detail: "recorded-length-mismatch",
+        },
         corrupt: { check: "body-hash", category: "retained-target" },
         "corrupt-close-failure": {
           check: "body-hash",
@@ -521,6 +545,8 @@ it.each([
 it.each([
   "valid",
   "unproven",
+  "unproven-wrong-length",
+  "linked-wrong-length",
   "foreign-artifact",
   "extra-proof",
   "duplicate-proof",
@@ -533,6 +559,7 @@ it.each([
   "missing-history",
   "target-copy",
   "native-same-identity",
+  "native-same-close",
   "blob-swap",
 ] as const)(
   "history coexistence requires authenticated independent single-link bodies: %s",
@@ -582,7 +609,10 @@ it.each([
       artifacts: [historical.artifact],
       committedHistoryArtifacts: [historical.artifact],
     };
-    if (kind === "unproven") input.committedHistoryArtifacts = [];
+    if (kind === "unproven" || kind === "unproven-wrong-length")
+      input.committedHistoryArtifacts = [];
+    if (kind === "unproven-wrong-length")
+      await writeFile(blobPath, Buffer.of(3));
     if (kind === "foreign-artifact")
       input.committedHistoryArtifacts = [
         { ...historical.artifact, id: "foreign" },
@@ -602,9 +632,11 @@ it.each([
     if (kind === "stage-corrupt") await writeFile(historyPath, Buffer.of(4, 3));
     if (kind === "blob-size") await writeFile(blobPath, Buffer.of(3));
     if (kind === "stage-size") await writeFile(historyPath, Buffer.of(3));
-    if (kind === "linked") {
+    if (kind === "linked" || kind === "linked-wrong-length") {
       await rm(blobPath);
       await link(historyPath, blobPath);
+      if (kind === "linked-wrong-length")
+        await writeFile(blobPath, Buffer.of(3));
     }
     if (kind === "missing-history") await rm(historyPath);
     if (kind === "target-copy")
@@ -625,6 +657,7 @@ it.each([
     let reads = 0;
     let pins = 0;
     let swapped = false;
+    let failedClose = false;
     const files = await ProjectFileSystem.create({
       projectId: context.projectId,
       authority: () => true,
@@ -666,7 +699,8 @@ it.each([
               path: filename,
               volume: stat.dev,
               file:
-                kind === "native-same-identity" && filename === blobPath
+                ["native-same-identity", "native-same-close"].includes(kind) &&
+                filename === blobPath
                   ? String(before?.ino)
                   : String(stat.ino),
             },
@@ -678,6 +712,14 @@ it.each([
               }
             },
             close: () => {
+              if (
+                kind === "native-same-close" &&
+                filename === blobPath &&
+                !failedClose
+              ) {
+                failedClose = true;
+                throw new Error("Synthetic close after native shape failure.");
+              }
               if (!closed) {
                 closed = true;
                 pins--;
@@ -712,20 +754,38 @@ it.each([
           expect(result.inventoryFailure).toEqual({
             check: "publication-shape",
             category: "retained-target",
+            detail: "distinct-target-copies",
           });
         if (
           [
             "unproven",
+            "unproven-wrong-length",
+            "linked-wrong-length",
             "linked",
             "blob-size",
             "stage-size",
             "native-same-identity",
+            "native-same-close",
           ].includes(kind)
         )
           expect(result.inventoryFailure).toEqual({
             check: "publication-shape",
             category: "history-stage",
+            detail: kind.startsWith("unproven")
+              ? "unproven-history-coexistence"
+              : kind.startsWith("linked")
+                ? "link-count-or-shared-identity"
+                : kind.startsWith("native-same")
+                  ? "native-identity-not-distinct"
+                  : "recorded-length-mismatch",
           });
+        if (kind === "native-same-close") {
+          expect(result).toMatchObject({
+            error: { code: "ARTIFACT_INTEGRITY" },
+          });
+          expect(pins).toBe(1);
+          await files.closePreservingStages();
+        }
       }
       expect(pins).toBe(0);
     } finally {

@@ -2625,6 +2625,14 @@ export interface RetainedInventoryFailure {
     | "inventory-recheck"
     | "native-identity-recheck";
   category: "original-proof" | "history-stage" | "retained-target" | "committed-inventory" | "namespace";
+  detail?:
+    | "missing-stage-or-entry"
+    | "unproven-history-coexistence"
+    | "distinct-target-copies"
+    | "link-count-or-shared-identity"
+    | "recorded-length-mismatch"
+    | "native-identity-unavailable"
+    | "native-identity-not-distinct";
 }
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema

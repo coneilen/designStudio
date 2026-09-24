@@ -2315,6 +2315,7 @@ it.each([
             inventoryFailure: {
               check: "publication-shape",
               category: "history-stage",
+              detail: "unproven-history-coexistence",
             },
           });
         if (fault === "diagnostic-retained-valid" || coexistence) {
