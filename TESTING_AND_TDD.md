@@ -108,6 +108,22 @@ differ; these synthetic controls establish the mechanism, not the exact timing
 or translated cause of an earlier CI run. Physical byte-budget and history
 integrity assertions remain unchanged.
 
+The storage cancellation-control tests separate queued-context snapshotting from
+capacity admission. The snapshot case still mutates the caller's request after
+queueing a real cancellation and checks the original identity. The capacity case
+prepares a fresh owned SQLite store with **127 genuine sequential control
+transactions in `beforeEach`**, under the unchanged default 10-second hook limit.
+Its default 5-second test body verifies the persisted 127 records, admits control
+128 with exactly one version increment, refuses 129 without changing any record,
+and replays control 0 at capacity without budget/usage mutation. No rows are
+manufactured or shared across cases. Original setup promises and store queues
+are joined before cleanup; cancellation during a late open or an actual seeded
+write is tested separately and prevents the next seed transaction.
+This separates bounded fixture preparation from the operation under assertion,
+not a product latency guarantee or a test/hook allowance increase. The earlier
+hosted timeout is retained as failure evidence; a fast isolated run does not
+establish the hosted I/O cause.
+
 `tests/unit-partition.ts` is the reviewed exact-file inventory. The checker uses
 the original `packages/**/*.test.ts` discovery minus the original smoke/default
 exclusions, then compares that set against **actual Vitest project discovery**.
