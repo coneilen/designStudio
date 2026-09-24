@@ -1,5 +1,13 @@
 # @design-studio/contracts
 
+Named runtime validation registers the authoritative definitions with their
+original schema ID and dialect, without compiling the document-root union as
+an unrelated entry point. `validateContract` still accepts only catalog names
+and resolves the same definition fragments with unchanged AJV options and
+boundary checks. The exported foundation schema and public schema files retain
+their root union unchanged. Tests guard against whole-root, external or
+scope-changing references that would invalidate this registration strategy.
+
 Version 1.4.0; artifact schema version 1.0; JSON Schema draft-07.
 
 Validation reuses compiled immutable schema functions, not payloads, acceptance

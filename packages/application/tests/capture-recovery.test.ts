@@ -42,6 +42,11 @@ import {
   FigmaHttpsTransport,
 } from "../../figma-capture/dist/transport.js";
 import { png } from "../../figma-capture/tests/support.js";
+import {
+  closePortablePins,
+  type PortablePinOwner,
+  portableRetainedPin,
+} from "../../host/tests/portable-retained-pin.js";
 import { nativeCapturePolicy } from "../../project-host/dist/capture-authority.js";
 import { CAPTURE_DIAGNOSTIC_POLICY_SHA256 } from "../../project-host/src/capture-diagnostic-profile.js";
 import { CAPTURE_RECOVERY_POLICY_SHA256 } from "../../project-host/src/capture-recovery-profile.js";
@@ -228,6 +233,7 @@ async function createFixture(
   >[] = [];
   const offlines: Awaited<ReturnType<typeof openNativeReferenceOffline>>[] = [];
   const startupClosures: (() => Promise<void>)[] = [];
+  const portablePins = new Set<PortablePinOwner>();
   cleanups.push(async () => {
     await scope.close();
     const stopped = await Promise.all(stopRequests.splice(0));
@@ -252,6 +258,8 @@ async function createFixture(
     for (const offline of offlines) await offline.close();
     for (const runtime of runtimes) await runtime.close();
     await closeSettledStores(stores);
+    closePortablePins(portablePins);
+    expect(portablePins.size).toBe(0);
     await rm(root, { recursive: true, force: true });
   });
   scope.signal.throwIfAborted();
@@ -394,31 +402,12 @@ async function createFixture(
       },
       pinReferenceValidationDatabase: () =>
         syntheticImmutableSnapshot(project.paths.database),
-      pinReferenceValidationEntry: async (rootId, relative) => {
+      pinReferenceValidationEntry: async (rootId, relative, directory) => {
         const filename = path.join(
           rootId === project.artifactRootId ? artifacts : outputs,
           ...relative.split("/"),
         );
-        const stat = await lstat(filename);
-        if (stat.isSymbolicLink() || (!stat.isDirectory() && stat.nlink !== 1))
-          throw new HostBoundaryError(
-            "PATH_FORBIDDEN",
-            "Synthetic retained pin refused.",
-          );
-        return {
-          check: async () => {},
-          handle: 1,
-          byteLength: stat.size,
-          identity: {
-            path: filename,
-            volume: stat.dev,
-            file: String(stat.ino),
-          },
-          read: () => {
-            throw new Error("Synthetic native pin has no body reader");
-          },
-          close: () => {},
-        };
+        return portableRetainedPin(filename, directory, portablePins);
       },
       recoveryAuthority: async () => {
         if (validationMode || offlineMode)

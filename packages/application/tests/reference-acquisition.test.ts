@@ -13,6 +13,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { performance } from "node:perf_hooks";
 import { isMainThread } from "node:worker_threads";
 import type {
   NativeReferenceEnvelope,
@@ -44,6 +45,11 @@ import {
 import { png } from "../../figma-capture/tests/support.js";
 import { WindowsNtfsPublisher } from "../../host/dist/windows-publication.js";
 import { deferred } from "../../host/tests/deferred.js";
+import {
+  closePortablePins,
+  type PortablePinOwner,
+  portableRetainedPin,
+} from "../../host/tests/portable-retained-pin.js";
 import { Execution } from "../../jobs/dist/execution.js";
 import { nativeCapturePolicy } from "../../project-host/dist/capture-authority.js";
 import { CAPTURE_DIAGNOSTIC_POLICY_SHA256 } from "../../project-host/src/capture-diagnostic-profile.js";
@@ -144,12 +150,15 @@ vi.mock("../../project-host/dist/capture-work.js", () => ({
   },
 }));
 const cleanups: (() => Promise<void>)[] = [];
+const runnerSignals = new WeakMap<AsyncTestScope, AbortSignal>();
 const it = ownCaptureTests(vitestIt);
 vi.setConfig({ testTimeout: 60000 });
 aroundEach((run, context) => {
   if (cleanups.length)
     throw new Error("Previous reference fixture has not quiesced.");
-  return inCaptureTest(new AsyncTestScope(context.signal), run);
+  const scope = new AsyncTestScope(context.signal);
+  runnerSignals.set(scope, context.signal);
+  return inCaptureTest(scope, run);
 });
 afterEach(async () => {
   await captureTestScope().close();
@@ -183,6 +192,123 @@ function required<T>(value: T | undefined): T {
 function fixture(...args: Parameters<typeof createFixture>) {
   return ownCaptureWork(createFixture)(...args);
 }
+type ReferencePhaseEvent = {
+  scope: "synthetic-reference-phase";
+  scenario: "conversion-provenance" | "converted-archive";
+  event: "start" | "settled" | "rejected" | "runner-abort";
+  phase: string | null;
+  elapsedMs: number;
+  durationMs?: number;
+  outcome?: string;
+  runnerAborted: boolean;
+};
+function referenceTelemetry(
+  scenario: ReferencePhaseEvent["scenario"] | undefined,
+  originalSignal: AbortSignal | undefined,
+  sink: (event: ReferencePhaseEvent) => void = (event) =>
+    console.log(JSON.stringify(event)),
+) {
+  const started = performance.now();
+  let pending: string | null = null;
+  let armed = false;
+  let closed = false;
+  let abortReported = false;
+  const allowedPhases = new Set([
+    "fixture-open",
+    "capture",
+    "reference-plan",
+    "reference-approve",
+    "reference-download",
+    "reference-diagnostic-plan",
+    "reference-diagnostic-approve",
+    "reference-diagnostic-download",
+    "reference-diagnostic-inspect",
+    "reference-recovery-apply-plan",
+    "reference-recovery-apply",
+    "reference-recovery-inspect",
+    "convert-reference",
+    "artifact",
+    "verification",
+    "backup-archive",
+    "cleanup",
+  ]);
+  const emit = (
+    event: "start" | "settled" | "rejected" | "runner-abort",
+    phase: string | null,
+    durationMs?: number,
+    outcome?: string,
+  ) => {
+    if (!scenario) return;
+    sink({
+      scope: "synthetic-reference-phase",
+      scenario,
+      event,
+      phase,
+      elapsedMs: Math.round(performance.now() - started),
+      ...(durationMs === undefined ? {} : { durationMs }),
+      ...(outcome === undefined ? {} : { outcome }),
+      runnerAborted: originalSignal?.aborted ?? false,
+    });
+  };
+  const measure = async <T>(
+    phase: string,
+    action: () => Promise<T>,
+  ): Promise<T> => {
+    if (!scenario) return action();
+    if (!originalSignal || !armed || closed || !allowedPhases.has(phase))
+      throw new Error("Invalid synthetic phase telemetry.");
+    const before = performance.now();
+    const previous = pending;
+    pending = phase;
+    emit("start", phase);
+    try {
+      const result = await action();
+      const outcome =
+        result &&
+        typeof result === "object" &&
+        "status" in result &&
+        typeof result.status === "string" &&
+        [
+          "complete",
+          "partial",
+          "failed",
+          "cancelled",
+          "interrupted",
+          "unavailable",
+        ].includes(result.status)
+          ? result.status
+          : undefined;
+      emit("settled", phase, Math.round(performance.now() - before), outcome);
+      return result;
+    } catch (error) {
+      emit("rejected", phase, Math.round(performance.now() - before));
+      throw error;
+    } finally {
+      pending = previous;
+    }
+  };
+  const reportAbort = () => {
+    if (!abortReported) {
+      abortReported = true;
+      emit("runner-abort", pending);
+    }
+  };
+  return {
+    measure,
+    arm() {
+      if (!scenario || armed) return;
+      if (!originalSignal || closed)
+        throw new Error("Invalid synthetic telemetry owner.");
+      armed = true;
+      originalSignal.addEventListener("abort", reportAbort, { once: true });
+      if (originalSignal.aborted) reportAbort();
+    },
+    close() {
+      originalSignal?.removeEventListener("abort", reportAbort);
+      closed = true;
+    },
+  };
+}
 async function createFixture(
   options: {
     large?: boolean;
@@ -196,10 +322,16 @@ async function createFixture(
     diagnostic?: boolean;
     fixedClock?: boolean;
     offline?: boolean;
+    telemetry?: "conversion-provenance" | "converted-archive";
   } = {},
 ) {
   const scope = captureTestScope();
   scope.signal.throwIfAborted();
+  const telemetry = referenceTelemetry(
+    options.telemetry,
+    runnerSignals.get(scope),
+  );
+  const { measure } = telemetry;
   const stores: LocalStore[] = [];
   const fileSystems: ProjectFileSystem[] = [];
   const runtimes: NativeCaptureRuntime[] = [];
@@ -211,6 +343,7 @@ async function createFixture(
   const native = nativeMode ? await loadNative() : undefined;
   const sid = native?.principal();
   const retainedPins = new Set<ReadLease>();
+  const portablePins = new Set<PortablePinOwner>();
   let nativeAdmissions = 0;
   let strictDenials = 0;
   initializeImmutableSqlite(
@@ -227,43 +360,49 @@ async function createFixture(
   let ownerFixture:
     | Awaited<ReturnType<typeof createRetainedOwnerFixture>>
     | undefined;
-  cleanups.push(async () => {
-    await scope.close();
-    await joinSettledStores(stores);
-    const errors: unknown[] = [];
-    for (const current of [
-      ...offlines,
-      ...validations,
-      ...runtimes,
-    ].reverse()) {
-      try {
-        await current.close();
-      } catch (error) {
-        errors.push(error);
+  cleanups.push(() =>
+    measure("cleanup", async () => {
+      await scope.close();
+      await joinSettledStores(stores);
+      const errors: unknown[] = [];
+      for (const current of [
+        ...offlines,
+        ...validations,
+        ...runtimes,
+      ].reverse()) {
+        try {
+          await current.close();
+        } catch (error) {
+          errors.push(error);
+        }
       }
-    }
-    if (errors.length)
-      throw new AggregateError(
-        errors,
-        "Reference runtime ownership did not close.",
-      );
-    await closeSettledStores(stores);
-    for (const files of fileSystems) {
-      try {
-        await files.closePreservingStages();
-      } catch (error) {
-        errors.push(error);
+      if (errors.length)
+        throw new AggregateError(
+          errors,
+          "Reference runtime ownership did not close.",
+        );
+      await closeSettledStores(stores);
+      for (const files of fileSystems) {
+        try {
+          await files.closePreservingStages();
+        } catch (error) {
+          errors.push(error);
+        }
       }
-    }
-    if (errors.length)
-      throw new AggregateError(
-        errors,
-        "Reference filesystem ownership did not close.",
-      );
-    expect(retainedPins.size).toBe(0);
-    ownerFixture?.close();
-    await rm(root, { recursive: true, force: true });
-  });
+      if (errors.length)
+        throw new AggregateError(
+          errors,
+          "Reference filesystem ownership did not close.",
+        );
+      expect(retainedPins.size).toBe(0);
+      closePortablePins(portablePins);
+      expect(portablePins.size).toBe(0);
+      ownerFixture?.close();
+      await rm(root, { recursive: true, force: true });
+      telemetry.close();
+    }),
+  );
+  telemetry.arm();
   ownerFixture = nativeMode
     ? await createRetainedOwnerFixture(root)
     : undefined;
@@ -316,7 +455,6 @@ async function createFixture(
   let offline:
     | Awaited<ReturnType<typeof openNativeReferenceOffline>>
     | undefined;
-  let readPins = 0;
   let failInventoryPinClose = false;
   let firstInventoryRoot = true;
   let admitted = true;
@@ -497,7 +635,7 @@ async function createFixture(
                 },
                 checkReleased: async () => {
                   expect(closed).toBe(true);
-                  expect(readPins).toBe(0);
+                  expect(portablePins.size).toBe(0);
                   const after = await lstat(project.paths.database);
                   expect([
                     after.dev,
@@ -599,31 +737,15 @@ async function createFixture(
                 return pin;
               }
               const filename = path.join(rootPath, ...relative.split("/"));
-              const stat = await lstat(filename);
-              if (
-                stat.isSymbolicLink() ||
-                (!stat.isDirectory() && stat.nlink !== 1)
-              )
-                throw new HostBoundaryError(
-                  "PATH_FORBIDDEN",
-                  "Synthetic pin refused.",
-                );
-              readPins++;
+              const pin = portableRetainedPin(
+                filename,
+                directory,
+                portablePins,
+              );
               const inventoryRoot = relative === "" && firstInventoryRoot;
               if (inventoryRoot) firstInventoryRoot = false;
-              let closed = false;
               return {
-                handle: 1,
-                identity: {
-                  path: filename,
-                  volume: stat.dev,
-                  file: String(stat.ino),
-                },
-                byteLength: stat.size,
-                check: async () => {},
-                read: () => {
-                  throw new Error("Synthetic pin does not read bodies");
-                },
+                ...pin,
                 close: () => {
                   if (failInventoryPinClose && inventoryRoot) {
                     failInventoryPinClose = false;
@@ -632,10 +754,7 @@ async function createFixture(
                       "Synthetic pin close failed",
                     );
                   }
-                  if (!closed) {
-                    closed = true;
-                    readPins--;
-                  }
+                  pin.close();
                 },
               };
             },
@@ -686,7 +805,9 @@ async function createFixture(
       offline = {
         ...current,
         execute: ownCaptureWork((input, signal) =>
-          current.execute(input, AbortSignal.any([signal, scope.signal])),
+          measure(input.operation, () =>
+            current.execute(input, AbortSignal.any([signal, scope.signal])),
+          ),
         ),
       };
     } else if (validationMode) {
@@ -703,7 +824,9 @@ async function createFixture(
       runtimes.push(current);
       runtime = {
         execute: ownCaptureWork((input, signal) =>
-          current.execute(input, AbortSignal.any([signal, scope.signal])),
+          measure(input.operation, () =>
+            current.execute(input, AbortSignal.any([signal, scope.signal])),
+          ),
         ),
         recover: ownCaptureWork((input, signal) =>
           current.recover(input, AbortSignal.any([signal, scope.signal])),
@@ -711,10 +834,12 @@ async function createFixture(
         ...(current.reference
           ? {
               reference: ownCaptureWork((input, signal) =>
-                required(current.reference).call(
-                  current,
-                  input,
-                  AbortSignal.any([signal, scope.signal]),
+                measure(input.operation, () =>
+                  required(current.reference).call(
+                    current,
+                    input,
+                    AbortSignal.any([signal, scope.signal]),
+                  ),
                 ),
               ),
             }
@@ -777,7 +902,7 @@ async function createFixture(
       budget.decoded(bytes.length);
       return { status: 200, mediaType: "image/png", bytes };
     });
-  const initial = await open();
+  const initial = await measure("fixture-open", () => open());
   if (nativeMode && options.offline) {
     const stage = ProjectFileSystem.prototype.stage;
     vi.spyOn(ProjectFileSystem.prototype, "stage").mockImplementation(
@@ -927,14 +1052,17 @@ async function createFixture(
       seam.physicalReads = 0;
       return required(offline).execute(command, signal);
     },
-    observeOffline: async () => {
-      await runtime.close();
-      await validation?.close();
-      await offline?.close();
-      return observeSyntheticReference(root, project.paths.database);
-    },
+    observeOffline: () =>
+      measure("verification", async () => {
+        await runtime.close();
+        await validation?.close();
+        await offline?.close();
+        return observeSyntheticReference(root, project.paths.database);
+      }),
     backupOffline: ownCaptureWork(() =>
-      backupSyntheticOffline(root, project.paths.database, scope.signal),
+      measure("backup-archive", () =>
+        backupSyntheticOffline(root, project.paths.database, scope.signal),
+      ),
     ),
     runArchivedOffline: async (command: NativeReferenceOfflineInput) => {
       await offline?.close();
@@ -956,7 +1084,7 @@ async function createFixture(
       failInventoryPinClose = true;
     },
     get readPins() {
-      return nativeMode ? retainedPins.size : readPins;
+      return nativeMode ? retainedPins.size : portablePins.size;
     },
     get nativeAdmissions() {
       return nativeAdmissions;
@@ -1211,6 +1339,79 @@ async function createFixture(
     },
   };
 }
+it("reports original runner abort during the gated phase before cleanup", async () => {
+  const original = new AbortController();
+  const events: ReferencePhaseEvent[] = [];
+  const telemetry = referenceTelemetry(
+    "conversion-provenance",
+    original.signal,
+    (event) => {
+      events.push(event);
+    },
+  );
+  const gate = deferred<void>();
+  telemetry.arm();
+  telemetry.arm();
+  let settled = false;
+  const work = telemetry.measure("convert-reference", async () => {
+    await gate.promise;
+    settled = true;
+    return { status: "cancelled" };
+  });
+  try {
+    original.abort();
+    expect(settled).toBe(false);
+    expect(events.filter((e) => e.event === "runner-abort")).toMatchObject([
+      { phase: "convert-reference", runnerAborted: true },
+    ]);
+    expect(events.some((e) => e.phase === "cleanup")).toBe(false);
+    original.signal.dispatchEvent(new Event("abort"));
+    expect(events.filter((e) => e.event === "runner-abort")).toHaveLength(1);
+  } finally {
+    gate.resolve();
+    await work;
+    telemetry.close();
+  }
+  expect(events.at(-1)).toMatchObject({
+    event: "settled",
+    phase: "convert-reference",
+    outcome: "cancelled",
+  });
+});
+
+it("detaches telemetry on confirmed cleanup and handles pre-aborted owners once", async () => {
+  const original = new AbortController();
+  const events: ReferencePhaseEvent[] = [];
+  const telemetry = referenceTelemetry(
+    "converted-archive",
+    original.signal,
+    (event) => {
+      events.push(event);
+    },
+  );
+  telemetry.arm();
+  await telemetry.measure("cleanup", async () => {
+    telemetry.close();
+  });
+  const count = events.length;
+  original.abort();
+  expect(events).toHaveLength(count);
+  expect(events.some((e) => e.event === "runner-abort")).toBe(false);
+  const already = referenceTelemetry(
+    "converted-archive",
+    original.signal,
+    (event) => {
+      events.push(event);
+    },
+  );
+  already.arm();
+  already.arm();
+  already.close();
+  expect(events.filter((e) => e.event === "runner-abort")).toMatchObject([
+    { phase: null, runnerAborted: true },
+  ]);
+});
+
 it("requires exact explicit offline approval and attaches once without modifying a large committed capture", async () => {
   const f = await fixture({ large: true });
   const old = await f.blobs();
@@ -1948,7 +2149,9 @@ it("publishes one offline reference receipt and replays without changing the con
 });
 
 it("converts the recovered reference with exact provenance and stable receipt replay", async () => {
-  const { f, command, apply } = await committedOfflineFixture();
+  const { f, command, apply } = await committedOfflineFixture(
+    "conversion-provenance",
+  );
   const before = await f.observeOffline();
   const wrongRecovery = await f.runOffline({
     ...command,
@@ -2061,7 +2264,8 @@ it("converts the recovered reference with exact provenance and stable receipt re
 });
 
 it("preserves the sealed recovery through active and repeated archival backup validation", async () => {
-  const { f, command, apply } = await committedOfflineFixture();
+  const { f, command, apply } =
+    await committedOfflineFixture("converted-archive");
   const conversion = await f.runOffline({
     ...command,
     operation: "convert-reference",
@@ -2213,8 +2417,14 @@ it("joins an observed real restore before cancellation cleanup deletes its SQLit
   expect(seam.work).toBe(lastOwner);
 });
 
-async function committedOfflineFixture() {
-  const { f, command, before, plan } = await offlineStageFixture(false, true);
+async function committedOfflineFixture(
+  telemetry?: "conversion-provenance" | "converted-archive",
+) {
+  const { f, command, before, plan } = await offlineStageFixture(
+    false,
+    true,
+    telemetry,
+  );
   if (!before) throw new Error("Missing synthetic preimage.");
   const apply = await f.runOffline({
     ...command,
@@ -2226,12 +2436,17 @@ async function committedOfflineFixture() {
   return { f, command, before, apply };
 }
 
-async function offlineStageFixture(native = false, durabilityReads = false) {
+async function offlineStageFixture(
+  native = false,
+  durabilityReads = false,
+  telemetry?: "conversion-provenance" | "converted-archive",
+) {
   const f = await fixture({
     diagnostic: true,
     fixedClock: true,
     offline: native,
     durabilityReads,
+    ...(telemetry ? { telemetry } : {}),
   });
   await legacyReferenceFailure(f);
   const approval = await f.diagnosticApprove();
