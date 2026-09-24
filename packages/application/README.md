@@ -25,6 +25,15 @@ does not admit multi-link reads. No reconciliation, unlink, adoption, retry,
 provider/DNS/vault call, receipt, approval or persistent plan is performed.
 Metadata-only and ordinary full inspection retain their previous behavior.
 
+The additional closed reason `source-metadata-invalid` distinguishes initial
+original-reference metadata/receipt lookup and context issuance from later
+`source-proof-invalid` lineage/body verification. The existing reason remains
+valid for older envelopes. These are broad phases plus the existing error code,
+not precise native ACL subguards; neither reveals paths, SIDs or exception text.
+A prior `source-proof-invalid` response cannot retrospectively identify which
+phase or native check failed. Synthetic inherited-ACL compatibility evidence is
+not proof of a historical private-file ACL or of current live recoverability.
+
 The closed projection contains hashes, counts, dimensions, dispositions and a
 stable proof, never bytes, paths, private URLs or design text. The proof also
 binds native installation/project/database identities and the full metadata

@@ -59,6 +59,7 @@ export interface ProjectFileSystemOptions {
       directory: boolean,
     ): Promise<{
       identity: { path: string; volume: number; file: string };
+      check(): Promise<void>;
       close(): void;
     }>;
   };
@@ -615,8 +616,13 @@ export class ProjectFileSystem implements FileSystemBoundary {
         let failed = false;
         let failure: unknown;
         try {
+          if (pin) {
+            await pin.check();
+            guard.check();
+          }
           const observed = pin ? await io(() => lstat(absolute)) : undefined;
           bytes = await this.readBytes(absolute, guard, observed);
+          if (pin) await pin.check();
           await this.resolve(root, request.path);
           guard.check();
           if (pin && observed) {
@@ -1417,7 +1423,7 @@ export class ProjectFileSystem implements FileSystemBoundary {
           "ARTIFACT_INTEGRITY",
           "Invalid retained artifact inventory.",
         );
-      const pins: { close(): void }[] = [];
+      const pins: RetainedReadPin[] = [];
       const targets: RetainedReferenceInspection["targets"] = [];
       let closed = false;
       const close = () => {
@@ -1736,11 +1742,28 @@ export class ProjectFileSystem implements FileSystemBoundary {
               context,
               "read",
             );
+            const pin = pins.find(
+              (candidate) => candidate.identity.path === entry.absolute,
+            );
+            if (!pin)
+              throw new HostBoundaryError(
+                "ARTIFACT_INTEGRITY",
+                "Retained body has no owned native read pin.",
+              );
+            await pin.check();
+            guard.check();
             const bytes = await this.readBytes(
               entry.absolute,
               guard,
               entry.stat,
             );
+            try {
+              await pin.check();
+              guard.check();
+            } catch (error) {
+              bytes.fill(0);
+              throw error;
+            }
             if (
               bytes.length !== descriptor.artifact.byteLength ||
               sha256(bytes) !== descriptor.artifact.sha256

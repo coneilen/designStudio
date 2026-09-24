@@ -26,5 +26,8 @@ test("built package exposes only the trusted Windows factory, never native/path/
   expect("loadNative" in api).toBe(false);
   expect("nativeCapturePolicy" in api).toBe(false);
   expect("pinImmutableReferenceDatabase" in api).toBe(false);
+  expect("pinRetainedReferenceEntry" in api).toBe(false);
+  expect("pinRetainedRoot" in api).toBe(false);
+  expect("pinRetainedChild" in api).toBe(false);
   expect("referenceValidationPolicyBytes" in api).toBe(false);
 });

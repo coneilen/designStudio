@@ -324,6 +324,7 @@ async function createFixture(
             "Synthetic retained pin refused.",
           );
         return {
+          check: async () => {},
           handle: 1,
           byteLength: stat.size,
           identity: {

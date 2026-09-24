@@ -3,6 +3,35 @@ import { referenceDiagnosticFields, validateContract } from "../src/index.js";
 import { DEFAULT_BUDGETS } from "../src/profile.js";
 
 const artifact = { id: `sha256_${"a".repeat(64)}`, sha256: "a".repeat(64) };
+it("keeps legacy source proof reasons and the additional metadata phase closed", () => {
+  const envelope = {
+    schemaVersion: "1.0",
+    operation: "reference-recovery-plan",
+    projectId: "synthetic",
+    requestId: "original",
+    status: "failed",
+  };
+  for (const reason of ["source-proof-invalid", "source-metadata-invalid"])
+    expect(
+      validateContract("NativeReferenceRecoveryPlanEnvelope", {
+        ...envelope,
+        reason,
+      }).success,
+    ).toBe(true);
+  for (const detail of [
+    { reason: "native ACL text" },
+    { reason: "source-metadata-invalid", path: "private" },
+    { reason: "source-metadata-invalid", sid: "private" },
+    { reason: "source-metadata-invalid", acl: "private" },
+  ])
+    expect(
+      validateContract("NativeReferenceRecoveryPlanEnvelope", {
+        ...envelope,
+        ...detail,
+      }).success,
+    ).toBe(false);
+});
+
 it("keeps retained-byte plans closed and distinct from recovered acquisition receipts", () => {
   const stage = {
     role: "evidence",

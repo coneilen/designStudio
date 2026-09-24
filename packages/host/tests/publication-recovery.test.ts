@@ -231,6 +231,7 @@ it.each([
           const pinId = ++sequence;
           let closed = false;
           return {
+            check: async () => {},
             identity: {
               path: filename,
               volume: stat.dev,

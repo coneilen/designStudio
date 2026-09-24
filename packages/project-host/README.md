@@ -8,6 +8,38 @@ deny-egress, zero calls/publications, and unchanged 30-second/25 MiB/raster
 limits. All four older policy files/digests and namespaces remain immutable;
 v1-v5 leases and structural objects cannot acquire this capability.
 
+Retained artifact/output reads alone use a separate native root/child lease
+brand. Current project/installation/principal authority supplies the exact
+registered root, never a CLI path or SID. The root keeps the strict protected
+owner/SYSTEM DACL; every intervening directory must have exactly its two
+inherited allow grants (full-control mask, object/container inheritance, no
+propagation exceptions). Unprotected leaves require the same exact inherited
+file profile. Protected file leaves must satisfy the original strict predicate.
+Protected subtrees, extra/foreign/deny/ambiguous ACEs, broken inheritance,
+reparse points, aliases and multiply linked files are refused, not repaired.
+Root, parent and leaf read pins deny write/delete sharing and remain owned
+through body reads, final inventory, decoder join and proof assembly. Fresh
+authority and full-chain native owner/DACL/identity checks bracket body reads.
+Ordinary `pinRead`/`inspect`, installation/helper/runtime, manifest and immutable
+database admission still require their original protected control profiles.
+This host-created-descendant compatibility fix changes no policy JSON or any
+of the five policy hashes, rights, byte limits, namespaces or installed releases;
+the ACL predicate itself is source/inventory-bound, not a new hashed policy field.
+
+`installation-native.test.ts` includes a cold-native retained-validation driver
+which runs exactly the realistic application lineage/PNG case using real native
+protected roots, actual host stage/publication and production descendant pins.
+Its **new 60-second driver watchdog** covers cold startup, fixture history and
+joined child closure; it does not increase the 30-second production operation,
+the existing 60-second application fixture, or any older test's timeout.
+The driver uses the owned-probe abort/actual-close path, bounded output and a
+minimal child environment. Its test-only `DESIGN_STUDIO_SYNTHETIC_RETAINED_NATIVE`
+mode is not read by production code and cannot select a private path.
+The exact existing native-file partition and ordinary portable run are unchanged.
+The child independently asserts 5,698,575 physical bytes + 29 EOF reservations
+= 5,698,604 charged private bytes, zero network/provider/vault use and no pins
+remaining; ordinary strict reads of those inherited descendants still deny.
+
 The native work owner pins the canonical main database and parent directory
 for read with write/delete sharing denied. It rejects any WAL, SHM or rollback
 journal before/after admission, including empty companions. Current installation,

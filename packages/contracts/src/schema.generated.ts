@@ -5211,6 +5211,7 @@ export const foundationSchema = {
             "authority-denied",
             "ineligible-job",
             "job-changed",
+            "source-metadata-invalid",
             "source-proof-invalid",
             "inventory-invalid",
             "evidence-invalid",

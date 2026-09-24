@@ -19,6 +19,7 @@ import {
   authorizeOperation,
   HostBoundaryError,
   ProjectFileSystem,
+  WINDOWS_PUBLICATION_PROFILE,
 } from "@design-studio/host";
 import { JobService } from "@design-studio/jobs";
 import type { CaptureProject, CaptureWork } from "@design-studio/project-host";
@@ -39,6 +40,8 @@ import { nativeCapturePolicy } from "../../project-host/dist/capture-authority.j
 import { CAPTURE_DIAGNOSTIC_POLICY_SHA256 } from "../../project-host/src/capture-diagnostic-profile.js";
 import { CAPTURE_POLICY_SHA256 } from "../../project-host/src/capture-profile.js";
 import { CAPTURE_REFERENCE_POLICY_SHA256 } from "../../project-host/src/capture-reference-profile.js";
+import { loadNative, type ReadLease } from "../../project-host/src/native.js";
+import { pinRetainedReferenceEntry } from "../../project-host/src/reference-validation-entry.js";
 import { REFERENCE_VALIDATION_POLICY_SHA256 } from "../../project-host/src/reference-validation-profile.js";
 import { initializeImmutableSqlite } from "../../storage/dist/immutable-sqlite.js";
 import { rewriteSyntheticRetainedEvidence } from "../../storage/tests/capture-recovery-corruption.js";
@@ -115,6 +118,8 @@ afterEach(async () => {
   }
 });
 const origin = "https://figma-alpha-api.s3.us-west-2.amazonaws.com";
+const nativeRetainedMode =
+  process.env.DESIGN_STUDIO_SYNTHETIC_RETAINED_NATIVE === "1";
 function required<T>(value: T | undefined): T {
   if (value === undefined) throw new Error("Missing synthetic evidence");
   return value;
@@ -132,14 +137,22 @@ async function fixture(
     diagnostic?: boolean;
   } = {},
 ) {
+  const nativeMode = nativeRetainedMode;
+  const native = nativeMode ? await loadNative() : undefined;
+  const sid = native?.principal();
+  const retainedPins = new Set<ReadLease>();
+  let nativeAdmissions = 0;
+  let strictDenials = 0;
   initializeImmutableSqlite(
     path.resolve(
       ".tools\\sqlite-prebuild\\build\\Release\\better_sqlite3.node",
     ),
   );
   const root = await mkdtemp(path.join(tmpdir(), "reference-synthetic-"));
-  for (const name of ["artifacts", "outputs"])
-    await mkdir(path.join(root, name));
+  for (const name of ["artifacts", "outputs"]) {
+    if (native && sid) native.createDirectory(path.join(root, name), sid);
+    else await mkdir(path.join(root, name));
+  }
   const project = {
     projectId: "project_synthetic",
     artifactRootId: "artifacts_synthetic",
@@ -179,7 +192,9 @@ async function fixture(
   vi.spyOn(ProjectFileSystem, "create").mockImplementation((o) =>
     create({
       ...o,
-      publicationProfile: "portable-atomic",
+      publicationProfile: nativeMode
+        ? WINDOWS_PUBLICATION_PROFILE
+        : "portable-atomic",
       reserveRead: (bytes, context) => {
         const event: (typeof reads)[number] = { bytes, allowed: false };
         reads.push(event);
@@ -262,11 +277,49 @@ async function fixture(
             pinReferenceValidationEntry: async (
               rootId: string,
               relative: string,
+              directory: boolean,
             ) => {
               const rootPath =
                 rootId === project.artifactRootId
                   ? project.paths.artifacts
                   : project.paths.outputs;
+              if (native && sid) {
+                if (
+                  rootId !== project.artifactRootId &&
+                  rootId !== `outputs_${project.projectId}`
+                )
+                  throw new Error(
+                    "Synthetic native root is outside the fixture.",
+                  );
+                if (relative !== "") {
+                  expect(() =>
+                    native.pinRead(
+                      path.join(rootPath, ...relative.split("/")),
+                      directory,
+                      sid,
+                    ),
+                  ).toThrow(/protected/);
+                  strictDenials++;
+                }
+                const pin = await pinRetainedReferenceEntry({
+                  root: rootPath,
+                  relative,
+                  directory,
+                  sid,
+                  retainedPins,
+                  authorize: async () => {
+                    if (!current || !admitted)
+                      throw new HostBoundaryError(
+                        "FORBIDDEN",
+                        "Synthetic native authority revoked.",
+                      );
+                    const strictRoot = native.inspect(rootPath, true, sid);
+                    strictRoot.close();
+                  },
+                });
+                nativeAdmissions++;
+                return pin;
+              }
               const filename = path.join(rootPath, ...relative.split("/"));
               const stat = await lstat(filename);
               if (
@@ -289,6 +342,7 @@ async function fixture(
                   file: String(stat.ino),
                 },
                 byteLength: stat.size,
+                check: async () => {},
                 read: () => {
                   throw new Error("Synthetic pin does not read bodies");
                 },
@@ -410,6 +464,7 @@ async function fixture(
   cleanups.push(async () => {
     await validation?.close();
     await runtime.close();
+    expect(retainedPins.size).toBe(0);
     await rm(root, { recursive: true, force: true });
   });
   const capture = await initial.execute(
@@ -508,7 +563,13 @@ async function fixture(
       failInventoryPinClose = true;
     },
     get readPins() {
-      return readPins;
+      return nativeMode ? retainedPins.size : readPins;
+    },
+    get nativeAdmissions() {
+      return nativeAdmissions;
+    },
+    get strictDenials() {
+      return strictDenials;
     },
     validateRetained: async (
       expectedJob: string,
@@ -1046,7 +1107,7 @@ it("validates actual published-only retained bytes offline without rewriting the
   expect(f.ready).not.toHaveBeenCalled();
 });
 
-it("validates stage-only realistic source and PNG under the unchanged physical read budget including closure", async () => {
+it(`validates stage-only realistic source and PNG under the unchanged physical read budget including closure${nativeRetainedMode ? " [native]" : ""}`, async () => {
   const f = await fixture({
     diagnostic: true,
     nodeBytes: 2400000,
@@ -1119,6 +1180,40 @@ it("validates stage-only realistic source and PNG under the unchanged physical r
       "physical": 5698575,
     }
   `);
+  if (nativeRetainedMode) {
+    expect(f.nativeAdmissions).toBeGreaterThan(29);
+    expect(f.strictDenials).toBeGreaterThan(29);
+    console.log(
+      "retained-native-history: real native pins; strict inherited denial; private=5698604; physical=5698575; eof=29; network=0; pins=0",
+    );
+  }
+});
+
+it("distinguishes initial source metadata denial from later lineage proof without exposing native details", async () => {
+  const { f, expectedJob } = await interruptedValidationFixture();
+  const metadata = vi
+    .spyOn(LocalStore.prototype, "referenceJobMetadata")
+    .mockRejectedValueOnce(
+      new HostBoundaryError(
+        "ACTION_REQUIRED",
+        "Synthetic private metadata guard detail",
+      ),
+    );
+  try {
+    const result = await f.validateRetained(expectedJob);
+    expect(result).toMatchObject({
+      status: "failed",
+      reason: "source-metadata-invalid",
+      error: { code: "ACTION_REQUIRED" },
+      inputAccounting: { privateBytes: 0, networkBytes: 0, phase: "proof" },
+    });
+    expect(result.value).toBeUndefined();
+    expect(JSON.stringify(result)).not.toContain(
+      "Synthetic private metadata guard detail",
+    );
+  } finally {
+    metadata.mockRestore();
+  }
 });
 
 async function interruptedValidationFixture() {

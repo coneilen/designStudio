@@ -595,7 +595,7 @@ export async function openNativeReferenceValidation(project: CaptureProject) {
           return reader;
         };
         let proof = await issue(ids.approval, [ids.original, ids.job]);
-        reason = "source-proof-invalid";
+        reason = "source-metadata-invalid";
         const predecessorMetadata = unwrap(
           await db.referenceJobMetadata(ids.job, proof.context),
         );

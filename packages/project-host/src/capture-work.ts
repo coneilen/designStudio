@@ -1,4 +1,3 @@
-import path from "node:path";
 import type {
   AuthorizationContext,
   CredentialStore,
@@ -34,8 +33,9 @@ import {
   assertReferenceValidationInstallation,
 } from "./installation.js";
 import { digest } from "./installation-manifest.js";
-import { loadNative, type ReadLease, refuse } from "./native.js";
+import { type ReadLease, refuse } from "./native.js";
 import { pinImmutableReferenceDatabase } from "./reference-validation-database.js";
+import { pinRetainedReferenceEntry } from "./reference-validation-entry.js";
 import { REFERENCE_VALIDATION_POLICY_SHA256 } from "./reference-validation-profile.js";
 
 export interface CaptureWork {
@@ -66,7 +66,7 @@ export interface CaptureWork {
     rootId: string,
     relative: string,
     directory: boolean,
-  ): Promise<ReadLease>;
+  ): Promise<ReadLease & { check(): Promise<void> }>;
   isCurrent(): boolean;
   attestDatabase(
     filename: string,
@@ -206,45 +206,19 @@ export function acquireCaptureWork(project: CaptureProject): CaptureWork {
           : rootId === `outputs_${project.projectId}`
             ? project.paths.outputs
             : undefined;
-      const parts = relative.split("/");
-      if (
-        !root ||
-        (relative !== "" &&
-          (parts.length > 2 ||
-            parts.some(
-              (part) =>
-                !/^[A-Za-z0-9_.-]{1,120}$/.test(part) ||
-                part === "." ||
-                part === ".." ||
-                /[. ]$/.test(part),
-            )))
-      )
+      if (!root)
         refuse("Retained validation path is outside the admitted roots.");
-      const native = await loadNative();
-      const pin = native.pinRead(
-        path.join(root, ...parts),
+      return pinRetainedReferenceEntry({
+        root,
+        relative,
         directory,
-        owner.sid,
-      );
-      retainedPins.add(pin);
-      const closePin = () => {
-        pin.close();
-        retainedPins.delete(pin);
-      };
-      try {
-        await current();
-        assertReferenceValidationInstallation(owner.installation);
-        return Object.freeze({
-          handle: pin.handle,
-          identity: pin.identity,
-          byteLength: pin.byteLength,
-          read: pin.read.bind(pin),
-          close: closePin,
-        });
-      } catch (error) {
-        closePin();
-        throw error;
-      }
+        sid: owner.sid,
+        retainedPins,
+        authorize: async () => {
+          await current();
+          assertReferenceValidationInstallation(owner.installation);
+        },
+      });
     },
     async attestDatabase(
       filename: string,

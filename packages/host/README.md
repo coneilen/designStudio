@@ -19,6 +19,11 @@ including failures before an inspection result can be returned.
 Source reads in this composition retain their native pins and verified identity
 until `closeRetainedProofReads`; final inventory must match those identities.
 Cleanup attempts all independent closures, retaining failed ones for retry.
+The retained pin provider must supply an async `check` which revalidates current
+authority and the held native root/parent/leaf chain. Source and target body
+reads call it before allocation and after reading, with operation guards; failure
+zeros any allocated body. The native v6 provider admits only the exact rooted
+inherited owner/SYSTEM profile, while ordinary control-file pins stay strict.
 
 `authorizeOperation(context, scope, authority)` throws `HostBoundaryError` with
 a contract `ErrorCode`. `Authority` is `(AuthorizationContext) => boolean` and
