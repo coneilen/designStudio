@@ -1,7 +1,11 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
 import Database from "better-sqlite3";
 import { immutableDatabaseUri } from "./immutable-sqlite.js";
+import {
+  readRecoveryRecords,
+  referenceMetadataDigest,
+} from "./reference-recovery.js";
 import { StorageError, type StorageOptions } from "./types.js";
 
 const applicationId = 0x44535431;
@@ -45,6 +49,14 @@ export async function openDatabase(
     artifactRootId: options.artifactRootId,
     permissionScope: options.permissionScope,
   });
+  if (options.referenceRecovery?.writer) {
+    if (options.access === "read-only")
+      throw new StorageError(
+        "AUTHORIZATION_CHANGED",
+        "Immutable reader cannot carry write admission.",
+      );
+    await options.referenceRecovery.writer.beforeOpen();
+  }
   if (options.access === "read-only") {
     if (!options.readonlySnapshot)
       throw new StorageError(
@@ -76,7 +88,11 @@ export async function openDatabase(
     }
     const version = db.pragma("user_version", { simple: true });
     const app = db.pragma("application_id", { simple: true });
-    if (options.access === "read-only" && version !== 4)
+    if (
+      options.access === "read-only" &&
+      version !== 4 &&
+      !(version === 5 && options.referenceRecovery)
+    )
       throw new StorageError(
         "SCHEMA_INCOMPATIBLE",
         "Read-only inspection requires an existing current schema.",
@@ -90,7 +106,11 @@ export async function openDatabase(
       (version === 0 && (tables.length !== 0 || app !== 0)) ||
       (version !== 0 &&
         (app !== applicationId ||
-          (version !== 1 && version !== 2 && version !== 3 && version !== 4)))
+          (version !== 1 &&
+            version !== 2 &&
+            version !== 3 &&
+            version !== 4 &&
+            version !== 5)))
     ) {
       throw new StorageError(
         "SCHEMA_INCOMPATIBLE",
@@ -115,6 +135,26 @@ export async function openDatabase(
     }
     if (db.pragma("integrity_check", { simple: true }) !== "ok")
       throw new StorageError("INTEGRITY", "SQLite integrity check failed.");
+    if (options.referenceRecovery?.writer) {
+      if (version !== 4 && version !== 5)
+        throw new StorageError(
+          "SCHEMA_INCOMPATIBLE",
+          "Offline recovery requires schema 4 or 5.",
+        );
+      const digest = (value: unknown) =>
+        createHash("sha256")
+          .update(options.canonicalBytes(value))
+          .digest("hex");
+      if (
+        referenceMetadataDigest(db, digest) !==
+          options.referenceRecovery.writer.metadataSha256 ||
+        version !== options.referenceRecovery.writer.schema ||
+        digest(readRecoveryRecords(db, digest)) !==
+          options.referenceRecovery.writer.controlSha256
+      )
+        throw new StorageError("CONFLICT", "Recovery writer preimage changed.");
+      await options.referenceRecovery.writer.check();
+    }
     if (options.access !== "read-only") {
       db.pragma("journal_mode = WAL");
       db.pragma("synchronous = FULL");

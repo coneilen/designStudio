@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import {
   type ApprovalContext,
@@ -40,10 +40,31 @@ import { storedResource, storedStage } from "./job-codec.js";
 import type { JobRepository, JobSubmission } from "./job-types.js";
 import { type JobCommitHooks, StoredJobs } from "./jobs.js";
 import {
+  referenceStateForBackup,
+  restoredReferenceArchive,
+  validateRecoverySnapshot,
+  validateReferenceRowProjection,
+} from "./reference-archive.js";
+import {
+  projectRecoveryState,
+  type ReferenceRecoveryEvent,
+  type ReferenceRecoveryRecord,
+  type ReferenceRecoveryReservation,
+  readRecoveryRecords,
+  readReferenceRows,
+  recoveryOutputs,
+  referenceConversionId,
+  referenceMetadataDigest,
+  referenceRecoveryHead,
+  referenceRecoverySchema,
+  validateRecoveryRecord,
+} from "./reference-recovery.js";
+import {
   type BackupMetadata,
   type LogicalArtifactBinding,
   type ProjectBackup,
   type RecoveryReport,
+  type ReferenceDatabaseBackupProof,
   type RetentionPin,
   type RevisionCommit,
   StorageError,
@@ -62,6 +83,7 @@ export {
 } from "./capture-recovery.js";
 export { JOB_LIMITS as JOB_STORAGE_LIMITS } from "./job-codec.js";
 export * from "./job-types.js";
+export * from "./reference-recovery.js";
 export * from "./types.js";
 
 const hash = (bytes: Uint8Array) =>
@@ -347,6 +369,7 @@ export class LocalStore implements ArtifactStore {
     context: OperationContext,
     operation: "read" | "write",
     action: (context: OperationContext) => Promise<T>,
+    mutation?: "reference" | "restore" | "maintenance",
   ): Promise<Outcome<T>> {
     const identity = {
       projectId: context.projectId,
@@ -365,6 +388,34 @@ export class LocalStore implements ArtifactStore {
         this.inputBytes = 0;
         this.startedAt = context.clock.now();
         await this.guard(context, operation);
+        if (
+          operation === "write" &&
+          this.db.pragma("user_version", { simple: true }) === 5
+        ) {
+          const records = readRecoveryRecords(this.db, (v) => this.digest(v));
+          this.validateReferenceControls(records, context);
+          if (!mutation)
+            throw new StorageError(
+              "ACTION_REQUIRED",
+              "Schema 5 preserves its recovery baseline; ordinary mutations require a separately reviewed version-aware operation.",
+            );
+          if (
+            mutation === "reference" &&
+            (records.length !== 1 ||
+              records[0]?.archive ||
+              !records.some(
+                (r) =>
+                  context.jobId === r.reservation.binding.recoveryId ||
+                  (r.events[7]?.receipt &&
+                    context.jobId ===
+                      referenceConversionId(r, (v) => this.digest(v))),
+              ))
+          )
+            throw new StorageError(
+              "ACTION_REQUIRED",
+              "Only the existing single recovery and its explicit conversion may mutate this project.",
+            );
+        }
         const result = await action(context);
         this.checkAuthorization(context);
         return this.success(result, context);
@@ -726,6 +777,459 @@ export class LocalStore implements ArtifactStore {
     return this.snapshot(outputs, context, "write", (snapshot) =>
       this.commitInternal(snapshot, context),
     );
+  }
+  checkOrdinaryWrite(context: OperationContext) {
+    return this.run(context, "write", async () => ({ allowed: true as const }));
+  }
+  referenceRecoverySnapshot(context: OperationContext) {
+    return this.run(context, "read", async (context) => {
+      await this.referenceConfiguration().authorize(context);
+      const records = readRecoveryRecords(this.db, (v) => this.digest(v));
+      this.validateReferenceControls(records, context);
+      return {
+        schema: this.db.pragma("user_version", { simple: true }) as 4 | 5,
+        metadataSha256: referenceMetadataDigest(this.db, (v) => this.digest(v)),
+        records,
+        preimages: records.map((record) => ({
+          id: record.reservation.binding.recoveryId,
+          metadataSha256: referenceMetadataDigest(
+            this.db,
+            (v) => this.digest(v),
+            [record],
+          ),
+        })),
+      };
+    });
+  }
+  private referenceConfiguration() {
+    const config = this.options.referenceRecovery;
+    if (!config)
+      throw new StorageError(
+        "AUTHORIZATION_CHANGED",
+        "Offline recovery admission is absent.",
+      );
+    return config;
+  }
+  private offlineRecord(id: string) {
+    return (
+      readRecoveryRecords(this.db, (v) => this.digest(v)).find(
+        (r) => r.reservation.binding.recoveryId === id,
+      ) ?? null
+    );
+  }
+  private validateReferenceControls(
+    records = readRecoveryRecords(this.db, (v) => this.digest(v)),
+    context?: OperationContext,
+  ) {
+    if (!records.length) return;
+    const state = this.recoveryState();
+    const rows = readReferenceRows(this.db);
+    for (const record of records) {
+      if (context) this.checkpoint(context);
+      validateRecoverySnapshot(record, state, rows, (v) => this.digest(v));
+    }
+  }
+  private offlinePreimage(record: ReferenceRecoveryRecord) {
+    const digest = (v: unknown) => this.digest(v);
+    if (
+      digest(projectRecoveryState(this.recoveryState(), record, digest)) !==
+        record.reservation.binding.stateSha256 ||
+      referenceMetadataDigest(this.db, digest, [record]) !==
+        record.reservation.binding.metadataSha256
+    )
+      throw new StorageError(
+        "CONFLICT",
+        "Immutable offline recovery preimage changed.",
+      );
+  }
+  private offlineIdentity(
+    record: ReferenceRecoveryRecord,
+    context: OperationContext,
+  ) {
+    const binding = record.reservation.binding;
+    if (
+      record.archive ||
+      context.jobId !== binding.recoveryId ||
+      context.requestId !== binding.recoveryId ||
+      context.projectId !== binding.projectId ||
+      context.authorization.actorId !== binding.actorId ||
+      this.options.permissionScope !== binding.permissionScope ||
+      this.options.artifactRootId !== binding.artifactRootId
+    )
+      throw new StorageError(
+        "AUTHORIZATION_CHANGED",
+        "Offline recovery owner changed.",
+      );
+  }
+  private appendOffline(
+    record: ReferenceRecoveryRecord,
+    event: Omit<ReferenceRecoveryEvent, "sequence" | "previousSha256">,
+  ) {
+    const current = this.offlineRecord(record.reservation.binding.recoveryId);
+    if (
+      !current ||
+      current.archive ||
+      this.digest(current) !== this.digest(record)
+    )
+      throw new StorageError(
+        "CONFLICT",
+        "Offline recovery event head changed.",
+      );
+    const entry: ReferenceRecoveryEvent = {
+      sequence: record.events.length + 1,
+      previousSha256: referenceRecoveryHead(record, (v) => this.digest(v)),
+      ...event,
+    };
+    const next = validateRecoveryRecord(
+      {
+        reservation: record.reservation,
+        events: [...record.events, entry],
+      },
+      (v) => this.digest(v),
+    );
+    this.db
+      .prepare("INSERT INTO reference_recovery_events VALUES (?,?,?)")
+      .run(
+        record.reservation.binding.recoveryId,
+        entry.sequence,
+        JSON.stringify(entry),
+      );
+    return next;
+  }
+  reserveReferenceRecovery(
+    input: ReferenceRecoveryReservation,
+    context: OperationContext,
+  ) {
+    return this.snapshot(input, context, "write", (reservation) =>
+      this.run(
+        context,
+        "write",
+        async (context) => {
+          const config = this.referenceConfiguration();
+          const proposed = validateRecoveryRecord(
+            { reservation, events: [] },
+            (v) => this.digest(v),
+          );
+          this.offlineIdentity(proposed, context);
+          await config.authorize(context);
+          if (!config.writer)
+            throw new StorageError(
+              "AUTHORIZATION_CHANGED",
+              "Offline reservation needs explicit writer admission.",
+            );
+          const prior = this.offlineRecord(reservation.binding.recoveryId);
+          if (prior) {
+            if (prior.archive)
+              throw new StorageError(
+                "ACTION_REQUIRED",
+                "Archived recovery has no write authority.",
+              );
+            if (this.digest(prior.reservation) !== this.digest(reservation))
+              throw new StorageError(
+                "CONFLICT",
+                "Original diagnostic already owns a different recovery binding.",
+              );
+            await config.verify(prior, this.recoveryState(), context);
+            this.offlinePreimage(prior);
+            return prior;
+          }
+          this.offlinePreimage(proposed);
+          await config.verify(proposed, this.recoveryState(), context);
+          let backupProof: ReferenceDatabaseBackupProof | undefined;
+          try {
+            if (this.db.pragma("user_version", { simple: true }) === 4) {
+              if (
+                !config.prepareBackup ||
+                !config.pinBackup ||
+                !config.publishBackup
+              )
+                throw new StorageError(
+                  "ACTION_REQUIRED",
+                  "Recovery migration requires durable native backup.",
+                );
+              const backup = `${this.options.databasePath}.migration-v4-${randomUUID()}.sqlite`;
+              const pending = `${backup}.pending`;
+              await config.prepareBackup(pending);
+              await this.db.backup(pending);
+              backupProof = await config.pinBackup(pending);
+              const schema = this.db
+                .prepare(
+                  "SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name",
+                )
+                .all();
+              const verifyCopy = (filename: string) => {
+                const copy = new Database(filename, {
+                  nativeBinding: this.options.nativeBinding,
+                  readonly: true,
+                  fileMustExist: true,
+                });
+                try {
+                  if (
+                    copy.pragma("integrity_check", { simple: true }) !== "ok" ||
+                    copy.pragma("user_version", { simple: true }) !== 4 ||
+                    copy.pragma("application_id", { simple: true }) !==
+                      0x44535431 ||
+                    !this.equal(
+                      copy
+                        .prepare(
+                          "SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name",
+                        )
+                        .all(),
+                      schema,
+                    ) ||
+                    referenceMetadataDigest(copy, (v) => this.digest(v)) !==
+                      reservation.binding.metadataSha256
+                  )
+                    throw new StorageError(
+                      "INTEGRITY",
+                      "Offline migration backup differs from preimage.",
+                    );
+                } finally {
+                  copy.close();
+                }
+              };
+              verifyCopy(pending);
+              await backupProof.check();
+              const expected = {
+                sha256: backupProof.sha256,
+                byteLength: backupProof.byteLength,
+              };
+              backupProof = await config.publishBackup(
+                pending,
+                backup,
+                backupProof,
+              );
+              if (
+                backupProof.sha256 !== expected.sha256 ||
+                backupProof.byteLength !== expected.byteLength
+              )
+                throw new StorageError(
+                  "INTEGRITY",
+                  "Published backup differs from verified bytes.",
+                );
+              verifyCopy(backup);
+              await backupProof.check();
+            }
+            await config.writer.check();
+            await config.authorize(context);
+            this.checkpoint(context);
+            this.db.transaction(() => {
+              this.offlinePreimage(proposed);
+              if (this.db.pragma("user_version", { simple: true }) === 4) {
+                this.db.exec(referenceRecoverySchema);
+                this.db.pragma("user_version = 5");
+                this.options.fault?.("migration-before-commit");
+              }
+              this.db
+                .prepare("INSERT INTO reference_recoveries VALUES (?,?,?,NULL)")
+                .run(
+                  reservation.binding.originalJobId,
+                  reservation.binding.recoveryId,
+                  JSON.stringify(reservation),
+                );
+              this.checkpoint(context);
+            })();
+            this.options.fault?.("reference-after-reserve");
+            return proposed;
+          } finally {
+            backupProof?.close();
+          }
+        },
+        "reference",
+      ),
+    );
+  }
+  stageReferenceRecovery(
+    id: string,
+    expectedHead: string,
+    bytes: Uint8Array,
+    context: OperationContext,
+  ) {
+    if (bytes.byteLength > context.budget.maxInputBytes)
+      return this.run(context, "write", async () => {
+        throw new StorageError(
+          "LIMIT",
+          "Offline stage exceeds its input bound.",
+        );
+      });
+    const owned = Uint8Array.from(bytes);
+    return this.run(
+      context,
+      "write",
+      async (context) => {
+        try {
+          const record = this.offlineRecord(id);
+          if (!record)
+            throw new StorageError(
+              "NOT_FOUND",
+              "Offline reservation is absent.",
+            );
+          if (record.archive)
+            throw new StorageError(
+              "ACTION_REQUIRED",
+              "Archived recovery has no commit authority.",
+            );
+          this.offlineIdentity(record, context);
+          const config = this.referenceConfiguration();
+          await config.authorize(context);
+          await config.verify(record, this.recoveryState(), context);
+          if (
+            referenceRecoveryHead(record, (v) => this.digest(v)) !==
+              expectedHead ||
+            ![0, 2, 4].includes(record.events.length)
+          )
+            throw new StorageError(
+              "CONFLICT",
+              "Offline stage intent requires exact event head.",
+            );
+          const expected = recoveryOutputs(record.reservation)[
+            record.events.length / 2
+          ];
+          if (
+            !expected ||
+            expected.sha256 !== hash(owned) ||
+            expected.byteLength !== owned.byteLength
+          )
+            throw new StorageError(
+              "INTEGRITY",
+              "Offline staged bytes differ from reservation.",
+            );
+          const intent = this.db.transaction(() => {
+            this.offlinePreimage(record);
+            return this.appendOffline(record, { kind: "stage-intent" });
+          })();
+          this.options.fault?.("reference-after-intent");
+          const staged = await this.stageBytes(owned, context);
+          if (!this.equal(staged.artifact, expected))
+            throw new StorageError(
+              "INTEGRITY",
+              "Offline staging changed identity.",
+            );
+          this.options.fault?.("reference-after-stage");
+          const next = this.db.transaction(() => {
+            this.offlinePreimage(intent);
+            return this.appendOffline(intent, { kind: "staged", staged });
+          })();
+          return { record: next, staged };
+        } finally {
+          owned.fill(0);
+        }
+      },
+      "reference",
+    ).finally(() => owned.fill(0));
+  }
+  commitReferenceRecovery(
+    id: string,
+    expectedHead: string,
+    context: OperationContext,
+  ) {
+    return this.commitInternal([], context, undefined, undefined, undefined, {
+      id,
+      expectedHead,
+    });
+  }
+  beginReferenceConversion(
+    id: string,
+    expectedHead: string,
+    outputs: Artifact[],
+    context: OperationContext,
+  ) {
+    const expectedOutputs = structuredClone(outputs);
+    return this.run(
+      context,
+      "write",
+      async (context) => {
+        const record = this.offlineRecord(id);
+        if (
+          record?.events.length !== 8 ||
+          record.archive ||
+          referenceRecoveryHead(record, (v) => this.digest(v)) !==
+            expectedHead ||
+          context.jobId !==
+            referenceConversionId(record, (v) => this.digest(v)) ||
+          context.requestId !== context.jobId ||
+          context.authorization.actorId !== record.reservation.binding.actorId
+        )
+          throw new StorageError(
+            "CONFLICT",
+            "Reference conversion requires exact committed recovery.",
+          );
+        const config = this.referenceConfiguration();
+        await config.authorize(context);
+        await config.verify(record, this.recoveryState(), context);
+        return this.db.transaction(() => {
+          this.offlinePreimage(record);
+          return this.appendOffline(record, {
+            kind: "conversion-intent",
+            outputs: expectedOutputs,
+          });
+        })();
+      },
+      "reference",
+    );
+  }
+  commitReferenceConversion(
+    id: string,
+    outputs: StagedArtifact[],
+    context: OperationContext,
+  ) {
+    return this.commitInternal(
+      structuredClone(outputs),
+      context,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { id },
+    );
+  }
+  stageReferenceConversion(
+    id: string,
+    bytes: Uint8Array,
+    context: OperationContext,
+  ) {
+    if (bytes.byteLength > context.budget.maxInputBytes)
+      return this.run(
+        context,
+        "write",
+        async () => {
+          throw new StorageError(
+            "LIMIT",
+            "Conversion stage exceeds its bound.",
+          );
+        },
+        "reference",
+      );
+    const owned = Uint8Array.from(bytes);
+    return this.run(
+      context,
+      "write",
+      async (context) => {
+        const record = this.offlineRecord(id);
+        if (
+          !record ||
+          record.archive ||
+          record.events.length !== 9 ||
+          context.jobId !==
+            referenceConversionId(record, (v) => this.digest(v)) ||
+          context.requestId !== context.jobId ||
+          !record.events[8]?.outputs?.some(
+            (a) =>
+              a.sha256 === hash(owned) && a.byteLength === owned.byteLength,
+          )
+        )
+          throw new StorageError(
+            "CONFLICT",
+            "Conversion bytes lack their exact admitted intent.",
+          );
+        const config = this.referenceConfiguration();
+        await config.authorize(context);
+        await config.verify(record, this.recoveryState(), context);
+        this.offlinePreimage(record);
+        return this.stageBytes(owned, context);
+      },
+      "reference",
+    ).finally(() => owned.fill(0));
   }
   private recoveryConfiguration() {
     const config = this.options.captureRecovery;
@@ -1207,349 +1711,509 @@ export class LocalStore implements ArtifactStore {
     request?: RevisionCommit,
     hooks?: JobCommitHooks,
     recovery?: CaptureRecoveryAuthorization,
+    offlineRequest?: { id: string; expectedHead: string },
+    conversionRequest?: { id: string },
   ): Promise<Outcome<CommitReceipt>> {
-    return this.run(context, "write", async (context) => {
-      if (!context.jobId)
-        throw new StorageError(
-          "INVALID_INPUT",
-          "Committing requires a jobId for a durable receipt.",
-        );
-      await this.guard(context, "write", "job", context.jobId);
-      let recoveryBaseline: string | undefined;
-      if (recovery) {
-        check("CaptureRecoveryAuthorization", recovery);
-        const key = recoveryKey(recovery.proposal.originalJobId);
-        if (
-          context.jobId !== key ||
-          context.requestId !== key ||
-          context.projectId !== recovery.proposal.projectId ||
-          context.authorization.actorId !== recovery.proposal.actorId ||
-          outputs.length !== 1 ||
-          outputs[0]?.artifact.sha256 !== this.digest(recovery) ||
-          this.options.canonicalBytes(recovery).byteLength > 65536
-        )
+    return this.run(
+      context,
+      "write",
+      async (context) => {
+        if (!context.jobId)
           throw new StorageError(
-            "CONFLICT",
-            "Capture recovery commit is not byte/owner bound.",
+            "INVALID_INPUT",
+            "Committing requires a jobId for a durable receipt.",
           );
-        const state = this.recoveryState();
-        recoveryBaseline = this.digest(state);
-        await this.recoveryConfiguration().authorize(context);
-        if (
-          await this.findCaptureRecovery(recovery.proposal.nextJobId, context)
-        )
-          throw new StorageError(
-            "CONFLICT",
-            "Capture recovery next request is already reserved.",
+        await this.guard(context, "write", "job", context.jobId);
+        let offline: ReferenceRecoveryRecord | undefined;
+        let conversion: ReferenceRecoveryRecord | undefined;
+        if (offlineRequest || conversionRequest) {
+          await this.referenceConfiguration().authorize(context);
+          const record = this.offlineRecord(
+            offlineRequest?.id ?? conversionRequest?.id ?? "",
           );
-        await this.recoveryConfiguration().verifyIssuance(
-          recovery,
-          state,
-          context,
-        );
-      } else if (
-        this.options.captureRecovery &&
-        isCaptureRecoveryKey(context.requestId)
-      ) {
-        throw new StorageError(
-          "AUTHORIZATION_CHANGED",
-          "Capture recovery control identity is reserved.",
-        );
-      }
-      const checkRecovery = () => {
-        if (
-          recoveryBaseline !== undefined &&
-          this.digest(this.recoveryState()) !== recoveryBaseline
-        )
-          throw new StorageError(
-            "CONFLICT",
-            "Capture recovery state changed before commit.",
-          );
-      };
-      if (hooks) await hooks.prepare(context);
-      else this.jobStore.assertLegacyAvailable(context);
-      const suppliedBindings =
-        hooks?.payload.referenceBindings ?? request?.referenceBindings;
-      const bound =
-        suppliedBindings === undefined ? [] : bindings(suppliedBindings);
-      if (bound.length && !this.options.authorizeArtifactBinding)
-        throw new StorageError(
-          "AUTHORIZATION_CHANGED",
-          "Logical bindings require trusted composition.",
-        );
-      this.bindingStore.bounds();
-      this.bindingStore.admit(bound);
-      this.boundRows("receipts");
-      for (const item of bound) {
-        await this.guard(context, "write", "artifact", item.reference.id);
-        await this.guard(context, "read", "artifact", item.artifact.id);
-        await this.guard(context, "write", "artifact", item.artifact.id);
-        this.bindingStore.validate(item);
-        if (
-          !outputs.some(
-            (output) =>
-              output.artifact.id === item.artifact.id &&
-              output.artifact.sha256 === item.artifact.sha256,
-          ) ||
-          outputs.some((output) => output.artifact.id === item.reference.id) ||
-          bound.some((other) => other.reference.id === item.artifact.id)
-        )
-          throw new StorageError(
-            "CONFLICT",
-            "Bindings require exact declared physical outputs without chains/shadowing.",
-          );
-      }
-      if (outputs.length > 20000)
-        throw new StorageError("LIMIT", "Too many outputs.");
-      for (const output of outputs) {
-        check("Artifact", output.artifact);
-        check("StableId", output.stagingId);
-      }
-      if (
-        new Set(outputs.map((item) => item.artifact.id)).size !== outputs.length
-      )
-        throw new StorageError("INVALID_INPUT", "Duplicate output IDs.");
-      const total = outputs.reduce(
-        (sum, item) => sum + item.artifact.byteLength,
-        0,
-      );
-      if (total > context.budget.maxOutputBytes)
-        throw new StorageError("LIMIT", "Commit exceeds output byte budget.");
-      if (request) {
-        check("Revision", request.revision);
-        check("StableId", request.branch);
-        if (request.base !== null) check("ExpectedBase", request.base);
-        await this.guard(context, "write", "design", request.revision.designId);
-      }
-      const payload = {
-        outputs: outputs
-          .map((item) => item.artifact)
-          .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
-        revision: request
-          ? {
-              revision: request.revision,
-              base: request.base,
-              branch: request.branch,
-            }
-          : null,
-        ...(hooks
-          ? {
-              completion: {
-                outputState: hooks.payload.outputState,
-                diagnosticIds: hooks.payload.diagnosticIds,
-                comparisonVerdict: hooks.payload.comparisonVerdict ?? null,
-                sourceStatus: hooks.payload.sourceStatus ?? null,
-              },
-            }
-          : {}),
-        ...(suppliedBindings !== undefined ? { referenceBindings: bound } : {}),
-      };
-      const digest = this.digest(payload);
-      const receiptScope =
-        hooks?.scope() ?? this.scope(context.requestId, context);
-      const priorRow = this.db
-        .prepare<[string], { data: string }>(
-          "SELECT data FROM receipts WHERE scope=?",
-        )
-        .get(receiptScope);
-      const prior = priorRow
-        ? parseContract("CommitReceipt", priorRow.data, "json")
-        : null;
-      if (prior) {
-        if (
-          prior.idempotency.payloadSha256 !== digest ||
-          prior.jobId !== context.jobId
-        )
-          throw new StorageError(
-            "CONFLICT",
-            "Idempotency key was reused with a different payload/job.",
-          );
-        for (const artifact of prior.outputs)
-          await this.read(artifact, context);
-        for (const item of bound) this.artifact(item.reference);
-        return prior;
-      }
-      hooks?.check(context);
-      if (request) await this.validateRevision(request, context);
-      const published: Artifact[] = [];
-      const needsPublicationBarrier: Artifact[] = [];
-      for (const staged of outputs) {
-        this.checkpoint(context);
-        const existing = this.row("artifacts", staged.artifact.id, "Artifact");
-        if (existing && !this.equal(existing, staged.artifact))
-          throw new StorageError("CONFLICT", "Artifact identity is immutable.");
-        // Only an exact output in a trusted committed transaction can carry
-        // historical barrier assurance across a host-process restart.
-        const reusable = existing && this.hasCommittedPublication(existing);
-        const artifact = reusable
-          ? existing
-          : unwrap(await this.options.fileSystem.publish(staged, context));
-        if (!this.equal(artifact, staged.artifact))
-          throw new StorageError(
-            "INTEGRITY",
-            "Publication changed artifact identity.",
-          );
-        await this.read(artifact, context);
-        published.push(artifact);
-        if (!reusable) needsPublicationBarrier.push(artifact);
-      }
-      for (const item of bound) {
-        const artifact = published.find(
-          (artifact) => artifact.id === item.artifact.id,
-        );
-        if (!artifact)
-          throw new StorageError("INTEGRITY", "Binding output is missing.");
-        const authorize = this.options.authorizeArtifactBinding;
-        if (!authorize)
-          throw new StorageError(
-            "AUTHORIZATION_CHANGED",
-            "Binding authority is unavailable.",
-          );
-        const bytes = await this.read(artifact, context);
-        await authorize(
-          structuredClone(item),
-          {
-            artifact: structuredClone(artifact),
-            bytes: Uint8Array.from(bytes),
-          },
-          context,
-        );
-        this.checkpoint(context);
-      }
-      if (request) {
-        const evidence = [];
-        for (const reference of revisionRefs(request.revision)) {
-          const proposed = bound.find(
-            (item) => bindingKey(item.reference) === bindingKey(reference),
-          );
-          const target = proposed?.artifact ?? reference;
-          if (!published.some((artifact) => artifact.id === reference.id))
-            await this.authorizeReference(reference, context, true);
-          if (proposed)
-            await this.guard(context, "read", "artifact", proposed.artifact.id);
-          const artifact =
-            published.find(
-              (item) => item.id === target.id && item.sha256 === target.sha256,
-            ) ?? this.artifact(reference);
-          evidence.push({
-            reference,
-            artifact,
-            bytes: await this.read(artifact, context),
-          });
-        }
-        await this.options.verifyRevision(request.revision, context, evidence);
-      }
-      if (hooks) {
-        const evidence = [];
-        for (const artifact of published)
-          evidence.push({
-            artifact,
-            bytes: await this.read(artifact, context),
-          });
-        await hooks.verify(evidence, context);
-      }
-      if (needsPublicationBarrier.length !== 0)
-        await this.options.ensurePublicationDurable(
-          needsPublicationBarrier,
-          context,
-        );
-      await this.guard(context, "write");
-      await this.guard(context, "write", "job", context.jobId);
-      if (request)
-        await this.guard(context, "write", "design", request.revision.designId);
-      if (hooks)
-        for (const artifact of published)
-          await this.guard(context, "write", "artifact", artifact.id);
-      for (const item of bound) {
-        await this.guard(context, "write", "artifact", item.reference.id);
-        await this.guard(context, "read", "artifact", item.artifact.id);
-        await this.guard(context, "write", "artifact", item.artifact.id);
-      }
-      this.checkpoint(context);
-      const receipt: CommitReceipt = {
-        schemaVersion: "1.0",
-        id: `receipt-${this.digest([receiptScope, digest])}`,
-        projectId: this.options.projectId,
-        jobId: context.jobId,
-        idempotency: {
-          key: context.requestId,
-          projectId: this.options.projectId,
-          actorId: hooks?.actorId() ?? context.authorization.actorId,
-          operation: hooks?.operation() ?? "write",
-          payloadSha256: digest,
-        },
-        committedAt: new Date(context.clock.now()).toISOString(),
-        outputs: published,
-        integrity: "verified",
-        publication: "atomic",
-      };
-      check("CommitReceipt", receipt);
-      this.checkpoint(context);
-      this.db.transaction(() => {
-        checkRecovery();
-        if (hooks) hooks.check(context);
-        else this.jobStore.assertLegacyAvailable(context);
-        for (const artifact of published) this.putArtifact(artifact);
-        // Receipt and bindings precede reference resolution, but share the same rollback boundary.
-        this.db
-          .prepare("INSERT INTO receipts VALUES (?,?)")
-          .run(receiptScope, JSON.stringify(receipt));
-        this.refs("job", receipt.id, published);
-        for (const item of bound)
-          this.bindingStore.put({ ...item, receiptId: receipt.id });
-        if (hooks) this.options.fault?.("job-after-artifacts");
-        if (request) {
-          this.checkBase(request);
-          const rev = request.revision;
-          this.db
-            .prepare("INSERT INTO revisions VALUES (?,?,?)")
-            .run(rev.id, rev.designId, JSON.stringify(rev));
-          this.refs("revision", rev.id, revisionRefs(rev));
-          this.db
-            .prepare(
-              "INSERT INTO heads VALUES (?,?,?) ON CONFLICT(design,branch) DO UPDATE SET revision=excluded.revision",
+          if (!record)
+            throw new StorageError(
+              "NOT_FOUND",
+              "Offline reservation is absent.",
+            );
+          if (record.archive)
+            throw new StorageError(
+              "ACTION_REQUIRED",
+              "Archived recovery has no commit authority.",
+            );
+          if (offlineRequest) {
+            if (
+              referenceRecoveryHead(record, (v) => this.digest(v)) !==
+              offlineRequest.expectedHead
             )
-            .run(rev.designId, request.branch, rev.id);
+              throw new StorageError(
+                "CONFLICT",
+                "Offline publication event head changed.",
+              );
+            offline = record;
+            outputs = record.events.flatMap((e) =>
+              e.kind === "staged" && e.staged ? [e.staged] : [],
+            );
+          } else {
+            if (record.events.length !== 9)
+              throw new StorageError(
+                "CONFLICT",
+                "Reference conversion intent is absent.",
+              );
+            conversion = record;
+          }
         }
-        if (hooks) this.options.fault?.("job-after-receipt");
-        this.options.fault?.("before-commit");
-        this.checkpoint(context);
-        if (hooks) {
-          hooks.check(context);
-          hooks.finish(receipt, context);
-        }
-        if (recovery) {
-          const output = published[0];
+        if (offline) {
+          this.offlineIdentity(offline, context);
+          const config = this.referenceConfiguration();
+          await config.authorize(context);
+          await config.verify(offline, this.recoveryState(), context);
+          this.offlinePreimage(offline);
           if (
-            !output ||
-            this.digest(
-              originalRecoveryState(
-                this.recoveryState(),
-                {
-                  authorization: recovery,
-                  artifact: { id: output.id, sha256: output.sha256 },
-                  receipt,
-                },
-                (value) => this.digest(value),
-              ),
-            ) !== recovery.storageSha256
+            offline.events.length !== 6 ||
+            !this.equal(
+              outputs.map((s) => s.artifact),
+              recoveryOutputs(offline.reservation),
+            )
           )
             throw new StorageError(
               "CONFLICT",
-              "Capture recovery state changed during commit.",
+              "Offline publication lacks exact staged outputs.",
+            );
+          const stagedRecord = offline;
+          offline = this.db.transaction(() =>
+            this.appendOffline(stagedRecord, { kind: "publication-intent" }),
+          )();
+          this.options.fault?.("reference-after-intent");
+        } else if (context.jobId.startsWith("offline_reference_")) {
+          throw new StorageError(
+            "AUTHORIZATION_CHANGED",
+            "Offline receipt identity is reserved.",
+          );
+        }
+        if (conversion) {
+          if (
+            context.jobId !==
+              referenceConversionId(conversion, (v) => this.digest(v)) ||
+            context.requestId !== context.jobId ||
+            outputs.length < 6 ||
+            outputs.length > 7 ||
+            !this.equal(
+              outputs.map((s) => s.artifact),
+              conversion.events[8]?.outputs,
+            )
+          )
+            throw new StorageError(
+              "CONFLICT",
+              "Reference conversion identity changed.",
+            );
+          const config = this.referenceConfiguration();
+          await config.authorize(context);
+          await config.verify(conversion, this.recoveryState(), context);
+          this.offlinePreimage(conversion);
+        } else if (context.jobId.startsWith("convert_reference_")) {
+          throw new StorageError(
+            "AUTHORIZATION_CHANGED",
+            "Reference conversion receipt identity is reserved.",
+          );
+        }
+        let recoveryBaseline: string | undefined;
+        if (recovery) {
+          check("CaptureRecoveryAuthorization", recovery);
+          const key = recoveryKey(recovery.proposal.originalJobId);
+          if (
+            context.jobId !== key ||
+            context.requestId !== key ||
+            context.projectId !== recovery.proposal.projectId ||
+            context.authorization.actorId !== recovery.proposal.actorId ||
+            outputs.length !== 1 ||
+            outputs[0]?.artifact.sha256 !== this.digest(recovery) ||
+            this.options.canonicalBytes(recovery).byteLength > 65536
+          )
+            throw new StorageError(
+              "CONFLICT",
+              "Capture recovery commit is not byte/owner bound.",
+            );
+          const state = this.recoveryState();
+          recoveryBaseline = this.digest(state);
+          await this.recoveryConfiguration().authorize(context);
+          if (
+            await this.findCaptureRecovery(recovery.proposal.nextJobId, context)
+          )
+            throw new StorageError(
+              "CONFLICT",
+              "Capture recovery next request is already reserved.",
+            );
+          await this.recoveryConfiguration().verifyIssuance(
+            recovery,
+            state,
+            context,
+          );
+        } else if (
+          this.options.captureRecovery &&
+          isCaptureRecoveryKey(context.requestId)
+        ) {
+          throw new StorageError(
+            "AUTHORIZATION_CHANGED",
+            "Capture recovery control identity is reserved.",
+          );
+        }
+        const checkRecovery = () => {
+          if (
+            recoveryBaseline !== undefined &&
+            this.digest(this.recoveryState()) !== recoveryBaseline
+          )
+            throw new StorageError(
+              "CONFLICT",
+              "Capture recovery state changed before commit.",
+            );
+        };
+        if (hooks) await hooks.prepare(context);
+        else this.jobStore.assertLegacyAvailable(context);
+        const suppliedBindings =
+          hooks?.payload.referenceBindings ?? request?.referenceBindings;
+        const bound =
+          suppliedBindings === undefined ? [] : bindings(suppliedBindings);
+        if (bound.length && !this.options.authorizeArtifactBinding)
+          throw new StorageError(
+            "AUTHORIZATION_CHANGED",
+            "Logical bindings require trusted composition.",
+          );
+        this.bindingStore.bounds();
+        this.bindingStore.admit(bound);
+        this.boundRows("receipts");
+        for (const item of bound) {
+          await this.guard(context, "write", "artifact", item.reference.id);
+          await this.guard(context, "read", "artifact", item.artifact.id);
+          await this.guard(context, "write", "artifact", item.artifact.id);
+          this.bindingStore.validate(item);
+          if (
+            !outputs.some(
+              (output) =>
+                output.artifact.id === item.artifact.id &&
+                output.artifact.sha256 === item.artifact.sha256,
+            ) ||
+            outputs.some(
+              (output) => output.artifact.id === item.reference.id,
+            ) ||
+            bound.some((other) => other.reference.id === item.artifact.id)
+          )
+            throw new StorageError(
+              "CONFLICT",
+              "Bindings require exact declared physical outputs without chains/shadowing.",
             );
         }
-        for (const item of bound) this.artifact(item.reference);
+        if (outputs.length > 20000)
+          throw new StorageError("LIMIT", "Too many outputs.");
+        for (const output of outputs) {
+          check("Artifact", output.artifact);
+          check("StableId", output.stagingId);
+        }
+        if (
+          new Set(outputs.map((item) => item.artifact.id)).size !==
+          outputs.length
+        )
+          throw new StorageError("INVALID_INPUT", "Duplicate output IDs.");
+        const total = outputs.reduce(
+          (sum, item) => sum + item.artifact.byteLength,
+          0,
+        );
+        if (total > context.budget.maxOutputBytes)
+          throw new StorageError("LIMIT", "Commit exceeds output byte budget.");
+        if (request) {
+          check("Revision", request.revision);
+          check("StableId", request.branch);
+          if (request.base !== null) check("ExpectedBase", request.base);
+          await this.guard(
+            context,
+            "write",
+            "design",
+            request.revision.designId,
+          );
+        }
+        const payload = {
+          outputs: outputs
+            .map((item) => item.artifact)
+            .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
+          revision: request
+            ? {
+                revision: request.revision,
+                base: request.base,
+                branch: request.branch,
+              }
+            : null,
+          ...(hooks
+            ? {
+                completion: {
+                  outputState: hooks.payload.outputState,
+                  diagnosticIds: hooks.payload.diagnosticIds,
+                  comparisonVerdict: hooks.payload.comparisonVerdict ?? null,
+                  sourceStatus: hooks.payload.sourceStatus ?? null,
+                },
+              }
+            : {}),
+          ...(suppliedBindings !== undefined
+            ? { referenceBindings: bound }
+            : {}),
+        };
+        const digest = this.digest(payload);
+        const receiptScope =
+          hooks?.scope() ?? this.scope(context.requestId, context);
+        const priorRow = this.db
+          .prepare<[string], { data: string }>(
+            "SELECT data FROM receipts WHERE scope=?",
+          )
+          .get(receiptScope);
+        const prior = priorRow
+          ? parseContract("CommitReceipt", priorRow.data, "json")
+          : null;
+        if (prior) {
+          if (
+            prior.idempotency.payloadSha256 !== digest ||
+            prior.jobId !== context.jobId
+          )
+            throw new StorageError(
+              "CONFLICT",
+              "Idempotency key was reused with a different payload/job.",
+            );
+          for (const artifact of prior.outputs)
+            await this.read(artifact, context);
+          for (const item of bound) this.artifact(item.reference);
+          return prior;
+        }
+        hooks?.check(context);
+        if (request) await this.validateRevision(request, context);
+        const published: Artifact[] = [];
+        const needsPublicationBarrier: Artifact[] = [];
+        for (const staged of outputs) {
+          this.checkpoint(context);
+          const existing = this.row(
+            "artifacts",
+            staged.artifact.id,
+            "Artifact",
+          );
+          if (existing && !this.equal(existing, staged.artifact))
+            throw new StorageError(
+              "CONFLICT",
+              "Artifact identity is immutable.",
+            );
+          // Only an exact output in a trusted committed transaction can carry
+          // historical barrier assurance across a host-process restart.
+          const reusable = existing && this.hasCommittedPublication(existing);
+          const artifact = reusable
+            ? existing
+            : unwrap(await this.options.fileSystem.publish(staged, context));
+          if (!this.equal(artifact, staged.artifact))
+            throw new StorageError(
+              "INTEGRITY",
+              "Publication changed artifact identity.",
+            );
+          await this.read(artifact, context);
+          published.push(artifact);
+          if (!reusable) needsPublicationBarrier.push(artifact);
+        }
+        for (const item of bound) {
+          const artifact = published.find(
+            (artifact) => artifact.id === item.artifact.id,
+          );
+          if (!artifact)
+            throw new StorageError("INTEGRITY", "Binding output is missing.");
+          const authorize = this.options.authorizeArtifactBinding;
+          if (!authorize)
+            throw new StorageError(
+              "AUTHORIZATION_CHANGED",
+              "Binding authority is unavailable.",
+            );
+          const bytes = await this.read(artifact, context);
+          await authorize(
+            structuredClone(item),
+            {
+              artifact: structuredClone(artifact),
+              bytes: Uint8Array.from(bytes),
+            },
+            context,
+          );
+          this.checkpoint(context);
+        }
+        if (request) {
+          const evidence = [];
+          for (const reference of revisionRefs(request.revision)) {
+            const proposed = bound.find(
+              (item) => bindingKey(item.reference) === bindingKey(reference),
+            );
+            const target = proposed?.artifact ?? reference;
+            if (!published.some((artifact) => artifact.id === reference.id))
+              await this.authorizeReference(reference, context, true);
+            if (proposed)
+              await this.guard(
+                context,
+                "read",
+                "artifact",
+                proposed.artifact.id,
+              );
+            const artifact =
+              published.find(
+                (item) =>
+                  item.id === target.id && item.sha256 === target.sha256,
+              ) ?? this.artifact(reference);
+            evidence.push({
+              reference,
+              artifact,
+              bytes: await this.read(artifact, context),
+            });
+          }
+          await this.options.verifyRevision(
+            request.revision,
+            context,
+            evidence,
+          );
+        }
+        if (hooks) {
+          const evidence = [];
+          for (const artifact of published)
+            evidence.push({
+              artifact,
+              bytes: await this.read(artifact, context),
+            });
+          await hooks.verify(evidence, context);
+        }
+        if (needsPublicationBarrier.length !== 0)
+          await this.options.ensurePublicationDurable(
+            needsPublicationBarrier,
+            context,
+          );
+        if (offline || conversion)
+          await this.referenceConfiguration().verify(
+            offline ?? conversion ?? null,
+            this.recoveryState(),
+            context,
+          );
+        await this.guard(context, "write");
+        await this.guard(context, "write", "job", context.jobId);
+        if (request)
+          await this.guard(
+            context,
+            "write",
+            "design",
+            request.revision.designId,
+          );
+        if (hooks)
+          for (const artifact of published)
+            await this.guard(context, "write", "artifact", artifact.id);
+        for (const item of bound) {
+          await this.guard(context, "write", "artifact", item.reference.id);
+          await this.guard(context, "read", "artifact", item.artifact.id);
+          await this.guard(context, "write", "artifact", item.artifact.id);
+        }
         this.checkpoint(context);
-      })();
-      // Once committed, cancellation or a lost response cannot undo the receipt.
-      try {
-        this.options.fault?.("after-commit");
-      } catch {
+        const receipt: CommitReceipt = {
+          schemaVersion: "1.0",
+          id: `receipt-${this.digest([receiptScope, digest])}`,
+          projectId: this.options.projectId,
+          jobId: context.jobId,
+          idempotency: {
+            key: context.requestId,
+            projectId: this.options.projectId,
+            actorId: hooks?.actorId() ?? context.authorization.actorId,
+            operation: hooks?.operation() ?? "write",
+            payloadSha256: digest,
+          },
+          committedAt: new Date(context.clock.now()).toISOString(),
+          outputs: published,
+          integrity: "verified",
+          publication: "atomic",
+        };
+        check("CommitReceipt", receipt);
+        this.checkpoint(context);
+        this.db.transaction(() => {
+          if (offline) this.offlinePreimage(offline);
+          if (conversion) this.offlinePreimage(conversion);
+          const introduced = published
+            .filter((a) => !this.row("artifacts", a.id, "Artifact"))
+            .map((a) => a.id);
+          checkRecovery();
+          if (hooks) hooks.check(context);
+          else this.jobStore.assertLegacyAvailable(context);
+          for (const artifact of published) this.putArtifact(artifact);
+          // Receipt and bindings precede reference resolution, but share the same rollback boundary.
+          this.db
+            .prepare("INSERT INTO receipts VALUES (?,?)")
+            .run(receiptScope, JSON.stringify(receipt));
+          this.refs("job", receipt.id, published);
+          if (offline) {
+            this.options.fault?.("reference-before-receipt");
+            const completed = this.appendOffline(offline, {
+              kind: "committed",
+              receipt,
+              introduced,
+            });
+            this.offlinePreimage(completed);
+          }
+          if (conversion) {
+            const completed = this.appendOffline(conversion, {
+              kind: "conversion-committed",
+              receipt,
+              introduced,
+            });
+            this.offlinePreimage(completed);
+          }
+          for (const item of bound)
+            this.bindingStore.put({ ...item, receiptId: receipt.id });
+          if (hooks) this.options.fault?.("job-after-artifacts");
+          if (request) {
+            this.checkBase(request);
+            const rev = request.revision;
+            this.db
+              .prepare("INSERT INTO revisions VALUES (?,?,?)")
+              .run(rev.id, rev.designId, JSON.stringify(rev));
+            this.refs("revision", rev.id, revisionRefs(rev));
+            this.db
+              .prepare(
+                "INSERT INTO heads VALUES (?,?,?) ON CONFLICT(design,branch) DO UPDATE SET revision=excluded.revision",
+              )
+              .run(rev.designId, request.branch, rev.id);
+          }
+          if (hooks) this.options.fault?.("job-after-receipt");
+          this.options.fault?.("before-commit");
+          this.checkpoint(context);
+          if (hooks) {
+            hooks.check(context);
+            hooks.finish(receipt, context);
+          }
+          if (recovery) {
+            const output = published[0];
+            if (
+              !output ||
+              this.digest(
+                originalRecoveryState(
+                  this.recoveryState(),
+                  {
+                    authorization: recovery,
+                    artifact: { id: output.id, sha256: output.sha256 },
+                    receipt,
+                  },
+                  (value) => this.digest(value),
+                ),
+              ) !== recovery.storageSha256
+            )
+              throw new StorageError(
+                "CONFLICT",
+                "Capture recovery state changed during commit.",
+              );
+          }
+          for (const item of bound) this.artifact(item.reference);
+          this.checkpoint(context);
+        })();
+        // Once committed, cancellation or a lost response cannot undo the receipt.
+        try {
+          this.options.fault?.("after-commit");
+        } catch {
+          return receipt;
+        }
         return receipt;
-      }
-      return receipt;
-    });
+      },
+      offlineRequest || conversionRequest ? "reference" : undefined,
+    );
   }
   private hasCommittedPublication(artifact: Artifact): boolean {
     this.boundRows("receipts");
@@ -1998,84 +2662,138 @@ export class LocalStore implements ArtifactStore {
     return inventory;
   }
   recover(context: OperationContext): Promise<Outcome<RecoveryReport>> {
-    return this.run(context, "write", async (context) => {
-      const inventory = await this.inventory(context);
-      const artifacts = this.allArtifacts();
-      const missingOrCorrupt: string[] = [];
-      const stagedRetained: string[] = [];
-      let stagedDiscarded = 0;
-      for (const artifact of artifacts) {
-        try {
-          await this.read(artifact, context);
-        } catch (error) {
+    return this.run(
+      context,
+      "write",
+      async (context) => {
+        this.validateReferenceControls(undefined, context);
+        const inventory = await this.inventory(context);
+        const artifacts = this.allArtifacts();
+        const missingOrCorrupt: string[] = [];
+        const stagedRetained: string[] = [];
+        let stagedDiscarded = 0;
+        for (const artifact of artifacts) {
+          try {
+            await this.read(artifact, context);
+          } catch (error) {
+            this.checkpoint(context);
+            if (error instanceof StorageError && error.code === "LIMIT")
+              throw error;
+            missingOrCorrupt.push(artifact.id);
+          }
+        }
+        for (const id of inventory.stagedIds) {
           this.checkpoint(context);
-          if (error instanceof StorageError && error.code === "LIMIT")
-            throw error;
-          missingOrCorrupt.push(artifact.id);
+          const offline = readRecoveryRecords(this.db, (v) => this.digest(v));
+          if (
+            offline.some(
+              (r) =>
+                !["committed", "conversion-committed"].includes(
+                  r.events.at(-1)?.kind ?? "",
+                ) || r.events.some((e) => e.staged?.stagingId === id),
+            )
+          ) {
+            stagedRetained.push(id);
+            continue;
+          }
+          const canDiscard = await this.options.canDiscardStage(id, context);
+          this.checkpoint(context);
+          if (
+            !canDiscard ||
+            (this.jobStore.knownStage(id) &&
+              !this.jobStore.discardable(id, context.jobId))
+          ) {
+            stagedRetained.push(id);
+            continue;
+          }
+          if (this.db.pragma("user_version", { simple: true }) === 5)
+            throw new StorageError(
+              "ACTION_REQUIRED",
+              "Schema 5 maintenance cannot discard its preserved baseline.",
+            );
+          unwrap(await this.options.fileSystem.discard(id, context));
+          stagedDiscarded++;
         }
-      }
-      for (const id of inventory.stagedIds) {
-        this.checkpoint(context);
-        const canDiscard = await this.options.canDiscardStage(id, context);
-        this.checkpoint(context);
-        if (
-          !canDiscard ||
-          (this.jobStore.knownStage(id) &&
-            !this.jobStore.discardable(id, context.jobId))
-        ) {
-          stagedRetained.push(id);
-          continue;
-        }
-        unwrap(await this.options.fileSystem.discard(id, context));
-        stagedDiscarded++;
-      }
-      const known = new Set(artifacts.map((artifact) => artifact.path));
-      return {
-        stagedDiscarded,
-        stagedRetained,
-        orphanPaths: inventory.publishedArtifacts
-          .map((artifact) => artifact.path)
-          .filter((path) => !known.has(path)),
-        missingOrCorrupt,
-      };
-    });
+        const known = new Set(artifacts.map((artifact) => artifact.path));
+        return {
+          stagedDiscarded,
+          stagedRetained,
+          orphanPaths: inventory.publishedArtifacts
+            .map((artifact) => artifact.path)
+            .filter((path) => !known.has(path)),
+          missingOrCorrupt,
+        };
+      },
+      "maintenance",
+    );
   }
   collectGarbage(
     context: OperationContext,
   ): Promise<Outcome<{ deleted: string[] }>> {
-    return this.run(context, "write", async (context) => {
-      await this.options.authorizeRetention("collect", null, context);
-      const inventory = await this.inventory(context);
-      const protectedPaths = new Set(
-        this.db
-          .prepare<[], { path: string }>(
-            "SELECT DISTINCT a.path FROM artifacts a JOIN artifact_refs r ON a.id=r.artifact_id",
+    return this.run(
+      context,
+      "write",
+      async (context) => {
+        await this.options.authorizeRetention("collect", null, context);
+        this.validateReferenceControls(undefined, context);
+        const inventory = await this.inventory(context);
+        const protectedPaths = new Set(
+          this.db
+            .prepare<[], { path: string }>(
+              "SELECT DISTINCT a.path FROM artifacts a JOIN artifact_refs r ON a.id=r.artifact_id",
+            )
+            .all()
+            .map((row) => row.path),
+        );
+        for (const path of this.jobStore.protectedStagePaths())
+          protectedPaths.add(path);
+        for (const record of readRecoveryRecords(this.db, (v) =>
+          this.digest(v),
+        ))
+          for (const artifact of [
+            ...recoveryOutputs(record.reservation),
+            ...(record.events[8]?.outputs ?? []),
+          ])
+            protectedPaths.add(artifact.path);
+        if (
+          readRecoveryRecords(this.db, (v) => this.digest(v)).some(
+            (r) => r.events.at(-1)?.kind === "conversion-intent",
           )
-          .all()
-          .map((row) => row.path),
-      );
-      for (const path of this.jobStore.protectedStagePaths())
-        protectedPaths.add(path);
-      const deleted: string[] = [];
-      for (const artifact of inventory.publishedArtifacts) {
-        const path = artifact.path;
-        if (protectedPaths.has(path)) continue;
-        this.checkpoint(context);
-        this.db
-          .prepare(
-            "DELETE FROM artifacts WHERE path=? AND id NOT IN (SELECT artifact_id FROM artifact_refs)",
-          )
-          .run(path);
-        this.removal = { artifact, context };
-        try {
-          await this.options.maintenance.removeBlob(artifact, context);
-        } finally {
-          this.removal = undefined;
+        )
+          throw new StorageError(
+            "ACTION_REQUIRED",
+            "Unclosed reference conversion protects its uncommitted outputs.",
+          );
+        const deleted: string[] = [];
+        if (
+          this.db.pragma("user_version", { simple: true }) === 5 &&
+          inventory.publishedArtifacts.some((a) => !protectedPaths.has(a.path))
+        )
+          throw new StorageError(
+            "ACTION_REQUIRED",
+            "Schema 5 maintenance requires separate review before deleting any bytes.",
+          );
+        for (const artifact of inventory.publishedArtifacts) {
+          const path = artifact.path;
+          if (protectedPaths.has(path)) continue;
+          this.checkpoint(context);
+          this.db
+            .prepare(
+              "DELETE FROM artifacts WHERE path=? AND id NOT IN (SELECT artifact_id FROM artifact_refs)",
+            )
+            .run(path);
+          this.removal = { artifact, context };
+          try {
+            await this.options.maintenance.removeBlob(artifact, context);
+          } finally {
+            this.removal = undefined;
+          }
+          deleted.push(path);
         }
-        deleted.push(path);
-      }
-      return { deleted };
-    });
+        return { deleted };
+      },
+      "maintenance",
+    );
   }
   /** Synchronous host callback only: never enqueue from inside a maintenance operation. */
   hasRemovalReservation(
@@ -2113,7 +2831,15 @@ export class LocalStore implements ArtifactStore {
         "Too many branch heads for one bounded backup.",
       );
     return {
-      storageVersion: 4,
+      ...(this.db.pragma("user_version", { simple: true }) === 5
+        ? {
+            storageVersion: 5 as const,
+            referenceRecoveries: readRecoveryRecords(this.db, (v) =>
+              this.digest(v),
+            ),
+            referenceRecoveryRows: readReferenceRows(this.db, true),
+          }
+        : { storageVersion: 4 as const }),
       projectId: this.options.projectId,
       artifacts: this.allArtifacts(),
       revisions: this.db
@@ -2184,7 +2910,7 @@ export class LocalStore implements ArtifactStore {
           await this.guard(context, "read", "artifact", reference.id);
       }
     }
-    if (metadata.storageVersion === 4)
+    if (metadata.storageVersion === 4 || metadata.storageVersion === 5)
       for (const item of metadata.artifactBindings) {
         await this.guard(context, operation, "artifact", item.reference.id);
         await this.guard(context, operation, "artifact", item.artifact.id);
@@ -2194,8 +2920,8 @@ export class LocalStore implements ArtifactStore {
     return this.run(context, "read", async (context) => {
       const metadata = this.metadata();
       await this.authorizeMetadata(metadata, "read", context);
-      this.validateBackupGraph(metadata);
-      if (metadata.storageVersion === 4)
+      this.validateBackupGraph(metadata, context);
+      if (metadata.storageVersion === 4 || metadata.storageVersion === 5)
         for (const item of metadata.artifactBindings)
           this.artifact(item.reference);
       const blobs: ProjectBackup["blobs"] = [];
@@ -2228,216 +2954,340 @@ export class LocalStore implements ArtifactStore {
     context: OperationContext,
   ): Promise<Outcome<{ restored: true }>> {
     const backup = structuredClone(input);
-    return this.run(context, "write", async (context) => {
-      await this.options.authorizeRestore(backup, context);
-      if (
-        this.allArtifacts().length ||
-        this.metadata().revisions.length ||
-        this.metadata().reviews.length ||
-        this.metadata().receipts.length ||
-        this.metadata().pins.length ||
-        this.jobStore.backup().jobs.length ||
-        this.jobStore.backup().jobResources.length ||
-        this.jobStore.backup().jobStages.length ||
-        this.bindingStore.all().length
-      )
-        throw new StorageError(
-          "CONFLICT",
-          "Restore requires a newly provisioned empty store.",
-        );
-      const metadata = backupMetadata(backup.metadata);
-      if (
-        (metadata.storageVersion !== 2 &&
-          metadata.storageVersion !== 3 &&
-          metadata.storageVersion !== 4) ||
-        metadata.projectId !== this.options.projectId
-      )
-        throw new StorageError(
-          "SCHEMA_INCOMPATIBLE",
-          "Backup version/project mismatch.",
-        );
-      if (this.digest(metadata) !== backup.sha256)
-        throw new StorageError("INTEGRITY", "Backup metadata digest mismatch.");
-      const size =
-        this.options.canonicalBytes(metadata).length +
-        backup.blobs.reduce((sum, blob) => sum + blob.bytes.byteLength, 0);
-      if (size > context.budget.maxInputBytes)
-        throw new StorageError("LIMIT", "Backup exceeds input budget.");
-      if (
-        new Set(backup.blobs.map((blob) => blob.sha256)).size !==
-        backup.blobs.length
-      )
-        throw new StorageError("INTEGRITY", "Duplicate backup blob.");
-      for (const blob of backup.blobs)
-        if (hash(blob.bytes) !== blob.sha256)
-          throw new StorageError("INTEGRITY", "Backup blob digest mismatch.");
-      for (const artifact of metadata.artifacts) {
-        check("Artifact", artifact);
-        const blob = backup.blobs.find(
-          (item) => item.sha256 === artifact.sha256,
-        );
+    return this.run(
+      context,
+      "write",
+      async (context) => {
+        await this.options.authorizeRestore(backup, context);
         if (
-          !blob ||
-          blob.bytes.length !== artifact.byteLength ||
-          artifact.path !== blobPath(artifact.sha256)
+          this.allArtifacts().length ||
+          this.metadata().revisions.length ||
+          this.metadata().reviews.length ||
+          this.metadata().receipts.length ||
+          this.metadata().pins.length ||
+          this.jobStore.backup().jobs.length ||
+          this.jobStore.backup().jobResources.length ||
+          this.jobStore.backup().jobStages.length ||
+          this.bindingStore.all().length
+        )
+          throw new StorageError(
+            "CONFLICT",
+            "Restore requires a newly provisioned empty store.",
+          );
+        const metadata = backupMetadata(backup.metadata);
+        if (
+          (metadata.storageVersion !== 2 &&
+            metadata.storageVersion !== 3 &&
+            metadata.storageVersion !== 4 &&
+            metadata.storageVersion !== 5) ||
+          metadata.projectId !== this.options.projectId
+        )
+          throw new StorageError(
+            "SCHEMA_INCOMPATIBLE",
+            "Backup version/project mismatch.",
+          );
+        if (this.digest(metadata) !== backup.sha256)
+          throw new StorageError(
+            "INTEGRITY",
+            "Backup metadata digest mismatch.",
+          );
+        const size =
+          this.options.canonicalBytes(metadata).length +
+          backup.blobs.reduce((sum, blob) => sum + blob.bytes.byteLength, 0);
+        if (size > context.budget.maxInputBytes)
+          throw new StorageError("LIMIT", "Backup exceeds input budget.");
+        if (
+          new Set(backup.blobs.map((blob) => blob.sha256)).size !==
+          backup.blobs.length
+        )
+          throw new StorageError("INTEGRITY", "Duplicate backup blob.");
+        for (const blob of backup.blobs)
+          if (hash(blob.bytes) !== blob.sha256)
+            throw new StorageError("INTEGRITY", "Backup blob digest mismatch.");
+        for (const artifact of metadata.artifacts) {
+          check("Artifact", artifact);
+          const blob = backup.blobs.find(
+            (item) => item.sha256 === artifact.sha256,
+          );
+          if (
+            !blob ||
+            blob.bytes.length !== artifact.byteLength ||
+            artifact.path !== blobPath(artifact.sha256)
+          )
+            throw new StorageError(
+              "INTEGRITY",
+              "Backup artifact bytes are incomplete.",
+            );
+        }
+        if (
+          backup.blobs.some(
+            (blob) =>
+              !metadata.artifacts.some(
+                (artifact) => artifact.sha256 === blob.sha256,
+              ),
+          )
         )
           throw new StorageError(
             "INTEGRITY",
-            "Backup artifact bytes are incomplete.",
+            "Backup contains undeclared bytes.",
           );
-      }
-      if (
-        backup.blobs.some(
-          (blob) =>
-            !metadata.artifacts.some(
-              (artifact) => artifact.sha256 === blob.sha256,
+        this.validateBackupGraph(metadata, context);
+        await this.authorizeMetadata(metadata, "write", context);
+        if (
+          (metadata.storageVersion === 4 || metadata.storageVersion === 5) &&
+          metadata.artifactBindings.length
+        ) {
+          const authorize = this.options.authorizeArtifactBinding;
+          if (!authorize)
+            throw new StorageError(
+              "AUTHORIZATION_CHANGED",
+              "Restoring bindings requires trusted composition.",
+            );
+          for (const item of metadata.artifactBindings) {
+            const artifact = metadata.artifacts.find(
+              (artifact) => artifact.id === item.artifact.id,
+            );
+            const blob = backup.blobs.find(
+              (blob) => blob.sha256 === item.artifact.sha256,
+            );
+            if (!artifact || !blob)
+              throw new StorageError(
+                "INTEGRITY",
+                "Binding restore bytes missing.",
+              );
+            await authorize(
+              structuredClone({
+                reference: item.reference,
+                artifact: item.artifact,
+              }),
+              {
+                artifact: structuredClone(artifact),
+                bytes: Uint8Array.from(blob.bytes),
+              },
+              context,
+            );
+            this.checkpoint(context);
+          }
+        }
+        for (const artifact of metadata.artifacts) {
+          const blob = backup.blobs.find(
+            (item) => item.sha256 === artifact.sha256,
+          );
+          if (!blob)
+            throw new StorageError("INTEGRITY", "Missing backup blob.");
+          const staged = unwrap(
+            await this.options.fileSystem.stage(
+              {
+                artifactRootId: this.options.artifactRootId,
+                path: artifact.path,
+              },
+              blob.bytes,
+              context,
             ),
-        )
+          );
+          if (
+            staged.artifact.sha256 !== artifact.sha256 ||
+            staged.artifact.byteLength !== artifact.byteLength ||
+            staged.artifact.path !== artifact.path
+          )
+            throw new StorageError("INTEGRITY", "Restore staging mismatch.");
+          const published = unwrap(
+            await this.options.fileSystem.publish(staged, context),
+          );
+          if (
+            published.sha256 !== artifact.sha256 ||
+            published.byteLength !== artifact.byteLength ||
+            published.path !== artifact.path
+          )
+            throw new StorageError(
+              "INTEGRITY",
+              "Restore publication mismatch.",
+            );
+          await this.read({ ...artifact, path: published.path }, context);
+        }
+        await this.options.ensurePublicationDurable(
+          metadata.artifacts,
+          context,
+        );
+        if (metadata.storageVersion === 4 || metadata.storageVersion === 5)
+          for (const item of metadata.artifactBindings) {
+            await this.guard(context, "write", "artifact", item.reference.id);
+            await this.guard(context, "read", "artifact", item.artifact.id);
+            await this.guard(context, "write", "artifact", item.artifact.id);
+          }
+        this.checkpoint(context);
+        this.db.transaction(() => {
+          for (const artifact of metadata.artifacts) this.putArtifact(artifact);
+          if (metadata.storageVersion === 4 || metadata.storageVersion === 5)
+            for (const item of metadata.artifactBindings)
+              this.bindingStore.put(item);
+          for (const revision of metadata.revisions) {
+            this.db
+              .prepare("INSERT INTO revisions VALUES (?,?,?)")
+              .run(revision.id, revision.designId, JSON.stringify(revision));
+            this.refs("revision", revision.id, revisionRefs(revision));
+          }
+          for (const head of metadata.heads)
+            this.db
+              .prepare("INSERT INTO heads VALUES (?,?,?)")
+              .run(head.designId, head.branch, head.revisionId);
+          for (const review of metadata.reviews) {
+            this.db
+              .prepare("INSERT INTO reviews VALUES (?,?,?,?,?)")
+              .run(
+                review.event.id,
+                review.event.context.designId,
+                review.event.sequence,
+                review.reference.sha256,
+                JSON.stringify(review.event),
+              );
+            this.refs(
+              "review",
+              review.event.id,
+              approvalRefs(review.event.context),
+            );
+          }
+          for (const receipt of metadata.receipts) {
+            const record =
+              metadata.storageVersion !== 2
+                ? metadata.jobs.find((record) =>
+                    this.jobStore.receiptConsistent(record, receipt),
+                  )
+                : undefined;
+            const scope = record
+              ? this.jobStore.receiptScope(record)
+              : JSON.stringify([
+                  receipt.projectId,
+                  receipt.idempotency.actorId,
+                  "write",
+                  receipt.idempotency.key,
+                ]);
+            this.db
+              .prepare("INSERT INTO receipts VALUES (?,?)")
+              .run(scope, JSON.stringify(receipt));
+            this.refs("job", receipt.id, receipt.outputs);
+          }
+          if (metadata.storageVersion !== 2) this.jobStore.restore(metadata);
+          if (metadata.storageVersion === 5) {
+            this.referenceConfiguration();
+            if (this.db.pragma("user_version", { simple: true }) === 4) {
+              this.db.exec(referenceRecoverySchema);
+              this.db.pragma("user_version = 5");
+            }
+            for (const record of metadata.referenceRecoveries) {
+              const binding = record.reservation.binding;
+              this.db
+                .prepare("INSERT INTO reference_recoveries VALUES (?,?,?,NULL)")
+                .run(
+                  binding.originalJobId,
+                  binding.recoveryId,
+                  JSON.stringify(record.reservation),
+                );
+              for (const event of record.events)
+                this.db
+                  .prepare(
+                    "INSERT INTO reference_recovery_events VALUES (?,?,?)",
+                  )
+                  .run(
+                    binding.recoveryId,
+                    event.sequence,
+                    JSON.stringify(event),
+                  );
+            }
+          }
+          for (const pin of metadata.pins) {
+            this.db
+              .prepare("INSERT INTO pins VALUES (?,?,?)")
+              .run(pin.kind, pin.id, JSON.stringify(pin));
+            this.refs(`pin-${pin.kind}`, pin.id, pin.artifacts);
+          }
+          if (metadata.storageVersion === 5) {
+            const state = this.recoveryState();
+            const rows = readReferenceRows(this.db);
+            for (const source of metadata.referenceRecoveries) {
+              this.checkpoint(context);
+              const archive = restoredReferenceArchive(
+                source,
+                backup.sha256,
+                state,
+                rows,
+                (v) => this.digest(v),
+              );
+              this.db
+                .prepare(
+                  "UPDATE reference_recoveries SET archive=? WHERE id=? AND archive IS NULL",
+                )
+                .run(
+                  JSON.stringify(archive),
+                  source.reservation.binding.recoveryId,
+                );
+            }
+            this.validateReferenceControls(undefined, context);
+          }
+          this.options.fault?.("before-commit");
+          this.checkpoint(context);
+        })();
+        return { restored: true };
+      },
+      "restore",
+    );
+  }
+  private validateBackupGraph(
+    metadata: BackupMetadata,
+    context: OperationContext,
+  ): void {
+    if (metadata.storageVersion === 5) {
+      if (
+        metadata.referenceRecoveries.length < 1 ||
+        metadata.referenceRecoveries.length > 1000
       )
         throw new StorageError(
           "INTEGRITY",
-          "Backup contains undeclared bytes.",
+          "Schema 5 requires its bounded recovery control records.",
         );
-      this.validateBackupGraph(metadata);
-      await this.authorizeMetadata(metadata, "write", context);
-      if (metadata.storageVersion === 4 && metadata.artifactBindings.length) {
-        const authorize = this.options.authorizeArtifactBinding;
-        if (!authorize)
-          throw new StorageError(
-            "AUTHORIZATION_CHANGED",
-            "Restoring bindings requires trusted composition.",
-          );
-        for (const item of metadata.artifactBindings) {
-          const artifact = metadata.artifacts.find(
-            (artifact) => artifact.id === item.artifact.id,
-          );
-          const blob = backup.blobs.find(
-            (blob) => blob.sha256 === item.artifact.sha256,
-          );
-          if (!artifact || !blob)
-            throw new StorageError(
-              "INTEGRITY",
-              "Binding restore bytes missing.",
-            );
-          await authorize(
-            structuredClone({
-              reference: item.reference,
-              artifact: item.artifact,
-            }),
-            {
-              artifact: structuredClone(artifact),
-              bytes: Uint8Array.from(blob.bytes),
-            },
-            context,
-          );
-          this.checkpoint(context);
-        }
-      }
-      for (const artifact of metadata.artifacts) {
-        const blob = backup.blobs.find(
-          (item) => item.sha256 === artifact.sha256,
-        );
-        if (!blob) throw new StorageError("INTEGRITY", "Missing backup blob.");
-        const staged = unwrap(
-          await this.options.fileSystem.stage(
-            {
-              artifactRootId: this.options.artifactRootId,
-              path: artifact.path,
-            },
-            blob.bytes,
-            context,
-          ),
-        );
-        if (
-          staged.artifact.sha256 !== artifact.sha256 ||
-          staged.artifact.byteLength !== artifact.byteLength ||
-          staged.artifact.path !== artifact.path
-        )
-          throw new StorageError("INTEGRITY", "Restore staging mismatch.");
-        const published = unwrap(
-          await this.options.fileSystem.publish(staged, context),
-        );
-        if (
-          published.sha256 !== artifact.sha256 ||
-          published.byteLength !== artifact.byteLength ||
-          published.path !== artifact.path
-        )
-          throw new StorageError("INTEGRITY", "Restore publication mismatch.");
-        await this.read({ ...artifact, path: published.path }, context);
-      }
-      await this.options.ensurePublicationDurable(metadata.artifacts, context);
-      if (metadata.storageVersion === 4)
-        for (const item of metadata.artifactBindings) {
-          await this.guard(context, "write", "artifact", item.reference.id);
-          await this.guard(context, "read", "artifact", item.artifact.id);
-          await this.guard(context, "write", "artifact", item.artifact.id);
-        }
-      this.checkpoint(context);
-      this.db.transaction(() => {
-        for (const artifact of metadata.artifacts) this.putArtifact(artifact);
-        if (metadata.storageVersion === 4)
-          for (const item of metadata.artifactBindings)
-            this.bindingStore.put(item);
-        for (const revision of metadata.revisions) {
-          this.db
-            .prepare("INSERT INTO revisions VALUES (?,?,?)")
-            .run(revision.id, revision.designId, JSON.stringify(revision));
-          this.refs("revision", revision.id, revisionRefs(revision));
-        }
-        for (const head of metadata.heads)
-          this.db
-            .prepare("INSERT INTO heads VALUES (?,?,?)")
-            .run(head.designId, head.branch, head.revisionId);
-        for (const review of metadata.reviews) {
-          this.db
-            .prepare("INSERT INTO reviews VALUES (?,?,?,?,?)")
-            .run(
-              review.event.id,
-              review.event.context.designId,
-              review.event.sequence,
-              review.reference.sha256,
-              JSON.stringify(review.event),
-            );
-          this.refs(
-            "review",
-            review.event.id,
-            approvalRefs(review.event.context),
-          );
-        }
-        for (const receipt of metadata.receipts) {
-          const record =
-            metadata.storageVersion !== 2
-              ? metadata.jobs.find((record) =>
-                  this.jobStore.receiptConsistent(record, receipt),
-                )
-              : undefined;
-          const scope = record
-            ? this.jobStore.receiptScope(record)
-            : JSON.stringify([
-                receipt.projectId,
-                receipt.idempotency.actorId,
-                "write",
-                receipt.idempotency.key,
-              ]);
-          this.db
-            .prepare("INSERT INTO receipts VALUES (?,?)")
-            .run(scope, JSON.stringify(receipt));
-          this.refs("job", receipt.id, receipt.outputs);
-        }
-        if (metadata.storageVersion !== 2) this.jobStore.restore(metadata);
-        for (const pin of metadata.pins) {
-          this.db
-            .prepare("INSERT INTO pins VALUES (?,?,?)")
-            .run(pin.kind, pin.id, JSON.stringify(pin));
-          this.refs(`pin-${pin.kind}`, pin.id, pin.artifacts);
-        }
-        this.options.fault?.("before-commit");
+      const ids = new Set<string>();
+      for (const record of metadata.referenceRecoveries) {
         this.checkpoint(context);
-      })();
-      return { restored: true };
-    });
-  }
-  private validateBackupGraph(metadata: BackupMetadata): void {
+        validateRecoveryRecord(record, (v) => this.digest(v));
+        const binding = record.reservation.binding;
+        if (
+          ids.has(binding.originalJobId) ||
+          binding.projectId !== metadata.projectId ||
+          !metadata.jobs.some((j) => j.job.id === binding.originalJobId)
+        )
+          throw new StorageError(
+            "INTEGRITY",
+            "Backup recovery ownership is invalid.",
+          );
+        ids.add(binding.originalJobId);
+        const receipt = record.events.at(-1)?.receipt;
+        if (
+          receipt &&
+          (!metadata.receipts.some((r) => this.equal(r, receipt)) ||
+            receipt.outputs.some(
+              (a) => !metadata.artifacts.some((b) => this.equal(a, b)),
+            ))
+        )
+          throw new StorageError(
+            "INTEGRITY",
+            "Backup recovery protection is incomplete.",
+          );
+      }
+      for (const receipt of metadata.receipts) {
+        if (
+          /^(offline_reference_|convert_reference_)/.test(
+            receipt.jobId ?? "",
+          ) &&
+          !metadata.referenceRecoveries.some((r) =>
+            r.events.some((e) => e.receipt && this.equal(e.receipt, receipt)),
+          )
+        )
+          throw new StorageError(
+            "INTEGRITY",
+            "Recovery receipt lacks its immutable control journal.",
+          );
+      }
+    }
     const artifacts = new Map(
       metadata.artifacts.map((artifact) => [artifact.id, artifact]),
     );
@@ -2445,7 +3295,9 @@ export class LocalStore implements ArtifactStore {
       metadata.revisions.map((revision) => [revision.id, revision]),
     );
     const bound =
-      metadata.storageVersion === 4 ? metadata.artifactBindings : [];
+      metadata.storageVersion === 4 || metadata.storageVersion === 5
+        ? metadata.artifactBindings
+        : [];
     if (
       bound.length > BINDING_LIMITS.total ||
       new Set(bound.map((item) => bindingKey(item.reference))).size !==
@@ -2663,6 +3515,146 @@ export class LocalStore implements ArtifactStore {
             "INTEGRITY",
             "Stage ownership graph is inconsistent.",
           );
+      }
+    }
+    if (metadata.storageVersion === 5) {
+      const expectedRefs = new Map<
+        string,
+        { kind: string; owner: string; artifactId: string }
+      >();
+      const add = (
+        kind: string,
+        owner: string,
+        references: ArtifactReference[],
+      ) => {
+        for (const reference of references) {
+          const edge = {
+            kind,
+            owner,
+            artifactId: physicalReference(reference).id,
+          };
+          expectedRefs.set(
+            JSON.stringify([edge.kind, edge.owner, edge.artifactId]),
+            edge,
+          );
+        }
+      };
+      for (const revision of metadata.revisions)
+        add("revision", revision.id, revisionRefs(revision));
+      for (const review of metadata.reviews)
+        add("review", review.event.id, approvalRefs(review.event.context));
+      for (const receipt of metadata.receipts)
+        add("job", receipt.id, receipt.outputs);
+      for (const pin of metadata.pins)
+        add(`pin-${pin.kind}`, pin.id, pin.artifacts);
+      for (const job of metadata.jobs)
+        add("job-input", job.job.id, this.jobStore.inputRefs(job));
+      for (const binding of metadata.artifactBindings)
+        add("binding", bindingKey(binding.reference), [binding.artifact]);
+      const scopes = metadata.receipts.map((receipt) => {
+        const record = metadata.jobs.find((j) =>
+          this.jobStore.receiptConsistent(j, receipt),
+        );
+        return record
+          ? this.jobStore.receiptScope(record)
+          : JSON.stringify([
+              receipt.projectId,
+              receipt.idempotency.actorId,
+              "write",
+              receipt.idempotency.key,
+            ]);
+      });
+      const references = [...expectedRefs.values()];
+      const raw = validateReferenceRowProjection(
+        metadata.referenceRecoveryRows,
+        {
+          identity: [
+            {
+              project: metadata.projectId,
+              root: this.options.artifactRootId,
+              permission: this.options.permissionScope,
+            },
+          ],
+          artifacts: metadata.artifacts.map((a) => ({
+            id: a.id,
+            hash: a.sha256,
+            path: a.path,
+            data: a,
+          })),
+          revisions: metadata.revisions.map((r) => ({
+            id: r.id,
+            design: r.designId,
+            data: r,
+          })),
+          heads: metadata.heads.map((h) => ({
+            design: h.designId,
+            branch: h.branch,
+            revision: h.revisionId,
+          })),
+          reviews: metadata.reviews.map((r) => ({
+            id: r.event.id,
+            design: r.event.context.designId,
+            sequence: r.event.sequence,
+            hash: r.reference.sha256,
+            data: r.event,
+          })),
+          receipts: metadata.receipts.map((r, i) => ({
+            scope: scopes[i],
+            data: r,
+          })),
+          pins: metadata.pins.map((p) => ({ kind: p.kind, id: p.id, data: p })),
+          artifact_refs: references.map((r) => ({
+            owner_kind: r.kind,
+            owner_id: r.owner,
+            artifact_id: r.artifactId,
+          })),
+          jobs: metadata.jobs.map((j) => ({
+            id: j.job.id,
+            scope: this.jobStore.receiptScope(j),
+            state: j.job.status,
+            created: j.createdAt,
+            due: j.job.nextEligibleAttempt
+              ? new Date(Date.parse(j.job.nextEligibleAttempt)).toISOString()
+              : null,
+            data: j,
+          })),
+          job_resources: metadata.jobResources.map((r) => ({
+            key: r.key,
+            data: r,
+          })),
+          job_stages: metadata.jobStages.map((s) => ({
+            id: s.stagingId,
+            job: s.jobId,
+            data: s,
+          })),
+          artifact_bindings: metadata.artifactBindings.map((b) => ({
+            logical_id: b.reference.id,
+            hash: b.reference.sha256,
+            artifact_id: b.artifact.id,
+            data: b,
+          })),
+          reference_recoveries: metadata.referenceRecoveries.map((r) => ({
+            original_job: r.reservation.binding.originalJobId,
+            id: r.reservation.binding.recoveryId,
+            data: r.reservation,
+            archive: r.archive ?? null,
+          })),
+          reference_recovery_events: metadata.referenceRecoveries.flatMap((r) =>
+            r.events.map((e) => ({
+              recovery: r.reservation.binding.recoveryId,
+              sequence: e.sequence,
+              data: e,
+            })),
+          ),
+        },
+        (v) => this.digest(v),
+      );
+      const state = referenceStateForBackup(metadata, scopes, references, (v) =>
+        this.digest(v),
+      );
+      for (const record of metadata.referenceRecoveries) {
+        this.checkpoint(context);
+        validateRecoverySnapshot(record, state, raw, (v) => this.digest(v));
       }
     }
   }

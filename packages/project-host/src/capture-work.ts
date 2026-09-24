@@ -12,6 +12,7 @@ import {
   authorizeOperation,
   boundary,
   HostBoundaryError,
+  OperationGuard,
   Redactor,
   ScopedCredentialStore,
   snapshotOperationContext,
@@ -30,10 +31,17 @@ import {
   assertCaptureDiagnosticInstallation,
   assertCaptureRecoveryInstallation,
   assertCaptureReferenceInstallation,
+  assertReferenceOfflineInstallation,
   assertReferenceValidationInstallation,
 } from "./installation.js";
 import { digest } from "./installation-manifest.js";
-import { type ReadLease, refuse } from "./native.js";
+import { loadNative, type ReadLease, refuse } from "./native.js";
+import {
+  pinReferenceBackupFile,
+  publishReferenceBackupFile,
+  type ReferenceBackupPin,
+} from "./reference-backup.js";
+import { REFERENCE_OFFLINE_POLICY_SHA256 } from "./reference-offline-profile.js";
 import { pinImmutableReferenceDatabase } from "./reference-validation-database.js";
 import { pinRetainedReferenceEntry } from "./reference-validation-entry.js";
 import { REFERENCE_VALIDATION_POLICY_SHA256 } from "./reference-validation-profile.js";
@@ -57,6 +65,24 @@ export interface CaptureWork {
   referenceAuthority?(): Promise<string>;
   diagnosticAuthority?(): Promise<string>;
   referenceValidationAuthority?(): Promise<string>;
+  referenceOfflineAuthority?(): Promise<string>;
+  pinReferenceOfflineDatabase?(): Promise<{
+    identitySha256: string;
+    check(): Promise<void>;
+    close(): void;
+    checkReleased(): Promise<void>;
+  }>;
+  prepareReferenceBackup?(filename: string): Promise<void>;
+  pinReferenceBackup?(
+    filename: string,
+    context: OperationContext,
+  ): Promise<ReferenceBackupPin>;
+  publishReferenceBackup?(
+    source: string,
+    destination: string,
+    context: OperationContext,
+    proof: ReferenceBackupPin,
+  ): Promise<ReferenceBackupPin>;
   pinReferenceValidationDatabase?(): Promise<{
     identitySha256: string;
     check(): Promise<void>;
@@ -131,6 +157,30 @@ export function acquireCaptureWork(project: CaptureProject): CaptureWork {
       );
     return state.declaredExpiresAt;
   };
+  const backupScope = (context: OperationContext) => {
+    if (!context.jobId?.startsWith("offline_reference_"))
+      refuse("Migration backup requires the original offline operation.");
+    const guard = new OperationGuard(
+      context,
+      {
+        projectId: project.projectId,
+        resourceKind: "job",
+        resourceId: context.jobId,
+        operation: "write",
+      },
+      (authorization) => work.policy.verify(authorization),
+    );
+    return {
+      owner: work,
+      sid: owner.sid,
+      retainedPins,
+      current: async () => {
+        await current();
+        assertReferenceOfflineInstallation(owner.installation);
+        guard.check();
+      },
+    };
+  };
   const work: CaptureWork = Object.freeze({
     project,
     actorId: project.principal.actorId,
@@ -169,6 +219,84 @@ export function acquireCaptureWork(project: CaptureProject): CaptureWork {
       await current();
       assertReferenceValidationInstallation(owner.installation);
       return REFERENCE_VALIDATION_POLICY_SHA256;
+    },
+    async referenceOfflineAuthority() {
+      await current();
+      assertReferenceOfflineInstallation(owner.installation);
+      return REFERENCE_OFFLINE_POLICY_SHA256;
+    },
+    async pinReferenceOfflineDatabase() {
+      await current();
+      assertReferenceOfflineInstallation(owner.installation);
+      return pinImmutableReferenceDatabase({
+        filename: project.paths.database,
+        sid: owner.sid,
+        retainedPins,
+        authoritySha256: digest(
+          Buffer.from(
+            JSON.stringify({
+              installation: owner.installation.identity,
+              projectId: project.projectId,
+              actorId: work.actorId,
+              artifactRootId: project.artifactRootId,
+              permissionScope: work.permissionScope,
+              policySha256: REFERENCE_OFFLINE_POLICY_SHA256,
+            }),
+          ),
+        ),
+        authorize: async () => {
+          await current();
+          assertReferenceOfflineInstallation(owner.installation);
+        },
+      });
+    },
+    async prepareReferenceBackup(filename: string) {
+      await current();
+      assertReferenceOfflineInstallation(owner.installation);
+      const suffix = filename.slice(project.paths.database.length);
+      if (
+        !filename.startsWith(project.paths.database) ||
+        !/^\.migration-v4-[0-9a-f-]{36}\.sqlite\.pending$/.test(suffix)
+      )
+        refuse("Offline migration backup path is not server-derived.");
+      (await loadNative()).createFile(filename, owner.sid, Buffer.alloc(0));
+      await current();
+    },
+    async publishReferenceBackup(
+      source: string,
+      destination: string,
+      context: OperationContext,
+      proof: ReferenceBackupPin,
+    ) {
+      await current();
+      assertReferenceOfflineInstallation(owner.installation);
+      if (
+        source !== `${destination}.pending` ||
+        !destination.startsWith(project.paths.database) ||
+        !/^\.migration-v4-[0-9a-f-]{36}\.sqlite$/.test(
+          destination.slice(project.paths.database.length),
+        ) ||
+        !context.jobId?.startsWith("offline_reference_")
+      )
+        refuse("Offline migration backup publication is outside its scope.");
+      return publishReferenceBackupFile({
+        source,
+        destination,
+        proof,
+        context,
+        scope: backupScope(context),
+        authority: work.policy.verify,
+      });
+    },
+    async pinReferenceBackup(filename: string, context: OperationContext) {
+      if (
+        !filename.startsWith(project.paths.database) ||
+        !/^\.migration-v4-[0-9a-f-]{36}\.sqlite\.pending$/.test(
+          filename.slice(project.paths.database.length),
+        )
+      )
+        refuse("Offline migration backup path is not server-derived.");
+      return pinReferenceBackupFile(filename, backupScope(context));
     },
     async pinReferenceValidationDatabase() {
       return pinImmutableReferenceDatabase({

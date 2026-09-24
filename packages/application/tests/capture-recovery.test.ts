@@ -5,6 +5,7 @@ import {
   mkdtemp,
   readdir,
   readFile,
+  rename,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -45,6 +46,7 @@ import { nativeCapturePolicy } from "../../project-host/dist/capture-authority.j
 import { CAPTURE_DIAGNOSTIC_POLICY_SHA256 } from "../../project-host/src/capture-diagnostic-profile.js";
 import { CAPTURE_RECOVERY_POLICY_SHA256 } from "../../project-host/src/capture-recovery-profile.js";
 import { CAPTURE_REFERENCE_POLICY_SHA256 } from "../../project-host/src/capture-reference-profile.js";
+import { REFERENCE_OFFLINE_POLICY_SHA256 } from "../../project-host/src/reference-offline-profile.js";
 import { REFERENCE_VALIDATION_POLICY_SHA256 } from "../../project-host/src/reference-validation-profile.js";
 import { initializeImmutableSqlite } from "../../storage/dist/immutable-sqlite.js";
 import {
@@ -59,7 +61,10 @@ import {
   closeSettledStores,
   joinSettledStores,
 } from "../../storage/tests/lifetime.js";
-import { syntheticImmutableSnapshot } from "../../storage/tests/support.js";
+import {
+  syntheticBackupPin,
+  syntheticImmutableSnapshot,
+} from "../../storage/tests/support.js";
 import {
   CAPTURE_RECOVERY_CONFIRMATION,
   nativeCaptureResources,
@@ -71,6 +76,10 @@ import {
 } from "../src/capture-runtime-internal.js";
 import { RecoveryDecisions } from "../src/recovery.js";
 import { ReferenceInput } from "../src/reference-input.js";
+import {
+  type NativeReferenceOfflineInput,
+  openNativeReferenceOffline,
+} from "../src/reference-offline.js";
 import { ReferenceReader } from "../src/reference-proof.js";
 import * as referencePublications from "../src/reference-publications.js";
 import {
@@ -217,6 +226,7 @@ async function createFixture(
   const validations: Awaited<
     ReturnType<typeof openNativeReferenceValidation>
   >[] = [];
+  const offlines: Awaited<ReturnType<typeof openNativeReferenceOffline>>[] = [];
   const startupClosures: (() => Promise<void>)[] = [];
   cleanups.push(async () => {
     await scope.close();
@@ -239,6 +249,7 @@ async function createFixture(
     await joinSettledStores(stores);
     for (const close of startupClosures) await close();
     for (const validation of validations) await validation.close();
+    for (const offline of offlines) await offline.close();
     for (const runtime of runtimes) await runtime.close();
     await closeSettledStores(stores);
     await rm(root, { recursive: true, force: true });
@@ -275,6 +286,10 @@ async function createFixture(
     | Awaited<ReturnType<typeof openNativeReferenceValidation>>
     | undefined;
   let validationMode = false;
+  let offlineMode = false;
+  let offline:
+    | Awaited<ReturnType<typeof openNativeReferenceOffline>>
+    | undefined;
   let clockOffset = 0;
   const fixedNow = history.fixedClock ? Date.now() : undefined;
   let store: LocalStore;
@@ -344,6 +359,39 @@ async function createFixture(
       diagnosticAuthority: async () => CAPTURE_DIAGNOSTIC_POLICY_SHA256,
       referenceValidationAuthority: async () =>
         REFERENCE_VALIDATION_POLICY_SHA256,
+      referenceOfflineAuthority: async () => REFERENCE_OFFLINE_POLICY_SHA256,
+      pinReferenceOfflineDatabase: async () => {
+        const pin = await syntheticImmutableSnapshot(project.paths.database);
+        const before = await lstat(project.paths.database);
+        let closed = false;
+        return {
+          ...pin,
+          close: () => {
+            pin.close();
+            closed = true;
+          },
+          checkReleased: async () => {
+            expect(closed).toBe(true);
+            const after = await lstat(project.paths.database);
+            expect([after.ino, after.dev, after.size, after.mtimeMs]).toEqual([
+              before.ino,
+              before.dev,
+              before.size,
+              before.mtimeMs,
+            ]);
+          },
+        };
+      },
+      prepareReferenceBackup: async (filename) => {
+        await writeFile(filename, Buffer.alloc(0), { flag: "wx" });
+      },
+      pinReferenceBackup: async (filename) => syntheticBackupPin(filename),
+      publishReferenceBackup: async (source, destination, _context, proof) => {
+        await proof.check();
+        proof.close();
+        await rename(source, destination);
+        return syntheticBackupPin(destination);
+      },
       pinReferenceValidationDatabase: () =>
         syntheticImmutableSnapshot(project.paths.database),
       pinReferenceValidationEntry: async (rootId, relative) => {
@@ -373,7 +421,7 @@ async function createFixture(
         };
       },
       recoveryAuthority: async () => {
-        if (validationMode)
+        if (validationMode || offlineMode)
           throw new Error(
             "Read-only validation must not inspect the credential journal",
           );
@@ -413,7 +461,10 @@ async function createFixture(
       () => (fixedNow ?? now()) + clockOffset,
     );
     try {
-      if (validationMode) {
+      if (offlineMode) {
+        offline = await openNativeReferenceOffline(project);
+        offlines.push(offline);
+      } else if (validationMode) {
         validation = await openNativeReferenceValidation(project);
         validations.push(validation);
       } else {
@@ -868,6 +919,14 @@ async function createFixture(
         await validation?.close();
       }
     },
+    async runOffline(command: NativeReferenceOfflineInput) {
+      await runtime.close();
+      await validation?.close();
+      await offline?.close();
+      offlineMode = true;
+      await open();
+      return required(offline).execute(command, scope.signal);
+    },
     raceBeforeCommit(nextOnly = false) {
       beforeCommit = () =>
         mutateOpenSyntheticCapture(
@@ -885,6 +944,7 @@ async function createFixture(
       await validation?.close();
       await runtime.close();
       validationMode = false;
+      offlineMode = false;
       await open();
     },
     async record() {
@@ -1816,6 +1876,7 @@ it.each([
   "diagnostic-retained-coexisting-history",
   "diagnostic-retained-coexisting-current-only",
   "diagnostic-retained-successor-output",
+  "diagnostic-retained-successor-output-offline",
   "diagnostic-retained-successor-record",
   "diagnostic-retained-successor-receipt",
   "diagnostic-retained-successor-protection",
@@ -1847,7 +1908,10 @@ it.each([
     const successorCoexistence = fault.startsWith(
       "diagnostic-retained-successor-",
     );
-    const validSuccessor = fault === "diagnostic-retained-successor-output";
+    const offlinePublication =
+      fault === "diagnostic-retained-successor-output-offline";
+    const validSuccessor =
+      fault === "diagnostic-retained-successor-output" || offlinePublication;
     const f = await fixture(true, undefined, {
       repaired: true,
       committedStageBytes: coexistence,
@@ -2253,7 +2317,17 @@ it.each([
         new AbortController().signal,
       );
       expect(approved.status, JSON.stringify(approved)).toBe("complete");
-      if (retained) f.setFault("job-after-artifacts");
+      if (retained && !offlinePublication) f.setFault("job-after-artifacts");
+      const offlineStage = offlinePublication
+        ? vi
+            .spyOn(ProjectFileSystem.prototype, "publish")
+            .mockRejectedValueOnce(
+              new HostBoundaryError(
+                "INPUT_LIMIT",
+                "Synthetic retained stage-only publication",
+              ),
+            )
+        : undefined;
       const downloaded = await run(
         {
           operation: "reference-diagnostic-download",
@@ -2263,6 +2337,7 @@ it.each([
         },
         new AbortController().signal,
       );
+      offlineStage?.mockRestore();
       expect(downloaded.status, JSON.stringify(downloaded)).toBe(
         retained ? "interrupted" : "complete",
       );
@@ -2515,7 +2590,7 @@ it.each([
           );
           expect(recovered.inputAccounting?.networkBytes).toBe(0);
           expect(recovered.inventoryFailure).toBeUndefined();
-          if (measured) {
+          if (measured && !offlinePublication) {
             const charged = charges.reduce((sum, count) => sum + count, 0);
             const eof = charges.filter((count) => count === 1).length;
             expect(recovered.inputAccounting?.privateBytes).toBe(charged);
@@ -2551,6 +2626,36 @@ it.each([
             expect((await lstat(stagePath)).ino).toBe(beforeStageIdentity.ino);
             expect((await lstat(committedPath)).nlink).toBe(1);
             expect((await lstat(stagePath)).nlink).toBe(1);
+          }
+          if (offlinePublication) {
+            const command = {
+              requestId,
+              expectedJob: required(metadata.value?.metadata?.jobSha256),
+            };
+            const plan = await f.runOffline({
+              ...command,
+              operation: "reference-recovery-apply-plan",
+            });
+            expect(plan.status, JSON.stringify(plan)).toBe("complete");
+            const recovered = await f.runOffline({
+              ...command,
+              operation: "reference-recovery-apply",
+              expectedProof: required(plan.plan?.proofSha256),
+              confirmation: "RECOVER-VERIFIED-REFERENCE-OFFLINE",
+            });
+            expect(recovered.status, JSON.stringify(recovered)).toBe(
+              "complete",
+            );
+            const converted = await f.runOffline({
+              ...command,
+              operation: "convert-reference",
+              expectedRecovery: required(recovered.receiptSha256),
+              confirmation: "CONVERT-WITH-RECOVERED-REFERENCE",
+            });
+            expect(converted.status, JSON.stringify(converted)).toBe(
+              "complete",
+            );
+            expect(converted.conversion?.readiness).not.toBe("ready");
           }
         }
       }

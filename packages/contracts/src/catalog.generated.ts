@@ -2,6 +2,14 @@
 import type * as Types from "./generated.js";
 
 export interface ContractTypes {
+  ReferenceRecoveryBinding: Types.ReferenceRecoveryBinding;
+  ReferenceRecoveryArchive: Types.ReferenceRecoveryArchive;
+  ReferenceRecoveryRecord: Types.ReferenceRecoveryRecord;
+  ReferenceRecoveryEvidence: Types.ReferenceRecoveryEvidence;
+  OfflineReferencePlan: Types.OfflineReferencePlan;
+  EffectiveReference: Types.EffectiveReference;
+  ReferenceConversionEvidence: Types.ReferenceConversionEvidence;
+  NativeReferenceOfflineEnvelope: Types.NativeReferenceOfflineEnvelope;
   SchemaVersion: Types.SchemaVersion;
   StableId: Types.StableId;
   Sha256: Types.Sha256;
@@ -175,6 +183,14 @@ export interface ContractTypes {
 export type ContractName = keyof ContractTypes;
 
 export const contractNames: readonly ContractName[] = [
+  "ReferenceRecoveryBinding",
+  "ReferenceRecoveryArchive",
+  "ReferenceRecoveryRecord",
+  "ReferenceRecoveryEvidence",
+  "OfflineReferencePlan",
+  "EffectiveReference",
+  "ReferenceConversionEvidence",
+  "NativeReferenceOfflineEnvelope",
   "SchemaVersion",
   "StableId",
   "Sha256",

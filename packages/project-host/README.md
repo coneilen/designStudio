@@ -1,5 +1,25 @@
 # @design-studio/project-host
 
+## Offline reference write supplement
+
+Release policy v7 adds the exact `reference-offline-policy.json` supplement.
+All five preceding policy byte sequences and digests remain unchanged.
+Only a currently verified v7 installation can issue offline recovery or
+reference-backed conversion grants. The v6 read-only plan entry does not gain
+write authority. New schema-4/5 inspection uses its own admitted reader.
+
+Recovery holds the existing exclusive project owner across immutable-read
+closure and separately admitted writer opening. The new grant has no credential,
+provider, DNS or network operations and grants no write to the historical
+diagnostic. Server-derived migration backup names are current-owner-created and
+published with the normal NTFS write-through adapter before schema changes.
+Read-only DB pins never become write handles.
+
+Retained SQLite sidecars, changed native identity, foreign owner, unsupported
+link state and unknown publication remain denials. No ACL repair, historical
+stage adoption or generic SQL/path endpoint is provided. Synthetic owner
+preparation exists only in tests and is not installed as a recovery capability.
+
 ## Version-6 retained-validation supplement
 
 `reference-validation-policy.json` is separately inventory-bound by release

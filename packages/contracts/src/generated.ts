@@ -16,10 +16,12 @@ export type StableId = string;
  */
 export type Sha256 = string;
 /**
+ * Portable bundle-relative slash path, not a host filesystem path. No drives, traversal, empty segments, percent escapes, ADS or Windows reserved basenames. Host confinement/symlink checks are F04.
+ *
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "Version".
+ * via the `definition` "RelativePath".
  */
-export type Version = string;
+export type RelativePath = string;
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "Timestamp".
@@ -27,16 +29,108 @@ export type Version = string;
 export type Timestamp = string;
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "Operation".
+ */
+export type Operation =
+  | "inspect"
+  | "resolve"
+  | "render"
+  | "handoff"
+  | "editable-export"
+  | "implement"
+  | "capture"
+  | "reference-download"
+  | "compare"
+  | "read"
+  | "write"
+  | "execute"
+  | "credential-use"
+  | "model-egress";
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "ErrorCode".
+ */
+export type ErrorCode =
+  | "INVALID_INPUT"
+  | "INVALID_SCHEMA"
+  | "UNSUPPORTED_SCHEMA_VERSION"
+  | "INPUT_LIMIT"
+  | "RASTER_LIMIT"
+  | "NODE_LIMIT"
+  | "DEPTH_LIMIT"
+  | "ASSET_LIMIT"
+  | "UNKNOWN_PROPERTY"
+  | "INVALID_LAYOUT"
+  | "DUPLICATE_NODE_ID"
+  | "DEPENDENCY_CYCLE"
+  | "RESOURCE_UNRESOLVED"
+  | "TOKEN_TYPE_MISMATCH"
+  | "TOKEN_MODE_MISSING"
+  | "COMPONENT_PROPERTY_INVALID"
+  | "COMPONENT_SLOT_INVALID"
+  | "MAPPING_STALE"
+  | "BEHAVIOR_UNRESOLVED"
+  | "UNSUPPORTED_FEATURE"
+  | "FONT_MISSING"
+  | "FONT_FALLBACK"
+  | "LICENSE_UNVERIFIED"
+  | "ASSET_INVALID"
+  | "ARTIFACT_INTEGRITY"
+  | "PATH_FORBIDDEN"
+  | "NODE_SELECTION_REQUIRED"
+  | "FIGMA_NODE_NOT_FOUND"
+  | "FIGMA_ACCESS_DENIED"
+  | "RATE_LIMITED"
+  | "HISTORICAL_ASSET_UNAVAILABLE"
+  | "SOURCE_CHANGED_DURING_CAPTURE"
+  | "SOURCE_BINDING_UNVERIFIED"
+  | "SOURCE_INCOMPLETE"
+  | "PLUGIN_UNAVAILABLE"
+  | "TRANSPORT_UNAVAILABLE"
+  | "AUTH_REQUIRED"
+  | "FORBIDDEN"
+  | "NOT_FOUND"
+  | "ORIGIN_FORBIDDEN"
+  | "CSRF_INVALID"
+  | "EGRESS_DENIED"
+  | "CONFLICT"
+  | "IDEMPOTENCY_CONFLICT"
+  | "APPROVAL_REQUIRED"
+  | "ACTION_REQUIRED"
+  | "CANCELLED"
+  | "DEADLINE_EXCEEDED"
+  | "LEASE_LOST"
+  | "INTERRUPTED"
+  | "OUTPUT_UNCERTAIN"
+  | "PROVIDER_UNAVAILABLE"
+  | "TOOL_MISSING"
+  | "TOOL_VERSION_UNSUPPORTED"
+  | "PROCESS_FAILED"
+  | "OUTPUT_LIMIT"
+  | "UNSUPPORTED_HOST"
+  | "DEVICE_SELECTION_REQUIRED"
+  | "DEVICE_UNAUTHORIZED"
+  | "DEVICE_OFFLINE"
+  | "CAPTURE_PROTECTED"
+  | "APP_UNAVAILABLE"
+  | "NAVIGATION_FAILED"
+  | "READINESS_TIMEOUT"
+  | "SCREEN_UNVERIFIED"
+  | "PROFILE_MISMATCH"
+  | "EVIDENCE_MISSING"
+  | "POLICY_FAILED"
+  | "VALIDATION_INCONCLUSIVE"
+  | "INTERNAL_ERROR";
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "Version".
+ */
+export type Version = string;
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "JsonPointer".
  */
 export type JsonPointer = string;
-/**
- * Portable bundle-relative slash path, not a host filesystem path. No drives, traversal, empty segments, percent escapes, ADS or Windows reserved basenames. Host confinement/symlink checks are F04.
- *
- * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "RelativePath".
- */
-export type RelativePath = string;
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "JsonValue".
@@ -301,81 +395,6 @@ export type SourceSnapshot = {
 };
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "ErrorCode".
- */
-export type ErrorCode =
-  | "INVALID_INPUT"
-  | "INVALID_SCHEMA"
-  | "UNSUPPORTED_SCHEMA_VERSION"
-  | "INPUT_LIMIT"
-  | "RASTER_LIMIT"
-  | "NODE_LIMIT"
-  | "DEPTH_LIMIT"
-  | "ASSET_LIMIT"
-  | "UNKNOWN_PROPERTY"
-  | "INVALID_LAYOUT"
-  | "DUPLICATE_NODE_ID"
-  | "DEPENDENCY_CYCLE"
-  | "RESOURCE_UNRESOLVED"
-  | "TOKEN_TYPE_MISMATCH"
-  | "TOKEN_MODE_MISSING"
-  | "COMPONENT_PROPERTY_INVALID"
-  | "COMPONENT_SLOT_INVALID"
-  | "MAPPING_STALE"
-  | "BEHAVIOR_UNRESOLVED"
-  | "UNSUPPORTED_FEATURE"
-  | "FONT_MISSING"
-  | "FONT_FALLBACK"
-  | "LICENSE_UNVERIFIED"
-  | "ASSET_INVALID"
-  | "ARTIFACT_INTEGRITY"
-  | "PATH_FORBIDDEN"
-  | "NODE_SELECTION_REQUIRED"
-  | "FIGMA_NODE_NOT_FOUND"
-  | "FIGMA_ACCESS_DENIED"
-  | "RATE_LIMITED"
-  | "HISTORICAL_ASSET_UNAVAILABLE"
-  | "SOURCE_CHANGED_DURING_CAPTURE"
-  | "SOURCE_BINDING_UNVERIFIED"
-  | "SOURCE_INCOMPLETE"
-  | "PLUGIN_UNAVAILABLE"
-  | "TRANSPORT_UNAVAILABLE"
-  | "AUTH_REQUIRED"
-  | "FORBIDDEN"
-  | "NOT_FOUND"
-  | "ORIGIN_FORBIDDEN"
-  | "CSRF_INVALID"
-  | "EGRESS_DENIED"
-  | "CONFLICT"
-  | "IDEMPOTENCY_CONFLICT"
-  | "APPROVAL_REQUIRED"
-  | "ACTION_REQUIRED"
-  | "CANCELLED"
-  | "DEADLINE_EXCEEDED"
-  | "LEASE_LOST"
-  | "INTERRUPTED"
-  | "OUTPUT_UNCERTAIN"
-  | "PROVIDER_UNAVAILABLE"
-  | "TOOL_MISSING"
-  | "TOOL_VERSION_UNSUPPORTED"
-  | "PROCESS_FAILED"
-  | "OUTPUT_LIMIT"
-  | "UNSUPPORTED_HOST"
-  | "DEVICE_SELECTION_REQUIRED"
-  | "DEVICE_UNAUTHORIZED"
-  | "DEVICE_OFFLINE"
-  | "CAPTURE_PROTECTED"
-  | "APP_UNAVAILABLE"
-  | "NAVIGATION_FAILED"
-  | "READINESS_TIMEOUT"
-  | "SCREEN_UNVERIFIED"
-  | "PROFILE_MISMATCH"
-  | "EVIDENCE_MISSING"
-  | "POLICY_FAILED"
-  | "VALIDATION_INCONCLUSIVE"
-  | "INTERNAL_ERROR";
-/**
- * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "NativeCaptureRecoveryEnvelope".
  */
 export type NativeCaptureRecoveryEnvelope = {
@@ -485,25 +504,6 @@ export type Job = {
   sourceStatus?: SourceStatus;
   diagnosticIds: StableId[];
 };
-/**
- * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "Operation".
- */
-export type Operation =
-  | "inspect"
-  | "resolve"
-  | "render"
-  | "handoff"
-  | "editable-export"
-  | "implement"
-  | "capture"
-  | "reference-download"
-  | "compare"
-  | "read"
-  | "write"
-  | "execute"
-  | "credential-use"
-  | "model-egress";
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "SemanticOperation".
@@ -748,6 +748,14 @@ export type ProviderOutcome =
     };
 
 export interface ContractCatalog {
+  ReferenceRecoveryBinding: ReferenceRecoveryBinding;
+  ReferenceRecoveryArchive: ReferenceRecoveryArchive;
+  ReferenceRecoveryRecord: ReferenceRecoveryRecord;
+  ReferenceRecoveryEvidence: ReferenceRecoveryEvidence;
+  OfflineReferencePlan: OfflineReferencePlan;
+  EffectiveReference: EffectiveReference;
+  ReferenceConversionEvidence: ReferenceConversionEvidence;
+  NativeReferenceOfflineEnvelope: NativeReferenceOfflineEnvelope;
   SchemaVersion: SchemaVersion;
   StableId: StableId;
   Sha256: Sha256;
@@ -919,17 +927,39 @@ export interface ContractCatalog {
 }
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "JsonObject".
+ * via the `definition` "ReferenceRecoveryBinding".
  */
-export interface JsonObject {
-  [k: string]: JsonValue;
+export interface ReferenceRecoveryBinding {
+  schemaVersion: SchemaVersion;
+  recoveryId: StableId;
+  projectId: StableId;
+  actorId: StableId;
+  permissionScope: StableId;
+  artifactRootId: StableId;
+  requestId: StableId;
+  originalJobId: StableId;
+  jobSha256: Sha256;
+  recordSha256: Sha256;
+  stateSha256: Sha256;
+  metadataSha256: Sha256;
+  stagesSha256: Sha256;
+  identitySha256: Sha256;
+  policySha256: Sha256;
+  planSha256: Sha256;
+  source: ArtifactReference;
+  approval: ArtifactReference;
+  historicalEvidence: Artifact;
+  reference: Artifact;
+  recordedAt: Timestamp;
+  confirmation: "RECOVER-VERIFIED-REFERENCE-OFFLINE";
 }
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "Extensions".
+ * via the `definition` "ArtifactReference".
  */
-export interface Extensions {
-  [k: string]: JsonValue;
+export interface ArtifactReference {
+  id: StableId;
+  sha256: Sha256;
 }
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
@@ -944,11 +974,2219 @@ export interface Artifact {
 }
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "ArtifactReference".
+ * via the `definition` "ReferenceRecoveryArchive".
  */
-export interface ArtifactReference {
-  id: StableId;
+export interface ReferenceRecoveryArchive {
+  kind: "restored-offline-reference-v1";
+  originBackupSha256: Sha256;
+  restoredFromBackupSha256: Sha256;
+  sourceRecordSha256: Sha256;
+  bindingSha256: Sha256;
+  currentRecordSha256: Sha256;
+  currentStateSha256: Sha256;
+  currentMetadataSha256: Sha256;
+  protectionSha256: Sha256;
   sha256: Sha256;
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "ReferenceRecoveryRecord".
+ */
+export interface ReferenceRecoveryRecord {
+  archive?: ReferenceRecoveryArchive;
+  reservation: {
+    binding: ReferenceRecoveryBinding;
+    evidence: Artifact;
+  };
+  /**
+   * @maxItems 10
+   */
+  events:
+    | []
+    | [
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+      ]
+    | [
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+      ]
+    | [
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+      ]
+    | [
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+      ]
+    | [
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+      ]
+    | [
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+      ]
+    | [
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+      ]
+    | [
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+      ]
+    | [
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+      ]
+    | [
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+        {
+          sequence: number;
+          previousSha256: Sha256;
+          kind:
+            | "stage-intent"
+            | "staged"
+            | "publication-intent"
+            | "committed"
+            | "conversion-intent"
+            | "conversion-committed";
+          staged?: {
+            stagingId: StableId;
+            artifact: Artifact;
+          };
+          receipt?: CommitReceipt;
+          /**
+           * @minItems 6
+           * @maxItems 7
+           */
+          outputs?:
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+            | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact];
+          /**
+           * @maxItems 7
+           */
+          introduced?:
+            | []
+            | [StableId]
+            | [StableId, StableId]
+            | [StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId]
+            | [StableId, StableId, StableId, StableId, StableId, StableId, StableId];
+        },
+      ];
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "CommitReceipt".
+ */
+export interface CommitReceipt {
+  schemaVersion: SchemaVersion;
+  id: StableId;
+  projectId: StableId;
+  jobId: StableId;
+  idempotency: IdempotencyScope;
+  committedAt: Timestamp;
+  outputs: Artifact[];
+  integrity: "verified";
+  publication: "atomic";
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "IdempotencyScope".
+ */
+export interface IdempotencyScope {
+  key: StableId;
+  projectId: StableId;
+  actorId: StableId;
+  operation: Operation;
+  payloadSha256: Sha256;
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "ReferenceRecoveryEvidence".
+ */
+export interface ReferenceRecoveryEvidence {
+  schemaVersion: SchemaVersion;
+  kind: "offline-recovered-reference";
+  binding: ReferenceRecoveryBinding;
+  bindingSha256: Sha256;
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "OfflineReferencePlan".
+ */
+export interface OfflineReferencePlan {
+  retained: ReferenceRecoveryPlan;
+  recoveryId: StableId;
+  policySha256: Sha256;
+  metadataSha256: Sha256;
+  schema: 4 | 5;
+  state: "unreserved" | "reserved" | "blocked" | "committed";
+  controlSha256: Sha256;
+  projectWriteScope: "single-recovery-and-bound-conversion-only";
+  receiptSha256?: Sha256;
+  proofSha256: Sha256;
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "ReferenceRecoveryPlan".
+ */
+export interface ReferenceRecoveryPlan {
+  verification: "retained-bytes";
+  eligibility: "eligible-for-recovery-review";
+  consumed: true;
+  historicalStatus: "interrupted";
+  jobId: StableId;
+  jobSha256: Sha256;
+  stateSha256: Sha256;
+  identitySha256: Sha256;
+  sourceSha256: Sha256;
+  approvalSha256: Sha256;
+  policySha256: Sha256;
+  proofSha256: Sha256;
+  referenceStatus: "complete" | "partial";
+  pixelWidth: number;
+  pixelHeight: number;
+  colorSpace: "srgb" | "unknown";
+  /**
+   * @minItems 2
+   * @maxItems 2
+   */
+  stages: [
+    {
+      role: "reference" | "evidence";
+      sha256: Sha256;
+      byteLength: number;
+      disposition: "recovery-needed";
+      publication: "stage-only" | "published-only" | "recovered-stage-and-blob";
+    },
+    {
+      role: "reference" | "evidence";
+      sha256: Sha256;
+      byteLength: number;
+      disposition: "recovery-needed";
+      publication: "stage-only" | "published-only" | "recovered-stage-and-blob";
+    },
+  ];
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "EffectiveReference".
+ */
+export interface EffectiveReference {
+  kind: "offline-recovered-reference";
+  recoveryId: StableId;
+  receiptSha256: Sha256;
+  evidence: ArtifactReference;
+  source: ArtifactReference;
+  reference: ArtifactReference;
+  referenceStatus: "complete" | "partial";
+  pixelWidth: number;
+  pixelHeight: number;
+  colorSpace: "srgb" | "unknown";
+  historicalStatus: "interrupted";
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "ReferenceConversionEvidence".
+ */
+export interface ReferenceConversionEvidence {
+  schemaVersion: SchemaVersion;
+  composition: "figma-capture-recovered-reference-v1";
+  policy: "fixed-v2";
+  source: ArtifactReference;
+  structure: ArtifactReference;
+  projection: ArtifactReference;
+  effectiveReference: EffectiveReference;
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "NativeReferenceOfflineEnvelope".
+ */
+export interface NativeReferenceOfflineEnvelope {
+  schemaVersion: SchemaVersion;
+  operation:
+    "reference-recovery-apply-plan" | "reference-recovery-apply" | "reference-recovery-inspect" | "convert-reference";
+  projectId: StableId;
+  requestId: StableId;
+  status: "complete" | "failed" | "cancelled" | "interrupted";
+  plan?: OfflineReferencePlan;
+  effectiveReference?: EffectiveReference;
+  receiptSha256?: Sha256;
+  conversion?: {
+    operationId: StableId;
+    receiptSha256: Sha256;
+    evidence: ArtifactReference;
+    readiness: "blocked" | "needs-review";
+  };
+  reason?:
+    | "invalid-input"
+    | "authority-denied"
+    | "database-state"
+    | "proof-changed"
+    | "ineligible"
+    | "recovery-blocked"
+    | "publication-uncertain"
+    | "integrity"
+    | "input-limit"
+    | "deadline-exceeded"
+    | "cancelled"
+    | "cleanup-required";
+  inputAccounting?: ReferenceInputAccounting;
+  error?: ContractError;
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "ReferenceInputAccounting".
+ */
+export interface ReferenceInputAccounting {
+  limitBytes: number;
+  privateBytes: number;
+  networkBytes: number;
+  phase: "proof" | "history" | "inventory" | "admission" | "acquisition" | "commit" | "inspection";
+  rejected?: {
+    kind: "private" | "network";
+    bytes: number;
+    limit: "aggregate" | "per-read";
+    phase: "proof" | "history" | "inventory" | "admission" | "acquisition" | "commit" | "inspection";
+  };
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "ContractError".
+ */
+export interface ContractError {
+  code: ErrorCode;
+  message: string;
+  retryable: boolean;
+  retryAfter?: Timestamp;
+  jobId?: StableId;
+  referenceDiagnostic?: ReferenceDiagnostic;
+  diagnosticIds: StableId[];
+}
+/**
+ * Closed nonsecret observations only. Absence on legacy evidence means unknown, never a reconstructed diagnosis. A command diagnostic without a receipt is not durable proof.
+ *
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "ReferenceDiagnostic".
+ */
+export interface ReferenceDiagnostic {
+  stage: "mime" | "png" | "json" | "worker" | "operation" | "legacy";
+  reason:
+    | "validated"
+    | "mime-missing"
+    | "mime-rejected"
+    | "not-png"
+    | "png-malformed"
+    | "png-unsupported"
+    | "png-interlace"
+    | "png-animation"
+    | "png-critical"
+    | "png-color-unsupported"
+    | "png-color-conflict"
+    | "input-limit"
+    | "output-limit"
+    | "raster-limit"
+    | "node-limit"
+    | "depth-limit"
+    | "intermediate-limit"
+    | "json-malformed"
+    | "worker-protocol"
+    | "worker-unavailable"
+    | "worker-limit"
+    | "cancelled"
+    | "deadline"
+    | "authority"
+    | "legacy-unknown";
+  mimeClass: "not-observed" | "png" | "generic-binary" | "missing" | "other";
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "JsonObject".
+ */
+export interface JsonObject {
+  [k: string]: JsonValue;
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "Extensions".
+ */
+export interface Extensions {
+  [k: string]: JsonValue;
 }
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
@@ -2017,42 +4255,6 @@ export interface FigmaCaptureManifest {
   };
 }
 /**
- * Closed nonsecret observations only. Absence on legacy evidence means unknown, never a reconstructed diagnosis. A command diagnostic without a receipt is not durable proof.
- *
- * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "ReferenceDiagnostic".
- */
-export interface ReferenceDiagnostic {
-  stage: "mime" | "png" | "json" | "worker" | "operation" | "legacy";
-  reason:
-    | "validated"
-    | "mime-missing"
-    | "mime-rejected"
-    | "not-png"
-    | "png-malformed"
-    | "png-unsupported"
-    | "png-interlace"
-    | "png-animation"
-    | "png-critical"
-    | "png-color-unsupported"
-    | "png-color-conflict"
-    | "input-limit"
-    | "output-limit"
-    | "raster-limit"
-    | "node-limit"
-    | "depth-limit"
-    | "intermediate-limit"
-    | "json-malformed"
-    | "worker-protocol"
-    | "worker-unavailable"
-    | "worker-limit"
-    | "cancelled"
-    | "deadline"
-    | "authority"
-    | "legacy-unknown";
-  mimeClass: "not-observed" | "png" | "generic-binary" | "missing" | "other";
-}
-/**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "FigmaCaptureResult".
  */
@@ -2133,19 +4335,6 @@ export interface CaptureRecoveryAuthorization {
    * @maxItems 32
    */
   resourceStates: CaptureRecoveryResource[];
-}
-/**
- * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "ContractError".
- */
-export interface ContractError {
-  code: ErrorCode;
-  message: string;
-  retryable: boolean;
-  retryAfter?: Timestamp;
-  jobId?: StableId;
-  referenceDiagnostic?: ReferenceDiagnostic;
-  diagnosticIds: StableId[];
 }
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
@@ -2488,22 +4677,6 @@ export interface FigmaReferenceEvidence {
 }
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "ReferenceInputAccounting".
- */
-export interface ReferenceInputAccounting {
-  limitBytes: number;
-  privateBytes: number;
-  networkBytes: number;
-  phase: "proof" | "history" | "inventory" | "admission" | "acquisition" | "commit" | "inspection";
-  rejected?: {
-    kind: "private" | "network";
-    bytes: number;
-    limit: "aggregate" | "per-read";
-    phase: "proof" | "history" | "inventory" | "admission" | "acquisition" | "commit" | "inspection";
-  };
-}
-/**
- * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "ReferenceJobUsage".
  */
 export interface ReferenceJobUsage {
@@ -2563,48 +4736,6 @@ export interface ReferenceJobMetadata {
         },
       ];
   receiptPresent: boolean;
-}
-/**
- * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "ReferenceRecoveryPlan".
- */
-export interface ReferenceRecoveryPlan {
-  verification: "retained-bytes";
-  eligibility: "eligible-for-recovery-review";
-  consumed: true;
-  historicalStatus: "interrupted";
-  jobId: StableId;
-  jobSha256: Sha256;
-  stateSha256: Sha256;
-  identitySha256: Sha256;
-  sourceSha256: Sha256;
-  approvalSha256: Sha256;
-  policySha256: Sha256;
-  proofSha256: Sha256;
-  referenceStatus: "complete" | "partial";
-  pixelWidth: number;
-  pixelHeight: number;
-  colorSpace: "srgb" | "unknown";
-  /**
-   * @minItems 2
-   * @maxItems 2
-   */
-  stages: [
-    {
-      role: "reference" | "evidence";
-      sha256: Sha256;
-      byteLength: number;
-      disposition: "recovery-needed";
-      publication: "stage-only" | "published-only";
-    },
-    {
-      role: "reference" | "evidence";
-      sha256: Sha256;
-      byteLength: number;
-      disposition: "recovery-needed";
-      publication: "stage-only" | "published-only";
-    },
-  ];
 }
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
@@ -2700,17 +4831,6 @@ export interface NativeReferenceEnvelope {
 }
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "IdempotencyScope".
- */
-export interface IdempotencyScope {
-  key: StableId;
-  projectId: StableId;
-  actorId: StableId;
-  operation: Operation;
-  payloadSha256: Sha256;
-}
-/**
- * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "Lease".
  */
 export interface Lease {
@@ -2720,21 +4840,6 @@ export interface Lease {
   fencingToken: number;
   heartbeatAt: Timestamp;
   expiresAt: Timestamp;
-}
-/**
- * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "CommitReceipt".
- */
-export interface CommitReceipt {
-  schemaVersion: SchemaVersion;
-  id: StableId;
-  projectId: StableId;
-  jobId: StableId;
-  idempotency: IdempotencyScope;
-  committedAt: Timestamp;
-  outputs: Artifact[];
-  integrity: "verified";
-  publication: "atomic";
 }
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema

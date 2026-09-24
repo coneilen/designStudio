@@ -1,5 +1,66 @@
 # @design-studio/storage
 
+## Offline reference recovery records
+
+Schema 5 adds `reference_recoveries` (unique original diagnostic and derived
+recovery ID) and `reference_recovery_events` (append-only sequence/hash chain).
+The opt-in native writer compares schema, raw old rows and complete control
+state after the immutable connection/pins close. A verified durable schema-4
+backup precedes atomic schema creation plus reservation. Ordinary open does
+not migrate schema 4 to 5. The legacy v6 immutable reader remains schema-4-only.
+
+Typed reserve/stage/commit methods authorize inside serialized storage work,
+CAS the event head, bind exact bytes and append intent before effects. The
+receipt and its normal artifact reference edges share the final event's SQL
+transaction. These are not scheduler jobs and never mutate or reconcile the old
+diagnostic or quarantined resource. New conversion intent also pins all expected
+output hashes before staging; unknown work cannot be garbage-collected away.
+
+Only a no-file-intent reservation can resume after reopening. Process-lost
+staging/publication and hot WAL states require separate review, not generic
+reconciliation. Committed receipt replay verifies exact output and historical
+bindings. Backup format 5 includes the records and validates their event/receipt
+graph; older backup formats remain supported. Restore keeps existing lease/
+generation fencing, so restored records preserve history without manufacturing
+fresh execution authority.
+
+Format 5 also carries one bounded, canonically ordered raw-base-row snapshot.
+Its control-table rows must likewise match the decoded reservation, event and
+archive records; there is no per-recovery duplicate database snapshot.
+It must match decoded logical metadata and reconstructed reference edges
+one-to-one: duplicate, dropped, extra or mismatched rows are rejected. Raw rows
+are comparison evidence only; restore never executes SQL or inserts rows supplied
+by that snapshot. Active recovery backups must match the original StoredJob,
+immutable state and raw metadata digests after projecting only the authenticated
+recovery/conversion footprint.
+
+Authorized restore puts a separate `restored-offline-reference-v1` archive marker
+on each recovery row, outside immutable reservation/evidence/events. It binds
+origin and immediate-input backup digests, original binding/job digests, current
+fenced job/state/raw-metadata digests and the protected receipt graph. Its own
+digest detects corruption, not authorship. Repeated restore preserves origin
+and rebinds the current snapshot. Caller-forged archival data cannot create
+native write authority; all immutable record/receipt/ref checks still apply.
+Removing the marker fails the original preimage checks instead of upgrading a
+restored record. Backup, inspection and maintenance reject inconsistent
+controls; GC retains the protected bytes of valid archives.
+
+Older v6 binaries and the unchanged v6 immutable plan command reject schema 5.
+This is an explicit compatibility denial, not data deletion. Current v7 ordinary
+storage can read schema 5, while native effective-reference operations reject
+archives and uncertain state. No claim is made that all old commands become
+usable after migration.
+
+Schema 5 deliberately seals this project's immutable baseline. The internal
+storage operation gate rejects ordinary staging, commits, revisions, job/resource
+changes and pin/unpin mutations before effects. Only the one admitted recovery
+and its explicitly bound conversion have dedicated write paths; caller options
+or identifier prefixes do not enable generic writes. A second recovery is not
+supported in this initial unit. Maintenance may verify/report a no-op, but
+deletion/discard requires separate review. Empty-destination authorized restore
+is a separate exception and always produces archives. Historical reads,
+idempotent read-only receipt replay and verified backup remain available.
+
 ## Explicit immutable read-only composition
 
 `access: "read-only"` requires a host-held immutable main-database snapshot and

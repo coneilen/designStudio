@@ -14,6 +14,12 @@ export {
   NativeCaptureStartupCleanupRequired,
 } from "./capture-runtime-internal.js";
 export {
+  type NativeReferenceOfflineInput,
+  openNativeReferenceOffline,
+  REFERENCE_CONVERSION_CONFIRMATION,
+  REFERENCE_RECOVERY_CONFIRMATION,
+} from "./reference-offline.js";
+export {
   DIAGNOSTIC_APPROVAL_CONFIRMATION,
   DIAGNOSTIC_DOWNLOAD_CONFIRMATION,
   type NativeReferenceInput,

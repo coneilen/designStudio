@@ -1,5 +1,77 @@
 # @design-studio/application
 
+## Offline reference publication and derived conversion
+
+`openNativeReferenceOffline(project)` is a separate v7 native composition.
+`reference-recovery-apply-plan` recomputes the physical source/history/approval,
+expired diagnostic, settled effect, quarantine, exact retained bytes and current
+native identities. `reference-recovery-apply` additionally requires the current
+plan digest, original Job digest and `RECOVER-VERIFIED-REFERENCE-OFFLINE`.
+The v6 plan digest is historical evidence, not this write grant.
+The plan explicitly advertises `single-recovery-and-bound-conversion-only`:
+schema 5 seals this project against unrelated mutations. New ordinary captures,
+staging/commits, revisions, pin changes, private exports and maintenance deletion
+are blocked before effects; a second recovery slot is not supported. Historical
+reads, existing receipt replay and backup remain available. This initial
+capability is not general editable-project support.
+
+The first write path supports two verified single-link **stage-only** outputs.
+It copies their bytes into new current-owned stages and commits a separate
+receipt protecting the original evidence, PNG and new recovery evidence. It
+never changes the original jobs, resources, leases, effects, stage records,
+source manifests, conversion receipts or exports, nor adopts/unlinks an old
+stage. Published-only orphans, mixed copies and multiply linked files are not
+promoted. No provider, DNS, source-download, credential journal or vault
+capability is created.
+
+An immutable unique original-diagnostic reservation and append-only events
+record intent before filesystem effects. Only a clean reservation with no file
+intent can resume across processes, with fresh proof and explicit confirmation.
+Completed replay returns the same verified receipt. Stage/publication uncertainty,
+unclosed conversion intent, retained SQLite sidecars and missing native
+durability proof remain blocked; ordinary inspection never repairs them.
+
+The schema-4/5 immutable read phase closes its connection and native pins before
+opening a separately admitted writer under the same project owner. Raw metadata,
+control journal, schema and native preimage CAS bind this transition. The
+artifact inventory identity is compared again before reservation. Original
+identities are rechecked around native publication and before the receipt;
+only exact journaled stages and intended content-addressed outputs may extend
+the namespace. Releasing read pins for an exclusive native rename does not
+authorize changed source bytes, identities or authority.
+
+`reference-recovery-inspect` uses the shared receipt/source/PNG resolver and
+labels the result `offline-recovered-reference`, while retaining historical
+status `interrupted`. Old diagnostic stages may coexist with new blobs only
+through that exact recovery receipt, protected graph and two distinct
+single-link identities. A current same-hash blob alone is insufficient.
+
+`convert-reference` requires the expected recovery receipt digest and
+`CONVERT-WITH-RECOVERED-REFERENCE`. It derives a new fixed-v2 composition identity,
+source-image provenance and `ReferenceConversionEvidence`, binding the original
+structure projection, source, reference and recovery receipt. Ordinary
+`convert` identities and results are unchanged. Reference availability does not
+clear unsupported-feature, asset/font-rights or fidelity diagnostics and does
+not claim render readiness. The conversion intent binds all expected output
+descriptors before staging and is not a generic retry permission.
+
+One `ReferenceInput` meters physical artifact reads plus EOF probes across
+both proof phases, staging verification, native durability and final inspection:
+25 MiB, 30 seconds, zero network, unchanged raster/worker bounds. DB size and
+metadata/backup limits are separate. A committed receipt is not undone when
+final inspection or response closure fails. Responses are closed projections,
+not images, URLs, paths, design text or historical failure reconstructions.
+
+Backup format 5 preserves recovery records/events and protects their outputs.
+Restore retains the existing job fencing behavior: changed historical job
+preimages or absent original stages make restored recovery archival, not
+automatically executable or usable by the native resolver.
+Restoration records a separate closed archive marker tied to the origin backup
+and the new fenced snapshot. Repeated restore does not rewrite immutable
+evidence/events or promote the archive. Missing/changed markers and mismatched
+raw-row/reference graphs are rejected before use; a marker is not proof of
+fresh native provenance.
+
 ## Read-only retained-reference validation
 
 `openNativeReferenceValidation(project)` is a separate native facade for

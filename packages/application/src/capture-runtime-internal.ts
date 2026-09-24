@@ -1008,6 +1008,7 @@ export async function assembleNativeCapture(
             )?.artifact;
             if (!artifact) throw new ApplicationError("NOT_FOUND");
             ctx = await policy.issue({ ...base, output: true });
+            unwrap(await db.checkOrdinaryWrite(ctx));
             const source = await read(artifact, ctx);
             try {
               const staged = unwrap(

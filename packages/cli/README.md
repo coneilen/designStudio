@@ -1,5 +1,31 @@
 # @design-studio/cli
 
+## Explicit offline recovery (native v7)
+
+```text
+figma reference-recovery-apply-plan --project <ID> --request-id <original request> --expected-job <Job SHA256>
+figma reference-recovery-apply --project <ID> --request-id <original request> --expected-job <Job SHA256> --expected-proof <current apply-plan SHA256> --confirm RECOVER-VERIFIED-REFERENCE-OFFLINE
+figma reference-recovery-inspect --project <ID> --request-id <original request> --expected-job <Job SHA256>
+figma convert-reference --project <ID> --request-id <original request> --expected-job <Job SHA256> --expected-recovery <recovery receipt SHA256> --confirm CONVERT-WITH-RECOVERED-REFERENCE
+```
+
+These commands derive identities and paths from the original request. They
+accept no URLs, caller artifact/job IDs, filesystem paths or serialized proofs.
+The new apply plan must come from the current v7 installation; an older v6
+validation proof cannot authorize writes. Confirming recovery authorizes an
+offline copy/publication, never another download or an original-job retry.
+**Applying seals the project:** schema 5 permits one offline recovery and its
+explicit reference-bound conversion, not unrelated capture/edit/export/metadata
+mutations. The apply plan reports this restriction. Use a separate project for
+unrelated work until version-aware continuation is separately reviewed.
+Maintenance may inspect the sealed project but cannot delete or discard data.
+
+Recovery preserves the consumed interrupted diagnostic and creates a distinct
+receipt. Inspect is nonmutating. A pending effect, unknown publication or retained
+SQLite sidecar is blocked, not automatically reconciled. Conversion uses a new
+receipt-bound identity and still reports `blocked` or `needs-review`, never
+render-ready merely because a reference image is available.
+
 ## Offline retained-reference validation
 
 ```text

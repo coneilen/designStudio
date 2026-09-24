@@ -1,3 +1,4 @@
+import { writeFileSync } from "node:fs";
 import {
   link,
   lstat,
@@ -12,10 +13,12 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { isMainThread } from "node:worker_threads";
 import type {
   NativeReferenceEnvelope,
   StagedArtifact,
 } from "@design-studio/contracts";
+import { parseContract } from "@design-studio/contracts";
 import { fakeComplete } from "@design-studio/contracts/testing";
 import { canonicalBytes, hashBytes } from "@design-studio/design-ir";
 import {
@@ -39,23 +42,42 @@ import {
   FigmaHttpsTransport,
 } from "../../figma-capture/dist/transport.js";
 import { png } from "../../figma-capture/tests/support.js";
+import { WindowsNtfsPublisher } from "../../host/dist/windows-publication.js";
 import { Execution } from "../../jobs/dist/execution.js";
 import { nativeCapturePolicy } from "../../project-host/dist/capture-authority.js";
 import { CAPTURE_DIAGNOSTIC_POLICY_SHA256 } from "../../project-host/src/capture-diagnostic-profile.js";
 import { CAPTURE_POLICY_SHA256 } from "../../project-host/src/capture-profile.js";
 import { CAPTURE_REFERENCE_POLICY_SHA256 } from "../../project-host/src/capture-reference-profile.js";
 import { loadNative, type ReadLease } from "../../project-host/src/native.js";
+import {
+  pinReferenceBackupFile,
+  publishReferenceBackupFile,
+} from "../../project-host/src/reference-backup.js";
+import { REFERENCE_OFFLINE_POLICY_SHA256 } from "../../project-host/src/reference-offline-profile.js";
+import { pinImmutableReferenceDatabase } from "../../project-host/src/reference-validation-database.js";
 import { pinRetainedReferenceEntry } from "../../project-host/src/reference-validation-entry.js";
 import { REFERENCE_VALIDATION_POLICY_SHA256 } from "../../project-host/src/reference-validation-profile.js";
 import { createRetainedOwnerFixture } from "../../project-host/tests/retained-owner-fixture.js";
 import { initializeImmutableSqlite } from "../../storage/dist/immutable-sqlite.js";
 import { rewriteSyntheticRetainedEvidence } from "../../storage/tests/capture-recovery-corruption.js";
-import { syntheticImmutableSnapshot } from "../../storage/tests/support.js";
+import {
+  backupSyntheticOffline,
+  observeSyntheticReference,
+} from "../../storage/tests/reference-recovery-observer.js";
+import {
+  syntheticBackupPin,
+  syntheticImmutableSnapshot,
+} from "../../storage/tests/support.js";
 import {
   assembleNativeCapture,
+  NativeCaptureCleanupRequired,
   type NativeCaptureRuntime,
 } from "../src/capture-runtime-internal.js";
 import { ReferenceInput } from "../src/reference-input.js";
+import {
+  type NativeReferenceOfflineInput,
+  openNativeReferenceOffline,
+} from "../src/reference-offline.js";
 import { ReferenceReader } from "../src/reference-proof.js";
 import {
   DIAGNOSTIC_APPROVAL_CONFIRMATION,
@@ -141,6 +163,7 @@ async function fixture(
     renderNode?: string;
     diagnostic?: boolean;
     fixedClock?: boolean;
+    offline?: boolean;
   } = {},
 ) {
   const nativeMode = nativeRetainedMode;
@@ -172,11 +195,23 @@ async function fixture(
     if (native && sid) native.createDirectory(path.join(root, name), sid);
     else await mkdir(path.join(root, name));
   }
+  if (native && sid && options.offline) {
+    native.createDirectory(path.join(root, "db"), sid);
+    native.createFile(
+      path.join(root, "db", "state.sqlite"),
+      sid,
+      Buffer.alloc(0),
+    );
+  }
   const project = {
     projectId: "project_synthetic",
     artifactRootId: "artifacts_synthetic",
     paths: {
-      database: path.join(root, "state.sqlite"),
+      database: path.join(
+        root,
+        ...(native && options.offline ? ["db"] : []),
+        "state.sqlite",
+      ),
       artifacts: path.join(root, "artifacts"),
       outputs: path.join(root, "outputs"),
       inputs: root,
@@ -196,6 +231,10 @@ async function fixture(
     | Awaited<ReturnType<typeof openNativeReferenceValidation>>
     | undefined;
   let validationMode = false;
+  let offlineMode = false;
+  let offline:
+    | Awaited<ReturnType<typeof openNativeReferenceOffline>>
+    | undefined;
   let readPins = 0;
   let failInventoryPinClose = false;
   let firstInventoryRoot = true;
@@ -209,6 +248,16 @@ async function fixture(
   const vault = vi.fn();
   const ready = vi.fn(async () => undefined);
   const reads: { bytes: number; allowed: boolean }[] = [];
+  const ledger: { phase: string; bytes: number }[] = [];
+  if (options.offline) {
+    const reserve = ReferenceInput.prototype.reserveRead;
+    vi.spyOn(ReferenceInput.prototype, "reserveRead").mockImplementation(
+      function (this: ReferenceInput, bytes) {
+        ledger.push({ phase: this.phase, bytes });
+        reserve.call(this, bytes);
+      },
+    );
+  }
   const create = ProjectFileSystem.create.bind(ProjectFileSystem);
   vi.spyOn(ProjectFileSystem, "create").mockImplementation((o) =>
     create({
@@ -224,6 +273,7 @@ async function fixture(
       },
     }),
   );
+  const nativeDurability = ProjectFileSystem.prototype.ensurePublicationDurable;
   vi.spyOn(
     ProjectFileSystem.prototype,
     "ensurePublicationDurable",
@@ -233,6 +283,8 @@ async function fixture(
     artifacts,
     context,
   ) {
+    if (nativeMode && options.offline && offlineMode)
+      return nativeDurability.call(this, root, artifacts, context);
     // Portable synthetic publication still exercises the native barrier's body reread.
     if (options.durabilityReads)
       for (const artifact of artifacts) {
@@ -258,13 +310,39 @@ async function fixture(
       fault: (point) => {
         if (point === fault) {
           faultHits.push(point);
+          if (
+            nativeRetainedMode &&
+            options.offline &&
+            process.env.DESIGN_STUDIO_SYNTHETIC_OFFLINE_CRASH === point
+          ) {
+            if (!isMainThread)
+              throw new Error(
+                "Crash fixture requires an owned forked process, not a worker thread.",
+              );
+            writeFileSync(
+              path.join(root, "offline-crash-witness.json"),
+              JSON.stringify({
+                point,
+                pid: process.pid,
+                parentPid: process.ppid,
+                execution: "forked-process",
+              }),
+              { flag: "wx" },
+            );
+            process.kill(process.pid, "SIGKILL");
+            throw new Error(
+              "Synthetic crash termination did not stop execution.",
+            );
+          }
           throw new Error("Synthetic publication fault");
         }
       },
     });
     return currentStore;
   });
-  const open = async () => {
+  const originalProject = project;
+  const open = async (selectedProject: CaptureProject = originalProject) => {
+    const project = selectedProject;
     let current = true;
     let policy: ReturnType<typeof nativeCapturePolicy>;
     const work: CaptureWork = {
@@ -298,6 +376,97 @@ async function fixture(
             },
             pinReferenceValidationDatabase: () =>
               syntheticImmutableSnapshot(project.paths.database),
+            referenceOfflineAuthority: async () => {
+              if (!admitted || !current)
+                throw new HostBoundaryError(
+                  "FORBIDDEN",
+                  "Synthetic offline authority revoked.",
+                );
+              return REFERENCE_OFFLINE_POLICY_SHA256;
+            },
+            pinReferenceOfflineDatabase: async () => {
+              if (native && sid && options.offline)
+                return pinImmutableReferenceDatabase({
+                  filename: project.paths.database,
+                  sid,
+                  retainedPins,
+                  authoritySha256: REFERENCE_OFFLINE_POLICY_SHA256,
+                  authorize: async () => {
+                    if (!admitted || !current)
+                      throw new HostBoundaryError(
+                        "FORBIDDEN",
+                        "Native synthetic authority changed.",
+                      );
+                  },
+                });
+              const pin = await syntheticImmutableSnapshot(
+                project.paths.database,
+              );
+              const before = await lstat(project.paths.database);
+              let closed = false;
+              return {
+                ...pin,
+                close: () => {
+                  pin.close();
+                  closed = true;
+                },
+                checkReleased: async () => {
+                  expect(closed).toBe(true);
+                  expect(readPins).toBe(0);
+                  const after = await lstat(project.paths.database);
+                  expect([
+                    after.dev,
+                    after.ino,
+                    after.size,
+                    after.mtimeMs,
+                  ]).toEqual([
+                    before.dev,
+                    before.ino,
+                    before.size,
+                    before.mtimeMs,
+                  ]);
+                },
+              };
+            },
+            prepareReferenceBackup: async (filename: string) => {
+              if (native && sid && options.offline)
+                native.createFile(filename, sid, Buffer.alloc(0));
+              else await writeFile(filename, new Uint8Array(), { flag: "wx" });
+            },
+            pinReferenceBackup: async (filename) =>
+              native && sid && options.offline
+                ? pinReferenceBackupFile(filename, {
+                    owner: work,
+                    sid,
+                    retainedPins,
+                    current: work.current,
+                  })
+                : syntheticBackupPin(filename),
+            publishReferenceBackup: async (
+              source: string,
+              destination: string,
+              context: import("@design-studio/contracts").OperationContext,
+              proof,
+            ) => {
+              if (native && sid && options.offline)
+                return publishReferenceBackupFile({
+                  source,
+                  destination,
+                  proof,
+                  context,
+                  scope: {
+                    owner: work,
+                    sid,
+                    retainedPins,
+                    current: work.current,
+                  },
+                  authority: policy.verify,
+                });
+              await proof.check();
+              proof.close();
+              await rename(source, destination);
+              return syntheticBackupPin(destination);
+            },
             pinReferenceValidationEntry: async (
               rootId: string,
               relative: string,
@@ -426,7 +595,8 @@ async function fixture(
     vi.spyOn(policy.clock, "now").mockImplementation(
       () => (fixedNow ?? originalNow()) + clockOffset,
     );
-    if (validationMode)
+    if (offlineMode) offline = await openNativeReferenceOffline(project);
+    else if (validationMode)
       validation = await openNativeReferenceValidation(project);
     else runtime = await assembleNativeCapture(project);
     return runtime;
@@ -485,7 +655,18 @@ async function fixture(
       return { status: 200, mediaType: "image/png", bytes };
     });
   const initial = await open();
+  if (nativeMode && options.offline) {
+    const stage = ProjectFileSystem.prototype.stage;
+    vi.spyOn(ProjectFileSystem.prototype, "stage").mockImplementation(
+      async function (this: ProjectFileSystem, ...args) {
+        const result = await stage.apply(this, args);
+        if (offlineMode) await ownerFixture?.prepare();
+        return result;
+      },
+    );
+  }
   cleanups.push(async () => {
+    await offline?.close();
     await validation?.close();
     await runtime.close();
     expect(retainedPins.size).toBe(0);
@@ -508,6 +689,7 @@ async function fixture(
   vault.mockClear();
   ready.mockClear();
   reads.length = 0;
+  ledger.length = 0;
   seam.physicalReads = 0;
   seam.measureReads = true;
   const run = (
@@ -607,12 +789,52 @@ async function fixture(
     firstInventoryRoot = true;
     await open();
     reads.length = 0;
+    ledger.length = 0;
     seam.physicalReads = 0;
     return required(validation);
   };
   return {
     project,
     openValidation,
+    runOffline: async (
+      command: NativeReferenceOfflineInput,
+      signal = new AbortController().signal,
+    ) => {
+      await runtime.close();
+      await validation?.close();
+      await offline?.close();
+      if (ownerFixture) await ownerFixture.prepare();
+      offlineMode = true;
+      firstInventoryRoot = true;
+      await open();
+      reads.length = 0;
+      ledger.length = 0;
+      seam.physicalReads = 0;
+      return required(offline).execute(command, signal);
+    },
+    observeOffline: async () => {
+      await runtime.close();
+      await validation?.close();
+      await offline?.close();
+      return observeSyntheticReference(root, project.paths.database);
+    },
+    backupOffline: () => backupSyntheticOffline(root, project.paths.database),
+    runArchivedOffline: async (command: NativeReferenceOfflineInput) => {
+      await offline?.close();
+      offlineMode = true;
+      await open({
+        ...project,
+        paths: {
+          ...project.paths,
+          database: path.join(root, "restored.sqlite"),
+          artifacts: path.join(root, "restored"),
+        },
+      });
+      return required(offline).execute(command, new AbortController().signal);
+    },
+    get ledger() {
+      return ledger;
+    },
     failInventoryClose: () => {
       failInventoryPinClose = true;
     },
@@ -864,8 +1086,10 @@ async function fixture(
     },
     reopen: async () => {
       await validation?.close();
+      await offline?.close();
       await runtime.close();
       validationMode = false;
+      offlineMode = false;
       await open();
     },
   };
@@ -1284,7 +1508,6 @@ it("validates actual published-only retained bytes offline without rewriting the
     requestId: "original",
     inspection: "metadata-only",
   });
-
   const expectedJob = required(metadata.value?.metadata?.jobSha256);
   const before = await f.blobs();
   f.image.mockClear();
@@ -1459,6 +1682,616 @@ async function interruptedValidationFixture() {
     jobId: required(metadata.value?.metadata?.jobId),
   };
 }
+
+it(`publishes realistic offline reference within one physical budget${nativeRetainedMode ? " [native]" : ""}`, async () => {
+  const f = await fixture({
+    diagnostic: true,
+    offline: true,
+    nodeBytes: 2400000,
+    frameSize: 460,
+    durabilityReads: true,
+  });
+  await legacyReferenceFailure(f);
+  const approved = await f.diagnosticApprove();
+  const pngBytes = realisticReferencePng();
+  expect(pngBytes.length).toBe(847196);
+  f.image.mockImplementation(async (_url, budget) => {
+    budget.dnsQuery();
+    budget.receive(pngBytes.length);
+    budget.decoded(pngBytes.length);
+    return { status: 200, mediaType: "image/png", bytes: pngBytes };
+  });
+  const publish = vi
+    .spyOn(ProjectFileSystem.prototype, "publish")
+    .mockRejectedValueOnce(
+      new HostBoundaryError("INPUT_LIMIT", "Synthetic stage-only interruption"),
+    );
+  expect((await f.diagnosticDownload(approved)).status).toBe("interrupted");
+  publish.mockRestore();
+  f.advanceClock(40000);
+  const metadata = await f.run({
+    operation: "reference-diagnostic-inspect",
+    requestId: "original",
+    inspection: "metadata-only",
+  });
+  const expectedJob = required(metadata.value?.metadata?.jobSha256);
+  const command = { requestId: "original", expectedJob };
+  const plan = await f.runOffline({
+    ...command,
+    operation: "reference-recovery-apply-plan",
+  });
+  expect(plan.status, JSON.stringify(plan)).toBe("complete");
+  f.image.mockClear();
+  f.api.mockClear();
+  f.vault.mockClear();
+  f.ready.mockClear();
+  const applyStarted = Date.now();
+  const apply = await f.runOffline({
+    ...command,
+    operation: "reference-recovery-apply",
+    expectedProof: required(plan.plan?.proofSha256),
+    confirmation: "RECOVER-VERIFIED-REFERENCE-OFFLINE",
+  });
+  expect(apply.status, JSON.stringify(apply)).toBe("complete");
+  const applyElapsed = Date.now() - applyStarted;
+  expect(applyElapsed).toBeLessThan(30000);
+  expect(apply.effectiveReference?.referenceStatus).toBe("complete");
+  const charged = f.reads
+    .filter((r) => r.allowed)
+    .reduce((sum, r) => sum + r.bytes, 0);
+  expect(charged).toBe(apply.inputAccounting?.privateBytes);
+  expect(charged).toBe(
+    seam.physicalReads +
+      f.reads.filter((r) => r.allowed && r.bytes === 1).length,
+  );
+  expect(charged).toBeLessThanOrEqual(26214400);
+  expect(apply.inputAccounting?.networkBytes).toBe(0);
+  expect(f.readPins).toBe(0);
+  expect(f.image).not.toHaveBeenCalled();
+  expect(f.api).not.toHaveBeenCalled();
+  expect(f.vault).not.toHaveBeenCalled();
+  expect(f.ready).not.toHaveBeenCalled();
+  console.log(
+    `offline-reference-budget: private=${charged}; eof=${f.reads.filter((r) => r.allowed && r.bytes === 1).length}; network=0; pins=0`,
+  );
+  console.log(
+    `offline-reference-wall: applyMs=${applyElapsed}; fixtureClock=real-plus-expiry-offset`,
+  );
+  const phaseLedger = () =>
+    Object.fromEntries(
+      [...new Set(f.ledger.map((r) => r.phase))].map((phase) => [
+        phase,
+        {
+          bytes: f.ledger
+            .filter((r) => r.phase === phase)
+            .reduce((sum, r) => sum + r.bytes, 0),
+          eof: f.ledger.filter((r) => r.phase === phase && r.bytes === 1)
+            .length,
+        },
+      ]),
+    );
+  expect(f.ledger.reduce((sum, r) => sum + r.bytes, 0)).toBe(charged);
+  console.log(`offline-apply-ledger: ${JSON.stringify(phaseLedger())}`);
+  if (nativeRetainedMode) {
+    const conversionStarted = Date.now();
+    const converted = await f.runOffline({
+      ...command,
+      operation: "convert-reference",
+      expectedRecovery: required(apply.receiptSha256),
+      confirmation: "CONVERT-WITH-RECOVERED-REFERENCE",
+    });
+    expect(converted.status, JSON.stringify(converted)).toBe("complete");
+    expect(converted.conversion).toBeDefined();
+    expect(converted.inputAccounting?.privateBytes).toBeLessThanOrEqual(
+      26214400,
+    );
+    expect(converted.inputAccounting?.networkBytes).toBe(0);
+    expect(Date.now() - conversionStarted).toBeLessThan(30000);
+    const convertElapsed = Date.now() - conversionStarted;
+    const convertEof = f.reads.filter((r) => r.allowed && r.bytes === 1).length;
+    expect(converted.inputAccounting?.privateBytes).toBe(
+      seam.physicalReads + convertEof,
+    );
+    expect(f.ledger.reduce((sum, r) => sum + r.bytes, 0)).toBe(
+      converted.inputAccounting?.privateBytes,
+    );
+    console.log(
+      `offline-reference-conversion: private=${converted.inputAccounting?.privateBytes}; network=0; pins=${f.readPins}; convertMs=${convertElapsed}; eof=${convertEof}`,
+    );
+    console.log(`offline-convert-ledger: ${JSON.stringify(phaseLedger())}`);
+  }
+});
+
+it("publishes one offline reference receipt and replays without changing the consumed diagnostic", async () => {
+  const f = await fixture({
+    diagnostic: true,
+    fixedClock: true,
+    durabilityReads: true,
+  });
+  await legacyReferenceFailure(f);
+  const approved = await f.diagnosticApprove();
+  const publish = vi
+    .spyOn(ProjectFileSystem.prototype, "publish")
+    .mockRejectedValueOnce(
+      new HostBoundaryError("INPUT_LIMIT", "Synthetic stage-only interruption"),
+    );
+  expect((await f.diagnosticDownload(approved)).status).toBe("interrupted");
+  publish.mockRestore();
+  f.advanceClock(40000);
+  const metadata = await f.run({
+    operation: "reference-diagnostic-inspect",
+    requestId: "original",
+    inspection: "metadata-only",
+  });
+
+  const expectedJob = required(metadata.value?.metadata?.jobSha256);
+  const command = { requestId: "original", expectedJob };
+  const plan = await f.runOffline({
+    ...command,
+    operation: "reference-recovery-apply-plan",
+  });
+  expect(plan.status, JSON.stringify(plan)).toBe("complete");
+  const apply = await f.runOffline({
+    ...command,
+    operation: "reference-recovery-apply",
+    expectedProof: required(plan.plan?.proofSha256),
+    confirmation: "RECOVER-VERIFIED-REFERENCE-OFFLINE",
+  });
+  expect(apply.status, JSON.stringify(apply)).toBe("complete");
+  expect(apply.effectiveReference?.historicalStatus).toBe("interrupted");
+  const again = await f.runOffline({
+    ...command,
+    operation: "reference-recovery-apply-plan",
+  });
+  expect(again.status, JSON.stringify(again)).toBe("complete");
+  const replay = await f.runOffline({
+    ...command,
+    operation: "reference-recovery-apply",
+    expectedProof: required(again.plan?.proofSha256),
+    confirmation: "RECOVER-VERIFIED-REFERENCE-OFFLINE",
+  });
+  expect(replay.status, JSON.stringify(replay)).toBe("complete");
+  expect(replay.receiptSha256).toBe(apply.receiptSha256);
+  const before = await f.observeOffline();
+  const wrongRecovery = await f.runOffline({
+    ...command,
+    operation: "convert-reference",
+    expectedRecovery: "0".repeat(64),
+    confirmation: "CONVERT-WITH-RECOVERED-REFERENCE",
+  });
+  expect(wrongRecovery.status).toBe("failed");
+  expect(wrongRecovery.error?.code).toBe("CONFLICT");
+  const conversion = await f.runOffline({
+    ...command,
+    operation: "convert-reference",
+    expectedRecovery: required(apply.receiptSha256),
+    confirmation: "CONVERT-WITH-RECOVERED-REFERENCE",
+  });
+  expect(conversion.status, JSON.stringify(conversion)).toBe("complete");
+  expect(conversion.conversion?.readiness).not.toBe("ready");
+  const convertedAgain = await f.runOffline({
+    ...command,
+    operation: "convert-reference",
+    expectedRecovery: required(apply.receiptSha256),
+    confirmation: "CONVERT-WITH-RECOVERED-REFERENCE",
+  });
+  expect(convertedAgain.status, JSON.stringify(convertedAgain)).toBe(
+    "complete",
+  );
+  expect(convertedAgain.conversion).toEqual(conversion.conversion);
+  const inspected = await f.runOffline({
+    ...command,
+    operation: "reference-recovery-inspect",
+  });
+  expect(inspected.status, JSON.stringify(inspected)).toBe("complete");
+  expect(inspected.effectiveReference?.receiptSha256).toBe(apply.receiptSha256);
+  const after = await f.observeOffline();
+  for (const table of ["jobs", "job_resources", "job_stages"])
+    expect(after.rows[table]).toEqual(before.rows[table]);
+  for (const table of ["receipts", "artifacts"])
+    for (const row of before.rows[table] ?? [])
+      expect(after.rows[table]).toContainEqual(row);
+  expect(after.files).toEqual(before.files);
+  expect(after.controls).toEqual(before.controls);
+  expect(after.events).toHaveLength(10);
+  const otherSlot = await f.runOffline({
+    operation: "reference-recovery-apply-plan",
+    requestId: "different_capture",
+    expectedJob: command.expectedJob,
+  });
+  expect(otherSlot.status).toBe("failed");
+  expect(otherSlot.reason).toBe("recovery-blocked");
+  expect(otherSlot.inputAccounting?.privateBytes).toBe(0);
+  await f.reopen();
+  const outputNames = await readdir(f.project.paths.outputs);
+  const ordinaryExport = await f.runtime.execute(
+    {
+      operation: "artifact",
+      requestId: "original",
+      role: "metadata",
+      outputRelative: "sealed-output.bin",
+    },
+    new AbortController().signal,
+  );
+  expect(ordinaryExport.status).toBe("failed");
+  expect(ordinaryExport.error?.code).toBe("ACTION_REQUIRED");
+  expect(await readdir(f.project.paths.outputs)).toEqual(outputNames);
+  await f.runtime.close();
+  const referenceEvidence = parseContract(
+    "ReferenceConversionEvidence",
+    await readFile(
+      path.join(
+        f.project.paths.artifacts,
+        "blobs",
+        required(conversion.conversion?.evidence.sha256),
+      ),
+      "utf8",
+    ),
+    "json",
+  );
+  expect(referenceEvidence.effectiveReference).toEqual(
+    apply.effectiveReference,
+  );
+  expect(referenceEvidence.source).toEqual(apply.effectiveReference?.source);
+  const receipts = (after.rows.receipts ?? []).map((row) => {
+    if (
+      !row ||
+      typeof row !== "object" ||
+      !("data" in row) ||
+      typeof row.data !== "string"
+    )
+      throw new Error("Invalid synthetic receipt row.");
+    return parseContract("CommitReceipt", row.data, "json");
+  });
+  const receipt = required(
+    receipts.find((r) => r.jobId === conversion.conversion?.operationId),
+  );
+  const provenance = parseContract(
+    "ProvenanceSnapshot",
+    await readFile(
+      path.join(
+        f.project.paths.artifacts,
+        "blobs",
+        required(receipt.outputs.at(-3)).sha256,
+      ),
+      "utf8",
+    ),
+    "json",
+  );
+  expect(
+    provenance.evidence
+      .filter((e) => e.kind === "source-image")
+      .map((e) => e.artifact),
+  ).toContainEqual(apply.effectiveReference?.reference);
+  expect(await f.backupOffline()).toEqual({
+    recoveryRecords: 1,
+    restoredExecution: "fenced-not-resumable",
+    gcDeleted: 0,
+    tamperedDenied: true,
+  });
+  const archived = await f.runArchivedOffline({
+    ...command,
+    operation: "reference-recovery-inspect",
+  });
+  expect(archived.status, JSON.stringify(archived)).toBe("failed");
+  expect(archived.reason).toBe("recovery-blocked");
+  const originalStage = required(before.files[0]);
+  const stagePath = path.join(
+    f.project.paths.artifacts,
+    ...originalStage.name.split("/"),
+  );
+  const outsideInventory = path.join(
+    f.project.paths.temp,
+    "removed-original-target",
+  );
+  await rename(stagePath, outsideInventory);
+  try {
+    const missingStage = await f.runOffline({
+      ...command,
+      operation: "reference-recovery-inspect",
+    });
+    expect(missingStage.status).toBe("failed");
+    expect(missingStage.error?.code).toBe("ARTIFACT_INTEGRITY");
+  } finally {
+    await rename(outsideInventory, stagePath);
+  }
+  expect(f.readPins).toBe(0);
+});
+
+async function offlineStageFixture(native = false) {
+  const f = await fixture({
+    diagnostic: true,
+    fixedClock: true,
+    offline: native,
+  });
+  await legacyReferenceFailure(f);
+  const approval = await f.diagnosticApprove();
+  const publish = vi
+    .spyOn(ProjectFileSystem.prototype, "publish")
+    .mockRejectedValueOnce(
+      new HostBoundaryError("INPUT_LIMIT", "Synthetic stage-only interruption"),
+    );
+  expect((await f.diagnosticDownload(approval)).status).toBe("interrupted");
+  publish.mockRestore();
+  f.advanceClock(40000);
+  const metadata = await f.run({
+    operation: "reference-diagnostic-inspect",
+    requestId: "original",
+    inspection: "metadata-only",
+  });
+  const command = {
+    requestId: "original",
+    expectedJob: required(metadata.value?.metadata?.jobSha256),
+  };
+  const before = native ? undefined : await f.observeOffline();
+  const plan = await f.runOffline({
+    ...command,
+    operation: "reference-recovery-apply-plan",
+  });
+  expect(plan.status, JSON.stringify(plan)).toBe("complete");
+  return { f, command, before, plan };
+}
+
+it.skipIf(
+  !nativeRetainedMode || !process.env.DESIGN_STUDIO_SYNTHETIC_OFFLINE_CRASH,
+)("cold offline recovery crash fixture", async () => {
+  const point = process.env.DESIGN_STUDIO_SYNTHETIC_OFFLINE_CRASH;
+  if (
+    !point ||
+    ![
+      "reference-after-reserve",
+      "reference-after-stage",
+      "reference-before-receipt",
+      "after-commit",
+    ].includes(point)
+  )
+    throw new Error("Unknown synthetic crash boundary.");
+  const { f, command, plan } = await offlineStageFixture(true);
+  f.setFault(point);
+  await f.runOffline({
+    ...command,
+    operation: "reference-recovery-apply",
+    expectedProof: required(plan.plan?.proofSha256),
+    confirmation: "RECOVER-VERIFIED-REFERENCE-OFFLINE",
+  });
+  throw new Error("Synthetic crash boundary was not reached.");
+});
+
+for (const gap of [
+  "same-bytes-new-inode",
+  "same-length-different-bytes",
+] as const) {
+  it.skipIf(!nativeRetainedMode)(
+    `native migration backup rejects ${gap}`,
+    async () => {
+      const { f, command, plan } = await offlineStageFixture(true);
+      const native = await loadNative();
+      const publish = WindowsNtfsPublisher.prototype.publish;
+      let injected = false;
+      vi.spyOn(WindowsNtfsPublisher.prototype, "publish").mockImplementation(
+        async function (
+          this: WindowsNtfsPublisher,
+          source,
+          destination,
+          length,
+          guard,
+        ) {
+          if (source.endsWith(".sqlite.pending")) {
+            const bytes = await readFile(source);
+            if (gap === "same-bytes-new-inode") {
+              const replacement = `${source}.replacement`;
+              native.createFile(
+                replacement,
+                native.principal(),
+                Buffer.alloc(0),
+              );
+              await writeFile(replacement, bytes);
+              await rename(replacement, source);
+            } else {
+              bytes[bytes.length - 1] = (bytes[bytes.length - 1] ?? 0) ^ 1;
+              await writeFile(source, bytes);
+            }
+            injected = true;
+          }
+          return publish.call(this, source, destination, length, guard);
+        },
+      );
+      const result = await f.runOffline({
+        ...command,
+        operation: "reference-recovery-apply",
+        expectedProof: required(plan.plan?.proofSha256),
+        confirmation: "RECOVER-VERIFIED-REFERENCE-OFFLINE",
+      });
+      expect(injected, JSON.stringify(result)).toBe(true);
+      expect(result.status, JSON.stringify(result)).toBe("failed");
+      expect(result.error?.code).toBe("ARTIFACT_INTEGRITY");
+      const observed = await f.observeOffline();
+      expect(observed.schema).toBe(4);
+      expect(observed.controls).toHaveLength(0);
+      expect(
+        (await readdir(path.dirname(f.project.paths.database))).some((n) =>
+          /\.migration-v4-.*\.sqlite$/.test(n),
+        ),
+      ).toBe(true);
+      expect(f.readPins).toBe(0);
+    },
+  );
+}
+
+it.each([
+  ["migration-before-commit", 0, 0],
+  ["reference-after-reserve", 1, 0],
+  ["reference-after-intent", 1, 1],
+  ["reference-after-stage", 1, 1],
+  ["reference-before-receipt", 1, 7],
+] as const)(
+  "retains exact old history across offline fault %s",
+  async (fault, controls, events) => {
+    const { f, command, before, plan } = await offlineStageFixture();
+    if (!before) throw new Error("Missing synthetic preimage.");
+    f.setFault(fault);
+    const result = await f.runOffline({
+      ...command,
+      operation: "reference-recovery-apply",
+      expectedProof: required(plan.plan?.proofSha256),
+      confirmation: "RECOVER-VERIFIED-REFERENCE-OFFLINE",
+    });
+    expect(result.status).toBe("failed");
+    f.setFault();
+    const after = await f.observeOffline();
+    expect(after.controls).toHaveLength(controls);
+    expect(after.events).toHaveLength(events);
+    for (const table of ["jobs", "job_resources", "job_stages"])
+      expect(after.rows[table]).toEqual(before.rows[table]);
+    for (const file of before.files) expect(after.files).toContainEqual(file);
+    const inspected = await f.runOffline({
+      ...command,
+      operation: "reference-recovery-apply-plan",
+    });
+    if (events === 0) {
+      expect(inspected.status, JSON.stringify(inspected)).toBe("complete");
+      const resumed = await f.runOffline({
+        ...command,
+        operation: "reference-recovery-apply",
+        expectedProof: required(inspected.plan?.proofSha256),
+        confirmation: "RECOVER-VERIFIED-REFERENCE-OFFLINE",
+      });
+      expect(resumed.status, JSON.stringify(resumed)).toBe("complete");
+    } else {
+      expect(inspected.status).toBe("failed");
+      expect(inspected.reason).toBe("recovery-blocked");
+      expect((await f.observeOffline()).events).toEqual(after.events);
+    }
+    expect(f.readPins).toBe(0);
+  },
+);
+
+it("denies same-byte target replacement across the offline read-to-write handoff before reservation", async () => {
+  const { f, command, before, plan } = await offlineStageFixture();
+  if (!before) throw new Error("Missing synthetic preimage.");
+  const create = vi.mocked(ProjectFileSystem.create).getMockImplementation();
+  if (!create) throw new Error("Synthetic filesystem seam missing.");
+  let replaced = false;
+  vi.spyOn(ProjectFileSystem, "create").mockImplementation(async (options) => {
+    if (!replaced && options.roots.some((r) => r.access === "read-write")) {
+      const old = required(before.files[0]);
+      const target = path.join(
+        f.project.paths.artifacts,
+        ...old.name.split("/"),
+      );
+      const bytes = await readFile(target);
+      const temp = `${target}.replacement`;
+      await writeFile(temp, bytes, { flag: "wx" });
+      await rename(temp, target);
+      replaced = true;
+    }
+    return create(options);
+  });
+  const result = await f.runOffline({
+    ...command,
+    operation: "reference-recovery-apply",
+    expectedProof: required(plan.plan?.proofSha256),
+    confirmation: "RECOVER-VERIFIED-REFERENCE-OFFLINE",
+  });
+  expect(replaced).toBe(true);
+  expect(result.status).toBe("failed");
+  expect(result.error?.code).toBe("CONFLICT");
+  expect((await f.observeOffline()).controls).toHaveLength(0);
+});
+
+it("denies stale offline proof before schema or publication changes", async () => {
+  const { f, command, before } = await offlineStageFixture();
+  if (!before) throw new Error("Missing synthetic preimage.");
+  const denied = await f.runOffline({
+    ...command,
+    operation: "reference-recovery-apply",
+    expectedProof: "0".repeat(64),
+    confirmation: "RECOVER-VERIFIED-REFERENCE-OFFLINE",
+  });
+  expect(denied.status).toBe("failed");
+  expect(denied.reason).toBe("proof-changed");
+  expect(await f.observeOffline()).toEqual(before);
+});
+
+it("joins independent offline proof closures and requires close-only recovery after a pin failure", async () => {
+  const { f, command } = await offlineStageFixture();
+  f.failInventoryClose();
+  const error = await f
+    .runOffline({ ...command, operation: "reference-recovery-apply-plan" })
+    .then(
+      () => {
+        throw new Error("Expected closure failure.");
+      },
+      (error: unknown) => error,
+    );
+  expect(error).toBeInstanceOf(Error);
+  if (!(error instanceof NativeCaptureCleanupRequired)) throw error;
+  expect(seam.work?.isCurrent()).toBe(true);
+  await error.close();
+  expect(seam.work?.isCurrent()).toBe(false);
+  expect(f.readPins).toBe(0);
+});
+
+it("cancels offline publication on the original signal and retains exact history", async () => {
+  const { f, command, before, plan } = await offlineStageFixture();
+  if (!before) throw new Error("Missing synthetic preimage.");
+  const abort = new AbortController();
+  const stage = LocalStore.prototype.stageReferenceRecovery;
+  vi.spyOn(LocalStore.prototype, "stageReferenceRecovery").mockImplementation(
+    async function (this: LocalStore, ...args) {
+      abort.abort();
+      return stage.apply(this, args);
+    },
+  );
+  const result = await f.runOffline(
+    {
+      ...command,
+      operation: "reference-recovery-apply",
+      expectedProof: required(plan.plan?.proofSha256),
+      confirmation: "RECOVER-VERIFIED-REFERENCE-OFFLINE",
+    },
+    abort.signal,
+  );
+  expect(result.status).toBe("cancelled");
+  expect(result.error?.code).toBe("CANCELLED");
+  const after = await f.observeOffline();
+  expect(after.controls).toHaveLength(1);
+  expect(after.events).toHaveLength(0);
+  expect(after.files).toEqual(before.files);
+  expect(after.rows.jobs).toEqual(before.rows.jobs);
+  expect(f.readPins).toBe(0);
+});
+
+it("reports the real receipt when offline final inspection fails after commit", async () => {
+  const { f, command, plan } = await offlineStageFixture();
+  const inspect = ProjectFileSystem.prototype.inspectRetainedReference;
+  vi.spyOn(
+    ProjectFileSystem.prototype,
+    "inspectRetainedReference",
+  ).mockImplementation(async function (
+    this: ProjectFileSystem,
+    input,
+    context,
+  ) {
+    if (input.recoveredTargetArtifacts?.length)
+      throw new HostBoundaryError(
+        "INPUT_LIMIT",
+        "Synthetic final inspection limit",
+      );
+    return inspect.call(this, input, context);
+  });
+  const result = await f.runOffline({
+    ...command,
+    operation: "reference-recovery-apply",
+    expectedProof: required(plan.plan?.proofSha256),
+    confirmation: "RECOVER-VERIFIED-REFERENCE-OFFLINE",
+  });
+  expect(result.status).toBe("failed");
+  expect(result.receiptSha256).toMatch(/^[a-f0-9]{64}$/);
+  expect(result.effectiveReference).toBeUndefined();
+  expect(result.error?.message).toContain("receipt committed");
+  expect((await f.observeOffline()).events).toHaveLength(8);
+});
 
 it.each(["approval", "source", "bounds", "dimensions", "png"] as const)(
   "rejects physically hashed retained output with forged %s evidence rather than trusting stage metadata",

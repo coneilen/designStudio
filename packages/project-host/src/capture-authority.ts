@@ -57,6 +57,99 @@ export function nativeCapturePolicy(work: CaptureWork) {
     verify,
     actorId: work.actorId,
     outputRoot,
+    async issueReferenceOffline(input: {
+      jobId: string;
+      requestId: string;
+      jobReads: readonly string[];
+      write: boolean;
+      deadline: string;
+      signal: AbortSignal;
+    }): Promise<OperationContext> {
+      const owned = { ...input, jobReads: [...input.jobReads] };
+      await check();
+      if (!work.referenceOfflineAuthority)
+        throw new ApplicationError("FORBIDDEN");
+      await work.referenceOfflineAuthority();
+      if (owned.signal.aborted) throw new ApplicationError("CANCELLED");
+      if (owned.jobReads.length > 1000 || issued.size >= 128)
+        throw new ApplicationError("INPUT_LIMIT");
+      if (
+        owned.write &&
+        !/^(offline_reference_|convert_reference_)[a-f0-9]{64}$/.test(
+          owned.jobId,
+        )
+      )
+        throw new ApplicationError("FORBIDDEN");
+      const end = Math.min(clock.now() + 30000, Date.parse(owned.deadline));
+      if (!Number.isFinite(end) || end <= clock.now())
+        throw new ApplicationError("DEADLINE_EXCEEDED");
+      const token = sessions.createSession(
+        {
+          schemaVersion: "1.0",
+          projectId: work.project.projectId,
+          actorId: work.actorId,
+          sessionId: randomUUID(),
+          expiresAt: new Date(end).toISOString(),
+          grants: [
+            {
+              resourceKind: "artifact",
+              resourceId: work.project.artifactRootId,
+              operations: owned.write ? ["read", "write"] : ["read"],
+            },
+            {
+              resourceKind: "artifact",
+              resourceId: outputRoot,
+              operations: ["read"],
+            },
+            ...[...new Set([owned.jobId, ...owned.jobReads])].map(
+              (resourceId) => ({
+                resourceKind: "job" as const,
+                resourceId,
+                operations:
+                  owned.write && resourceId === owned.jobId
+                    ? (["read", "write"] as ["read", "write"])
+                    : (["read"] as ["read"]),
+              }),
+            ),
+          ],
+          egress: "deny",
+        },
+        "cli",
+      );
+      const authorization = sessions.authenticate({
+        remoteAddress: "127.0.0.1",
+        host: "127.0.0.1:47121",
+        method: "POST",
+        bearer: token.credential,
+      });
+      const detach = () => owned.signal.removeEventListener("abort", abort);
+      const abort = () => {
+        detach();
+        sessions.revoke(authorization);
+        issued.delete(authorization);
+      };
+      owned.signal.addEventListener("abort", abort, { once: true });
+      issued.set(authorization, detach);
+      if (owned.signal.aborted) {
+        abort();
+        throw new ApplicationError("CANCELLED");
+      }
+      return snapshotOperationContext({
+        schemaVersion: "1.0",
+        projectId: work.project.projectId,
+        requestId: owned.requestId,
+        jobId: owned.jobId,
+        authorization,
+        signal: owned.signal,
+        clock,
+        deadline: new Date(end).toISOString(),
+        budget: {
+          ...CAPTURE_LIMITS,
+          maxExternalCalls: 0,
+          maxRasterPixels: 6553600,
+        },
+      });
+    },
     async issueReferenceValidation(supplied: {
       jobId: string;
       requestId: string;

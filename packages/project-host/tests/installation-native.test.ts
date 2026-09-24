@@ -20,6 +20,7 @@ import {
 } from "@design-studio/host";
 import { expect, test, vi } from "vitest";
 import { loadNative, type ReadLease } from "../src/native.js";
+import { pinReferenceBackupFile } from "../src/reference-backup.js";
 import { pinImmutableReferenceDatabase } from "../src/reference-validation-database.js";
 import { pinRetainedReferenceEntry } from "../src/reference-validation-entry.js";
 import { withOwnedProbe } from "./owned-probe.js";
@@ -639,7 +640,7 @@ test("cold-native explicit current-owner fixture uses host history and productio
         "packages\\application\\tests\\reference-acquisition.test.ts",
         "-t",
         "^validates stage-only realistic source and PNG under the unchanged physical read budget including closure \\[native\\]$",
-        "--reporter=verbose",
+        "--reporter=dot",
       ],
       {
         timeout: 60000,
@@ -670,6 +671,256 @@ test("cold-native explicit current-owner fixture uses host history and productio
     console.log(ownerMarker?.[0]);
   });
 }, 60000);
+
+test("cold-native offline recovery publishes with real immutable DB pins and write-through durability", async ({
+  signal,
+}) => {
+  await withOwnedProbe(signal, async (root, run) => {
+    const result = await run(
+      [
+        path.resolve("node_modules\\vitest\\vitest.mjs"),
+        "run",
+        "--project",
+        "unit",
+        "packages\\application\\tests\\reference-acquisition.test.ts",
+        "-t",
+        "^publishes realistic offline reference within one physical budget \\[native\\]$",
+        "--reporter=dot",
+      ],
+      {
+        timeout: 60000,
+        env: {
+          SystemRoot: process.env.SystemRoot,
+          WINDIR: process.env.WINDIR,
+          PATH: path.dirname(process.execPath),
+          TEMP: root,
+          TMP: root,
+          DESIGN_STUDIO_SYNTHETIC_RETAINED_NATIVE: "1",
+        },
+      },
+    );
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("1 passed");
+    expect(result.stdout).toMatch(
+      /offline-reference-budget: private=\d+; eof=\d+; network=0; pins=0/,
+    );
+    console.log(
+      result.stdout.match(
+        /offline-reference-budget: private=\d+; eof=\d+; network=0; pins=0/,
+      )?.[0],
+    );
+    const applyWall = result.stdout.match(
+      /offline-reference-wall: applyMs=(\d+); fixtureClock=real-plus-expiry-offset/,
+    );
+    const convert = result.stdout.match(
+      /offline-reference-conversion: private=(\d+); network=0; pins=0; convertMs=(\d+); eof=(\d+)/,
+    );
+    expect(applyWall).not.toBeNull();
+    expect(convert).not.toBeNull();
+    expect(Number(applyWall?.[1])).toBeLessThan(30000);
+    expect(Number(convert?.[2])).toBeLessThan(30000);
+    for (const operation of ["apply", "convert"]) {
+      const line = result.stdout.match(
+        new RegExp(`offline-${operation}-ledger: (\\{[^\\n]+\\})`),
+      );
+      expect(line).not.toBeNull();
+      const ledger: Record<string, { bytes: number; eof: number }> = JSON.parse(
+        line?.[1] ?? "{}",
+      );
+      for (const [phase, value] of Object.entries(ledger)) {
+        expect([
+          "proof",
+          "history",
+          "admission",
+          "commit",
+          "inspection",
+        ]).toContain(phase);
+        expect(Number.isSafeInteger(value.bytes) && value.bytes >= 0).toBe(
+          true,
+        );
+        expect(Number.isSafeInteger(value.eof) && value.eof >= 0).toBe(true);
+      }
+      console.log(
+        `native-offline-${operation}-ledger: ${JSON.stringify(ledger)}`,
+      );
+    }
+    console.log(
+      `native-offline-wall: applyMs=${applyWall?.[1]}; convertMs=${convert?.[2]}; real-clock-with-expiry-offset`,
+    );
+  });
+}, 60000);
+
+for (const point of [
+  "reference-after-reserve",
+  "reference-after-stage",
+  "reference-before-receipt",
+  "after-commit",
+]) {
+  test(`cold offline crash at ${point} retains sidecars and denies read-only continuation`, async ({
+    signal,
+  }) => {
+    await withOwnedProbe(signal, async (root, run) => {
+      let failure: unknown;
+      try {
+        await run(
+          [
+            path.resolve("node_modules\\vitest\\vitest.mjs"),
+            "run",
+            "--project",
+            "unit",
+            "packages\\application\\tests\\reference-acquisition.test.ts",
+            "-t",
+            "^cold offline recovery crash fixture$",
+            "--reporter=dot",
+            "--pool=forks",
+            "--maxWorkers=1",
+          ],
+          {
+            timeout: 60000,
+            env: {
+              SystemRoot: process.env.SystemRoot,
+              WINDIR: process.env.WINDIR,
+              PATH: path.dirname(process.execPath),
+              TEMP: root,
+              TMP: root,
+              DESIGN_STUDIO_SYNTHETIC_RETAINED_NATIVE: "1",
+              DESIGN_STUDIO_SYNTHETIC_OFFLINE_CRASH: point,
+            },
+          },
+        );
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(Error);
+      const fixtures = (await readdir(root)).filter((name) =>
+        name.startsWith("ds-ph-reference-"),
+      );
+      expect(
+        fixtures,
+        failure instanceof Error ? failure.message : "No child failure",
+      ).toHaveLength(1);
+      const fixture = path.join(root, fixtures[0] ?? "");
+      const witness: {
+        point: string;
+        pid: number;
+        parentPid: number;
+        execution: string;
+      } = JSON.parse(
+        await readFile(
+          path.join(fixture, "offline-crash-witness.json"),
+          "utf8",
+        ),
+      );
+      expect(witness).toMatchObject({ point, execution: "forked-process" });
+      expect(witness.pid).not.toBe(process.pid);
+      expect(witness.parentPid).not.toBe(process.pid);
+      let ended = false;
+      try {
+        process.kill(witness.pid, 0);
+      } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "ESRCH")
+          ended = true;
+        else throw error;
+      }
+      expect(ended).toBe(true);
+      const inspected = await run(
+        [
+          path.resolve(
+            "packages\\project-host\\tests\\offline-crash-inspect.mjs",
+          ),
+          fixture,
+        ],
+        { timeout: 10000 },
+      );
+      expect(inspected.stderr).toBe("");
+      expect(JSON.parse(inspected.stdout)).toEqual({
+        denied: true,
+        unchanged: true,
+        pins: 0,
+      });
+    });
+  }, 60000);
+}
+
+for (const gap of ["same-bytes-new-inode", "same-length-different-bytes"]) {
+  test(`cold native migration backup rejects ${gap}`, async ({ signal }) => {
+    await withOwnedProbe(signal, async (root, run) => {
+      const result = await run(
+        [
+          path.resolve("node_modules\\vitest\\vitest.mjs"),
+          "run",
+          "--project",
+          "unit",
+          "packages\\application\\tests\\reference-acquisition.test.ts",
+          "-t",
+          `^native migration backup rejects ${gap}$`,
+          "--reporter=dot",
+        ],
+        {
+          timeout: 60000,
+          env: {
+            SystemRoot: process.env.SystemRoot,
+            WINDIR: process.env.WINDIR,
+            PATH: path.dirname(process.execPath),
+            TEMP: root,
+            TMP: root,
+            DESIGN_STUDIO_SYNTHETIC_RETAINED_NATIVE: "1",
+          },
+        },
+      );
+      expect(result.stderr).toBe("");
+      expect(result.stdout).toContain("1 passed");
+    });
+  }, 60000);
+}
+
+test("retains a failed fresh backup pin close for explicit ownership cleanup", async () => {
+  await ownedTest(async (root) => {
+    const native = await loadNative();
+    const filename = path.join(root, "backup.sqlite.pending");
+    native.createFile(
+      filename,
+      native.principal(),
+      Buffer.from("synthetic backup"),
+    );
+    const pins = new Set<ReadLease>();
+    const original = native.pinRead.bind(native);
+    let calls = 0;
+    const spy = vi.spyOn(native, "pinRead").mockImplementation((...args) => {
+      const lease = original(...args);
+      if (++calls !== 2) return lease;
+      let failed = false;
+      return {
+        ...lease,
+        close() {
+          if (!failed) {
+            failed = true;
+            throw new Error("Synthetic fresh backup close failure.");
+          }
+          lease.close();
+        },
+      };
+    });
+    try {
+      await expect(
+        pinReferenceBackupFile(filename, {
+          owner: {},
+          sid: native.principal(),
+          retainedPins: pins,
+          current: async () => {},
+        }),
+      ).rejects.toThrow("Synthetic fresh backup close failure");
+      expect(pins.size).toBe(1);
+    } finally {
+      spy.mockRestore();
+      for (const lease of [...pins]) {
+        lease.close();
+        pins.delete(lease);
+      }
+    }
+    expect(pins.size).toBe(0);
+  });
+});
 
 test("explicit current-owner fixture reads host stage and publication without changing DACLs, bytes or identities", async () => {
   await ownedTest(async (root, _own, beforeCleanup) => {
