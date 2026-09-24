@@ -79,11 +79,18 @@ parallelism. Both phases are failure-gated; the workflow shows them as separate
 steps and does not run the combined command again. This intentionally changes
 native test scheduling, not product authorization, lease or time-budget rules.
 
-The overall Workspace CI job watchdog is **25 minutes**, increased from 15 after
-the two complete local phases measured 851.19 seconds (14.19 minutes), before
-checkout/install/build/drift/smoke overhead. This is an infrastructure allowance,
-not a per-test, hook, product deadline or operation-budget increase. All assertions
-remain failure-gated; no automatic retry or `continue-on-error` is added.
+The overall Workspace CI job watchdog is **35 minutes**. The earlier increase
+from 15 to 25 minutes covered two local phases measured at 851.19 seconds.
+With expanded coverage, hosted run `35952509962` passed all 146 portable files
+in 1181.45 seconds and all 27 native files in 234.14 seconds, plus roughly
+50 seconds of setup/build work. The 25-minute job watchdog then cancelled smoke
+about 33 seconds after it started; smoke was **incomplete, not passed**.
+The 25-to-35-minute change is a bounded infrastructure allowance, not a runtime
+performance guarantee or a per-test, hook, product deadline, lease or operation-
+budget increase. Existing 5-second tests and the explicit 60-second cold native
+driver keep their limits. All assertions and sequential phases remain failure-
+gated; no retries, `continue-on-error`, worker, partition, skip or cache changes
+are introduced.
 
 `tests/unit-partition.ts` is the reviewed exact-file inventory. The checker uses
 the original `packages/**/*.test.ts` discovery minus the original smoke/default

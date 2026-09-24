@@ -96,8 +96,12 @@ Do not run both Vitest projects concurrently when evaluating this isolation
 profile: use the default `pnpm test:unit` orchestration. CI uses the same checker
 and two named sequential phases. No tests are removed or duplicated, and smoke
 and explicitly opted-in installed/live probes remain separate.
-The CI job has a 25-minute overall watchdog to include both measured phases and
-setup/build/smoke overhead; this does not extend individual test or product limits.
+The CI job has a 35-minute overall watchdog to include both measured phases and
+setup/build/smoke overhead. Run `35952509962` passed all 146 portable files in
+1181.45 seconds and all 27 native files in 234.14 seconds, but the previous
+25-minute job limit cancelled smoke after about 33 seconds: smoke was incomplete,
+not passed. The bounded infrastructure allowance does not extend individual
+test, hook or product limits, or guarantee runtime performance.
 
 F01's exact package-local dependencies are Ajv `8.17.1` (strict draft-07 shape
 validation), YAML `2.8.1` (bounded YAML authoring/duplicate-key detection), and
