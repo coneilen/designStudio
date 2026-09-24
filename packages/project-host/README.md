@@ -28,7 +28,8 @@ the ACL predicate itself is source/inventory-bound, not a new hashed policy fiel
 
 `installation-native.test.ts` includes a cold-native retained-validation driver
 which runs exactly the realistic application lineage/PNG case using real native
-protected roots, actual host stage/publication and production descendant pins.
+protected roots, actual host stage/publication and production descendant pins
+in an explicitly current-owner synthetic fixture.
 Its **new 60-second driver watchdog** covers cold startup, fixture history and
 joined child closure; it does not increase the 30-second production operation,
 the existing 60-second application fixture, or any older test's timeout.
@@ -39,6 +40,29 @@ The exact existing native-file partition and ordinary portable run are unchanged
 The child independently asserts 5,698,575 physical bytes + 29 EOF reservations
 = 5,698,604 charged private bytes, zero network/provider/vault use and no pins
 remaining; ordinary strict reads of those inherited descendants still deny.
+
+Windows may assign a token's default owner (for example Administrators) to
+ordinary host-created descendants rather than the current TokenUser. Production
+continues to refuse such a noncurrent owner; this change does not make that host
+configuration compatible or authorize an ownership repair. The separate untouched
+natural stage/publication test asserts actual native owner/DACL facts: current
+owner admits, noncurrent owner denies, with no skips or owner changes, and
+publication preserves the observed natural owner, DACL, bytes and inode.
+
+Positive/adversarial tests use a separately declared synthetic owner fixture.
+It registers an empty generated root, declares only absent artifact/output trees,
+pins a bounded ordinary single-link inventory and changes **only the owner to
+the current TokenUser**, if necessary, using a pinned native handle. Raw DACL
+bytes/control bits, names, file identity/size and payload hashes must be unchanged.
+No privileges, tokens, DACLs, OS policy or production files are modified.
+Foreign-path/undeclared-tree, link/reparse, root/entry replacement, depth-bound
+and closed-scope cases refuse before preparation. Failure to set owner is an
+explicit test failure, never a privileged fallback or skip.
+The cold fixture prepares only these declared new trees after runtime closure
+and before validation, records natural-owner denials and normalization counts,
+and independently keeps the validation meter unchanged. On a current-owner
+developer host preparation is a no-op; this alone does not prove the hosted
+Administrators-to-user assignment. That requires the actual hosted native run.
 
 The native work owner pins the canonical main database and parent directory
 for read with write/delete sharing denied. It rejects any WAL, SHM or rollback

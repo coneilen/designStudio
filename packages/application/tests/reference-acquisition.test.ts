@@ -46,6 +46,7 @@ import { CAPTURE_REFERENCE_POLICY_SHA256 } from "../../project-host/src/capture-
 import { loadNative, type ReadLease } from "../../project-host/src/native.js";
 import { pinRetainedReferenceEntry } from "../../project-host/src/reference-validation-entry.js";
 import { REFERENCE_VALIDATION_POLICY_SHA256 } from "../../project-host/src/reference-validation-profile.js";
+import { createRetainedOwnerFixture } from "../../project-host/tests/retained-owner-fixture.js";
 import { initializeImmutableSqlite } from "../../storage/dist/immutable-sqlite.js";
 import { rewriteSyntheticRetainedEvidence } from "../../storage/tests/capture-recovery-corruption.js";
 import { syntheticImmutableSnapshot } from "../../storage/tests/support.js";
@@ -152,7 +153,20 @@ async function fixture(
       ".tools\\sqlite-prebuild\\build\\Release\\better_sqlite3.node",
     ),
   );
-  const root = await mkdtemp(path.join(tmpdir(), "reference-synthetic-"));
+  const root = await mkdtemp(
+    path.join(
+      tmpdir(),
+      nativeMode ? "ds-ph-reference-" : "reference-synthetic-",
+    ),
+  );
+  const ownerFixture = nativeMode
+    ? await createRetainedOwnerFixture(root)
+    : undefined;
+  await ownerFixture?.declareTree("artifacts");
+  await ownerFixture?.declareTree("outputs");
+  let ownerPreparation:
+    | { entries: number; naturalOwnerDenials: number; normalized: number }
+    | undefined;
   for (const name of ["artifacts", "outputs"]) {
     if (native && sid) native.createDirectory(path.join(root, name), sid);
     else await mkdir(path.join(root, name));
@@ -474,6 +488,7 @@ async function fixture(
     await validation?.close();
     await runtime.close();
     expect(retainedPins.size).toBe(0);
+    ownerFixture?.close();
     await rm(root, { recursive: true, force: true });
   });
   const capture = await initial.execute(
@@ -558,6 +573,35 @@ async function fixture(
   const openValidation = async () => {
     await runtime.close();
     await validation?.close();
+    if (ownerFixture && sid) {
+      const natural = await ownerFixture.inspect();
+      let naturalOwnerDenials = 0;
+      for (const entry of natural) {
+        if (entry.owner === sid) continue;
+        const [tree, ...parts] = entry.relative.split("/");
+        if (tree !== "artifacts" && tree !== "outputs")
+          throw new Error("Synthetic owner fixture escaped declared trees.");
+        await expect(
+          pinRetainedReferenceEntry({
+            root: project.paths[tree],
+            relative: parts.join("/"),
+            directory: entry.directory,
+            sid,
+            retainedPins,
+            authorize: async () => {},
+          }),
+        ).rejects.toThrow(/owner/);
+        naturalOwnerDenials++;
+      }
+      expect(retainedPins.size).toBe(0);
+      const prepared = await ownerFixture.prepare();
+      expect(prepared).toEqual(natural);
+      ownerPreparation = {
+        entries: natural.length,
+        naturalOwnerDenials,
+        normalized: natural.filter((entry) => entry.owner !== sid).length,
+      };
+    }
     validationMode = true;
     firstInventoryRoot = true;
     await open();
@@ -579,6 +623,9 @@ async function fixture(
     },
     get strictDenials() {
       return strictDenials;
+    },
+    get ownerPreparation() {
+      return ownerPreparation;
     },
     validateRetained: async (
       expectedJob: string,
@@ -1315,6 +1362,12 @@ it(`validates stage-only realistic source and PNG under the unchanged physical r
   if (nativeRetainedMode) {
     expect(f.nativeAdmissions).toBeGreaterThan(29);
     expect(f.strictDenials).toBeGreaterThan(29);
+    const preparation = required(f.ownerPreparation);
+    expect(preparation.entries).toBeGreaterThan(2);
+    expect(preparation.naturalOwnerDenials).toBe(preparation.normalized);
+    console.log(
+      `retained-native-owner-fixture: ${JSON.stringify(preparation)}; owner-only; DACL/control/names/identity/bytes unchanged`,
+    );
     console.log(
       "retained-native-history: real native pins; strict inherited denial; private=5698604; physical=5698575; eof=29; network=0; pins=0",
     );

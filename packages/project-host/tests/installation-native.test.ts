@@ -7,6 +7,7 @@ import {
   readFile,
   rename,
   rm,
+  rmdir,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -22,10 +23,395 @@ import { loadNative, type ReadLease } from "../src/native.js";
 import { pinImmutableReferenceDatabase } from "../src/reference-validation-database.js";
 import { pinRetainedReferenceEntry } from "../src/reference-validation-entry.js";
 import { withOwnedProbe } from "./owned-probe.js";
+import { createRetainedOwnerFixture } from "./retained-owner-fixture.js";
 import { retainedSecurityFixture } from "./retained-security-fixture.js";
 import { ownedTest, weakenTestAcl } from "./support.js";
 
-test("cold-native retained-validation integration uses actual host history and production descendant pins", async ({
+async function declaredOwnerFixture(root: string) {
+  const owner = await createRetainedOwnerFixture(root);
+  await owner.declareTree("artifacts");
+  return owner;
+}
+
+function inheritedAcl(dacl: string, directory: boolean, sid: string) {
+  const bytes = Buffer.from(dacl, "hex");
+  expect(bytes.readUInt16LE(4)).toBe(2);
+  const trustees: string[] = [];
+  let offset = 8;
+  for (let index = 0; index < 2; index++) {
+    expect(bytes[offset]).toBe(0);
+    expect(bytes[offset + 1]).toBe(directory ? 0x13 : 0x10);
+    expect(bytes.readUInt32LE(offset + 4)).toBe(0x1f01ff);
+    const start = offset + 8;
+    const parts = [bytes[start], bytes.readUIntBE(start + 2, 6)];
+    for (let n = 0; n < (bytes[start + 1] ?? 0); n++)
+      parts.push(bytes.readUInt32LE(start + 8 + n * 4));
+    trustees.push(`S-${parts.join("-")}`);
+    offset += bytes.readUInt16LE(offset + 2);
+  }
+  expect(trustees.sort()).toEqual([sid, "S-1-5-18"].sort());
+}
+
+test("natural host descendants preserve owner through publication and admit only the actual current owner", async () => {
+  await ownedTest(async (root, _own, beforeCleanup) => {
+    const owner = await declaredOwnerFixture(root);
+    beforeCleanup(() => owner.close());
+    const native = await loadNative();
+    const artifacts = path.join(root, "artifacts");
+    native.createDirectory(artifacts, owner.sid);
+    const context = syntheticContext();
+    context.authorization.grants.push({
+      resourceKind: "artifact",
+      resourceId: "artifacts",
+      operations: ["read", "write"],
+    });
+    const fs = await ProjectFileSystem.create({
+      projectId: context.projectId,
+      authority: () => true,
+      publicationProfile: WINDOWS_PUBLICATION_PROFILE,
+      roots: [
+        {
+          id: "artifacts",
+          path: artifacts,
+          access: "read-write",
+          trustedExclusiveAccess: true,
+          managedBlobs: true,
+        },
+      ],
+    });
+    const pins = new Set<ReadLease>();
+    try {
+      const bytes = Buffer.from(
+        "Untouched natural host owner; never owner-normalized.",
+      );
+      const hash = createHash("sha256").update(bytes).digest("hex");
+      const staged = await fs.stage(
+        { artifactRootId: "artifacts", path: `blobs/${hash}` },
+        bytes,
+        context,
+      );
+      if (staged.status !== "complete")
+        throw new Error("Natural synthetic stage failed.");
+      const before = await owner.inspect();
+      const stage = before.find((entry) =>
+        entry.relative.endsWith(`/${staged.value.stagingId}`),
+      );
+      if (!stage) throw new Error("Natural stage observation missing.");
+      const checkAdmission = async (entries: typeof before) => {
+        for (const entry of entries.filter(
+          (item) => item.relative !== "artifacts",
+        )) {
+          expect(entry.control & 0x1004).toBe(4);
+          inheritedAcl(entry.dacl, entry.directory, owner.sid);
+          const relative = entry.relative.slice("artifacts/".length);
+          const foreign = entries.some(
+            (parent) =>
+              (entry.relative === parent.relative ||
+                entry.relative.startsWith(`${parent.relative}/`)) &&
+              parent.owner !== owner.sid,
+          );
+          expect(() =>
+            native.pinRead(entry.identity.path, entry.directory, owner.sid),
+          ).toThrow(entry.owner === owner.sid ? /protected/ : /owner/);
+          const admission = pinRetainedReferenceEntry({
+            root: artifacts,
+            relative,
+            directory: entry.directory,
+            sid: owner.sid,
+            retainedPins: pins,
+            authorize: async () => {},
+          });
+          if (foreign) await expect(admission).rejects.toThrow(/owner/);
+          else {
+            const pin = await admission;
+            try {
+              await pin.check();
+            } finally {
+              pin.close();
+            }
+          }
+        }
+      };
+      await checkAdmission(before);
+      const publication = await fs.publish(staged.value, context);
+      if (publication.status !== "complete")
+        throw new Error("Natural synthetic publication failed.");
+      const after = await owner.inspect();
+      const published = after.find(
+        (entry) => entry.relative === `artifacts/${publication.value.path}`,
+      );
+      if (!published) throw new Error("Natural published observation missing.");
+      expect([
+        published.owner,
+        published.control,
+        published.dacl,
+        published.identity.file,
+        published.identity.volume,
+        published.sha256,
+        published.size,
+      ]).toEqual([
+        stage.owner,
+        stage.control,
+        stage.dacl,
+        stage.identity.file,
+        stage.identity.volume,
+        stage.sha256,
+        stage.size,
+      ]);
+      expect(after.some((entry) => entry.relative === stage.relative)).toBe(
+        false,
+      );
+      expect(after.map((entry) => entry.relative).sort()).toEqual(
+        before
+          .map((entry) =>
+            entry === stage ? published.relative : entry.relative,
+          )
+          .sort(),
+      );
+      await checkAdmission(after);
+      expect(await owner.inspect()).toEqual(after);
+      expect(pins.size).toBe(0);
+      console.log(
+        JSON.stringify({
+          scope: "untouched natural synthetic host owner",
+          currentOwner: stage.owner === owner.sid,
+          administratorsOwner: stage.owner === "S-1-5-32-544",
+          admission:
+            stage.owner === owner.sid ? "current-owner" : "owner-denied",
+          ownerMutations: 0,
+        }),
+      );
+    } finally {
+      for (const pin of pins) pin.close();
+      owner.close();
+      await fs.closePreservingStages();
+    }
+  });
+});
+
+test.each([
+  "existing",
+  "undeclared",
+  "path",
+  "hardlink",
+  "junction",
+  "replacement",
+  "root-replacement",
+  "depth",
+  "closed",
+] as const)(
+  "explicit owner fixture refuses unowned or changed synthetic scope: %s",
+  async (kind) => {
+    await ownedTest(async (root, _own, beforeCleanup) => {
+      const native = await loadNative();
+      const sid = native.principal();
+      const artifacts = path.join(root, "artifacts");
+      if (kind === "existing") {
+        await writeFile(
+          path.join(root, "existing"),
+          "not registered while empty",
+        );
+        await expect(createRetainedOwnerFixture(root)).rejects.toThrow(/empty/);
+        return;
+      }
+      const owner = await createRetainedOwnerFixture(root);
+      beforeCleanup(() => owner.close());
+      if (kind === "undeclared") {
+        native.createDirectory(artifacts, sid);
+        await expect(owner.declareTree("artifacts")).rejects.toThrow(
+          /absent declared/,
+        );
+        owner.close();
+        return;
+      }
+      if (kind === "path") {
+        for (const name of [
+          "..",
+          ".",
+          root,
+          "..\\artifacts",
+          "artifacts\\blobs",
+          "inputs",
+        ])
+          await expect(
+            Reflect.apply(owner.declareTree, owner, [name]),
+          ).rejects.toThrow(/absent declared/);
+        owner.close();
+        return;
+      }
+      await owner.declareTree("artifacts");
+      native.createDirectory(artifacts, sid);
+      await mkdir(path.join(artifacts, "blobs"));
+      const filename = path.join(artifacts, "blobs", "body");
+      await writeFile(filename, "owned synthetic body");
+      const before = await owner.inspect();
+      if (kind === "hardlink")
+        await link(filename, path.join(artifacts, "blobs", "alias"));
+      if (kind === "junction") {
+        await rename(
+          path.join(artifacts, "blobs"),
+          path.join(root, "outside-declaration"),
+        );
+        await symlink(
+          path.join(root, "outside-declaration"),
+          path.join(artifacts, "blobs"),
+          "junction",
+        );
+      }
+      if (kind === "replacement") {
+        await rename(filename, path.join(root, "old-body"));
+        await writeFile(filename, "owned synthetic body");
+      }
+      if (kind === "depth") {
+        await mkdir(path.join(artifacts, "blobs", "deep"));
+        await writeFile(
+          path.join(artifacts, "blobs", "deep", "body"),
+          "too deep",
+        );
+      }
+      if (kind === "closed") owner.close();
+      const moved = `${root}-original`;
+      if (kind === "root-replacement") {
+        await rename(root, moved);
+        await mkdir(root);
+      }
+      try {
+        await expect(owner.prepare()).rejects.toThrow(/verification failed/);
+      } finally {
+        if (kind === "root-replacement") {
+          await rmdir(root);
+          await rename(moved, root);
+        }
+        if (kind === "junction") await rm(path.join(artifacts, "blobs"));
+        owner.close();
+      }
+      expect(before.every((entry) => entry.owner.length > 0)).toBe(true);
+    });
+  },
+);
+
+test("explicit owner preparation preserves actual DACL/control and bytes on every declared new entry", async () => {
+  await ownedTest(async (root, _own, beforeCleanup) => {
+    const owner = await declaredOwnerFixture(root);
+    beforeCleanup(() => owner.close());
+    const native = await loadNative();
+    const artifacts = path.join(root, "artifacts");
+    native.createDirectory(artifacts, owner.sid);
+    await mkdir(path.join(artifacts, "blobs"));
+    await writeFile(
+      path.join(artifacts, "blobs", "body"),
+      "owner-only synthetic bytes",
+    );
+    const natural = await owner.inspect();
+    const prepared = await owner.prepare();
+    expect(prepared).toEqual(natural);
+    const after = await owner.inspect();
+    expect(after).toEqual(
+      natural.map((entry) => ({ ...entry, owner: owner.sid })),
+    );
+    const again = await owner.prepare();
+    expect(again).toEqual(after);
+    owner.close();
+    console.log(
+      JSON.stringify({
+        scope: "explicit current-owner synthetic fixture",
+        entries: natural.length,
+        normalized: natural.filter((entry) => entry.owner !== owner.sid).length,
+        privilegesAdjusted: false,
+      }),
+    );
+  });
+});
+
+test("owner-fixture failed pins block reuse and root cleanup until explicit close retry", async () => {
+  const native = await loadNative();
+  const original = native.pinRead.bind(native);
+  let owner: Awaited<ReturnType<typeof createRetainedOwnerFixture>> | undefined;
+  let rootPath: string | undefined;
+  let identity: Awaited<ReturnType<typeof lstat>> | undefined;
+  let fail = true;
+  let outstanding = 0;
+  const errors: unknown[] = [];
+  const spy = vi.spyOn(native, "pinRead").mockImplementation((...args) => {
+    const pin = original(...args);
+    if (!args[0].endsWith("\\body")) return pin;
+    outstanding++;
+    let closed = false;
+    return {
+      ...pin,
+      close() {
+        if (fail) throw new Error("Synthetic owner fixture pin close failed.");
+        pin.close();
+        if (!closed) {
+          closed = true;
+          outstanding--;
+        }
+      },
+    };
+  });
+  try {
+    await expect(
+      ownedTest(async (root, _own, beforeCleanup) => {
+        rootPath = root;
+        identity = await lstat(root);
+        owner = await declaredOwnerFixture(root);
+        const scope = owner;
+        beforeCleanup(() => scope.close());
+        native.createDirectory(
+          path.join(root, "artifacts"),
+          native.principal(),
+        );
+        await writeFile(
+          path.join(root, "artifacts", "body"),
+          "synthetic retained close",
+        );
+        await expect(scope.prepare()).rejects.toThrow(/verification failed/);
+        expect(outstanding).toBeGreaterThan(0);
+        await expect(scope.inspect()).rejects.toMatchObject({
+          cause: expect.objectContaining({
+            message: "Synthetic owner fixture is closed or principal changed.",
+          }),
+        });
+      }),
+    ).rejects.toThrow(/fixture cleanup failed/);
+    if (!rootPath || !identity || !owner)
+      throw new Error("Missing synthetic close-retry owner.");
+    expect((await lstat(rootPath)).ino).toBe(identity.ino);
+    fail = false;
+    owner.close();
+    expect(outstanding).toBe(0);
+  } catch (error) {
+    errors.push(error);
+  }
+  fail = false;
+  try {
+    owner?.close();
+  } catch (error) {
+    errors.push(error);
+  }
+  spy.mockRestore();
+  try {
+    if (rootPath && identity) {
+      const current = await lstat(rootPath);
+      if (
+        current.ino !== identity.ino ||
+        current.dev !== identity.dev ||
+        current.isSymbolicLink()
+      )
+        throw new Error("Refusing changed synthetic close-retry root cleanup.");
+      await rm(rootPath, { recursive: true });
+    }
+  } catch (error) {
+    errors.push(error);
+  }
+  if (errors.length)
+    throw new AggregateError(
+      errors,
+      "Synthetic close-retry regression failed.",
+    );
+});
+
+test("cold-native explicit current-owner fixture uses host history and production descendant pins", async ({
   signal,
 }) => {
   await withOwnedProbe(signal, async (root, run) => {
@@ -55,14 +441,25 @@ test("cold-native retained-validation integration uses actual host history and p
     expect(result.stderr).toBe("");
     expect(result.stdout).toContain("including closure [native]");
     expect(result.stdout).toContain("1 passed");
+    expect(result.stdout).toContain("retained-native-owner-fixture:");
+    expect(result.stdout).toContain(
+      "owner-only; DACL/control/names/identity/bytes unchanged",
+    );
     expect(result.stdout).toContain(
       "retained-native-history: real native pins; strict inherited denial; private=5698604; physical=5698575; eof=29; network=0; pins=0",
     );
+    const ownerMarker = result.stdout.match(
+      /retained-native-owner-fixture: \{"entries":\d+,"naturalOwnerDenials":\d+,"normalized":\d+\}/,
+    );
+    expect(ownerMarker).not.toBeNull();
+    console.log(ownerMarker?.[0]);
   });
 }, 60000);
 
-test("retained native admission reads actual host stage and publication without changing bytes, ACLs or identities", async () => {
-  await ownedTest(async (root) => {
+test("explicit current-owner fixture reads host stage and publication without changing DACLs, bytes or identities", async () => {
+  await ownedTest(async (root, _own, beforeCleanup) => {
+    const owner = await declaredOwnerFixture(root);
+    beforeCleanup(() => owner.close());
     const native = await loadNative();
     const sid = native.principal();
     const artifacts = path.join(root, "artifacts");
@@ -113,6 +510,7 @@ test("retained native admission reads actual host stage and publication without 
       expect(staged.status).toBe("complete");
       if (staged.status !== "complete")
         throw new Error("Synthetic stage failed.");
+      await owner.prepare();
       const host = (await readdir(artifacts)).find((name) =>
         name.startsWith(".host-"),
       );
@@ -243,7 +641,9 @@ test.each([
 ] as const)(
   "retained native chain enforces exact synthetic security profiles: %s",
   async (kind) => {
-    await ownedTest(async (root) => {
+    await ownedTest(async (root, _own, beforeCleanup) => {
+      const owner = await declaredOwnerFixture(root);
+      beforeCleanup(() => owner.close());
       const native = await loadNative();
       const sid = native.principal();
       const artifacts = path.join(root, "artifacts");
@@ -252,6 +652,7 @@ test.each([
       await mkdir(parent);
       const filename = path.join(parent, "body");
       await writeFile(filename, "synthetic");
+      await owner.prepare();
       const retainedPins = new Set<ReadLease>();
       const parentCase = [
         "protected-parent",
@@ -384,7 +785,9 @@ test.each([
 );
 
 test("retained native brands reject forged, closed, cross-root and caller-path inputs and recheck current security", async () => {
-  await ownedTest(async (root) => {
+  await ownedTest(async (root, _own, beforeCleanup) => {
+    const owner = await declaredOwnerFixture(root);
+    beforeCleanup(() => owner.close());
     const native = await loadNative();
     const sid = native.principal();
     const artifacts = path.join(root, "artifacts");
@@ -392,6 +795,7 @@ test("retained native brands reject forged, closed, cross-root and caller-path i
     await mkdir(path.join(artifacts, "blobs"));
     const filename = path.join(artifacts, "blobs", "body");
     await writeFile(filename, "synthetic");
+    await owner.prepare();
     const first = native.pinRetainedRoot(artifacts, sid);
     try {
       expect(() => native.pinRetainedRoot(artifacts, "S-1-5-18")).toThrow(
@@ -445,13 +849,16 @@ test.each([
 ] as const)(
   "retained read ownership survives cancellation, revocation and failed cleanup: %s",
   async (kind) => {
-    await ownedTest(async (root) => {
+    await ownedTest(async (root, _own, beforeCleanup) => {
+      const owner = await declaredOwnerFixture(root);
+      beforeCleanup(() => owner.close());
       const native = await loadNative();
       const sid = native.principal();
       const artifacts = path.join(root, "artifacts");
       native.createDirectory(artifacts, sid);
       await mkdir(path.join(artifacts, "blobs"));
       await writeFile(path.join(artifacts, "blobs", "body"), "synthetic");
+      await owner.prepare();
       const retainedPins = new Set<ReadLease>();
       let allowed = true;
       let failClose = kind === "close" || kind === "admission-close";
