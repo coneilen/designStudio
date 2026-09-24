@@ -25,6 +25,16 @@ reads call it before allocation and after reading, with operation guards; failur
 zeros any allocated body. The native v6 provider admits only the exact rooted
 inherited owner/SYSTEM profile, while ordinary control-file pins stay strict.
 
+`inspectRetainedReference` returns a method-specific failure extension with an
+optional closed `inventoryFailure` check/category. Its state belongs to that one
+invocation; generic `Outcome` and host error contracts are unchanged. Only an
+observed classified guard records it, and cleanup never overwrites the first
+failure. Successful inspection and unclassified/cancelled failures omit it.
+Tags are returned only with the initial method outcome; later calls to a
+successful inspection's `check()` cannot mutate that prior outcome.
+The diagnostic does not add scans, reads or permissions, and a retained target
+category is not an assertion of its eventual image/evidence role.
+
 `authorizeOperation(context, scope, authority)` throws `HostBoundaryError` with
 a contract `ErrorCode`. `Authority` is `(AuthorizationContext) => boolean` and
 is **mandatory**: the host cannot infer authenticity from valid JSON, a session

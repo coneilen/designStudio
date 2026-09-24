@@ -7,6 +7,7 @@ import type {
   NativeReferenceRecoveryPlanEnvelope,
   OperationContext,
   ReferenceRecoveryPlan,
+  RetainedInventoryFailure,
 } from "@design-studio/contracts";
 import { parseContract, validateContract } from "@design-studio/contracts";
 import { canonicalBytes, canonicalDigest } from "@design-studio/design-ir";
@@ -555,6 +556,7 @@ export async function openNativeReferenceValidation(project: CaptureProject) {
       let result: NativeReferenceRecoveryPlanEnvelope;
       let cleanupFailure: NativeCaptureCleanupRequired | undefined;
       let finalContext: OperationContext | undefined;
+      let inventoryFailure: RetainedInventoryFailure | undefined;
       try {
         if (
           Object.keys(owned).sort().join(",") !==
@@ -719,9 +721,24 @@ export async function openNativeReferenceValidation(project: CaptureProject) {
         );
         expectedInspection = { artifacts: state.artifacts, targets, history };
         input.phase = "inspection";
-        inspection = unwrap(
-          await fs.inspectRetainedReference(expectedInspection, proof.context),
+        const inspected = await fs.inspectRetainedReference(
+          expectedInspection,
+          proof.context,
         );
+        if (
+          inspected.status !== "complete" &&
+          inspected.status !== "partial" &&
+          inspected.status !== "cancelled" &&
+          inspected.inventoryFailure
+        ) {
+          const diagnostic = validateContract(
+            "RetainedInventoryFailure",
+            inspected.inventoryFailure,
+          );
+          if (diagnostic.success)
+            inventoryFailure = structuredClone(diagnostic.value);
+        }
+        inspection = unwrap(inspected);
         if (
           inspection.targets.some(
             (t) => t.publication === "known-pair-native-read-blocked",
@@ -821,6 +838,9 @@ export async function openNativeReferenceValidation(project: CaptureProject) {
             retryable: false,
             diagnosticIds: [],
           },
+          ...(failure.code !== "CANCELLED" && inventoryFailure
+            ? { inventoryFailure }
+            : {}),
         };
       } finally {
         const errors = await finishInspection();

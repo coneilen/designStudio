@@ -25,6 +25,21 @@ const schema = JSON.parse(
   ),
 );
 const provider = createFakeFigmaProvider();
+if (
+  !contractNames.includes("RetainedInventoryFailure") ||
+  !validateContract("RetainedInventoryFailure", {
+    check: "proof-stat",
+    category: "original-proof",
+  }).success ||
+  validateContract("RetainedInventoryFailure", {
+    check: "proof-stat",
+    category: "original-proof",
+    path: "private",
+  }).success
+)
+  throw new Error(
+    "Closed inventory failure contract missing from built public API.",
+  );
 const capabilities = await provider.getCapabilities(syntheticContext());
 const apiSchemaRefs = [];
 for (const slug of [

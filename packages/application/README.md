@@ -34,6 +34,26 @@ A prior `source-proof-invalid` response cannot retrospectively identify which
 phase or native check failed. Synthetic inherited-ACL compatibility evidence is
 not proof of a historical private-file ACL or of current live recoverability.
 
+Failed retained inspection may additionally return closed
+`inventoryFailure: { check, category }`. The check identifies an actually
+observed descriptor, membership, publication, proof-native-identity versus
+proof-stat, body-read/hash, native admission, or recheck guard. The category is
+only `original-proof`, `history-stage`, `retained-target`,
+`committed-inventory` or `namespace`; it never asserts an image/evidence role.
+Both fields are allowlisted enums, with no path, hash, SID, ACL or exception
+text. The first failing guard is kept per invocation, not shared across calls.
+Unclassified exceptions, cancellation, successful plans and failures outside
+retained inspection carry no inventory diagnostic. The original reason/error
+code, nonretryable status and cleanup ownership remain authoritative; diagnostics
+do not confer partial eligibility or weaken any read/identity/security check.
+No new body read, scan or budget allowance is introduced by this metadata.
+The diagnostic covers only the initial `inspectRetainedReference` outcome,
+including its internal final recheck. A later post-decode `inspection.check()`
+failure keeps its existing `state-changed` reason without retroactively adding a
+tag to the successful initial outcome. Malformed internal diagnostic metadata is
+discarded while the original failure/error code is retained; it never turns a
+failed inspection into success or legitimizes extra private fields.
+
 The closed projection contains hashes, counts, dimensions, dispositions and a
 stable proof, never bytes, paths, private URLs or design text. The proof also
 binds native installation/project/database identities and the full metadata

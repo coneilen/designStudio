@@ -1328,6 +1328,7 @@ it(`validates stage-only realistic source and PNG under the unchanged physical r
     "stage-only",
     "stage-only",
   ]);
+  expect(result.inventoryFailure).toBeUndefined();
   const charged = f.reads
     .filter((read) => read.allowed)
     .reduce((sum, read) => sum + read.bytes, 0);
@@ -1393,6 +1394,7 @@ it("distinguishes initial source metadata denial from later lineage proof withou
       inputAccounting: { privateBytes: 0, networkBytes: 0, phase: "proof" },
     });
     expect(result.value).toBeUndefined();
+    expect(result.inventoryFailure).toBeUndefined();
     expect(JSON.stringify(result)).not.toContain(
       "Synthetic private metadata guard detail",
     );
@@ -1448,6 +1450,7 @@ it.each(["approval", "source", "bounds", "dimensions", "png"] as const)(
     const result = await f.validateRetained(expectedJob);
     expect(result.status, JSON.stringify(result)).toBe("failed");
     expect(result.reason).toBe("evidence-invalid");
+    expect(result.inventoryFailure).toBeUndefined();
     expect(result.value).toBeUndefined();
     expect(f.readPins).toBe(0);
     expect(f.image).not.toHaveBeenCalled();
@@ -1470,11 +1473,104 @@ it("rejects same-byte source inode replacement between verified proof reads and 
       status: "failed",
       reason: "inventory-invalid",
       error: { code: "ARTIFACT_INTEGRITY" },
+      inventoryFailure: {
+        check: "proof-native-identity",
+        category: "original-proof",
+      },
     });
     expect(result.value).toBeUndefined();
     expect(f.readPins).toBe(0);
   } finally {
     replaced.mockRestore();
+  }
+});
+
+it.each(["tagged", "cancelled", "unclassified", "invalid-tag"] as const)(
+  "retained inventory failure projection stays local and closed: %s",
+  async (kind) => {
+    const { f, expectedJob } = await interruptedValidationFixture();
+    const inspect = vi
+      .spyOn(ProjectFileSystem.prototype, "inspectRetainedReference")
+      .mockImplementationOnce(async (_input, context) => {
+        const outcome = {
+          schemaVersion: "1.0" as const,
+          projectId: context.projectId,
+          requestId: context.requestId,
+          status:
+            kind === "cancelled" ? ("cancelled" as const) : ("failed" as const),
+          error: {
+            code:
+              kind === "cancelled"
+                ? ("CANCELLED" as const)
+                : ("ARTIFACT_INTEGRITY" as const),
+            message:
+              "Synthetic private path/SID/exception must never be projected.",
+            retryable: false,
+            diagnosticIds: [],
+          },
+          diagnosticIds: [],
+        };
+        if (kind !== "unclassified")
+          Reflect.set(outcome, "inventoryFailure", {
+            check: "missing-recorded-entry",
+            category: "history-stage",
+            ...(kind === "invalid-tag" ? { path: "synthetic-private" } : {}),
+          });
+        return outcome;
+      });
+    try {
+      const result = await f.validateRetained(expectedJob);
+      expect(result.status).toBe(kind === "cancelled" ? "cancelled" : "failed");
+      expect(result.error?.code).toBe(
+        kind === "cancelled" ? "CANCELLED" : "ARTIFACT_INTEGRITY",
+      );
+      expect(result.error?.retryable).toBe(false);
+      expect(result.value).toBeUndefined();
+      expect(result.inventoryFailure).toEqual(
+        kind === "tagged"
+          ? { check: "missing-recorded-entry", category: "history-stage" }
+          : undefined,
+      );
+      expect(JSON.stringify(result)).not.toMatch(
+        /synthetic-private|private path|SID\/exception/,
+      );
+      expect(f.readPins).toBe(0);
+    } finally {
+      inspect.mockRestore();
+    }
+  },
+);
+
+it("post-decode recheck failure does not invent an initial inventory diagnostic", async () => {
+  const { f, expectedJob } = await interruptedValidationFixture();
+  const original = ProjectFileSystem.prototype.inspectRetainedReference;
+  const inspect = vi
+    .spyOn(ProjectFileSystem.prototype, "inspectRetainedReference")
+    .mockImplementationOnce(async function (this: ProjectFileSystem, ...args) {
+      const result = await original.apply(this, args);
+      expect(result.status).toBe("complete");
+      expect(result.inventoryFailure).toBeUndefined();
+      if (result.status === "complete")
+        result.value.check = async () => {
+          throw new HostBoundaryError(
+            "ARTIFACT_INTEGRITY",
+            "Synthetic later native identity changed.",
+          );
+        };
+      return result;
+    });
+  try {
+    const result = await f.validateRetained(expectedJob);
+    expect(result).toMatchObject({
+      status: "failed",
+      reason: "state-changed",
+      error: { code: "ARTIFACT_INTEGRITY", retryable: false },
+    });
+    expect(result.value).toBeUndefined();
+    expect(result.inventoryFailure).toBeUndefined();
+    expect(f.readPins).toBe(0);
+  } finally {
+    inspect.mockRestore();
   }
 });
 

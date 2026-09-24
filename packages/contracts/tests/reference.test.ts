@@ -3,6 +3,91 @@ import { referenceDiagnosticFields, validateContract } from "../src/index.js";
 import { DEFAULT_BUDGETS } from "../src/profile.js";
 
 const artifact = { id: `sha256_${"a".repeat(64)}`, sha256: "a".repeat(64) };
+it("closes inventory failure diagnostics to enum-only failed plans with no value", () => {
+  const envelope = {
+    schemaVersion: "1.0",
+    operation: "reference-recovery-plan",
+    projectId: "synthetic",
+    requestId: "original",
+    status: "failed",
+    reason: "inventory-invalid",
+    error: {
+      code: "ARTIFACT_INTEGRITY",
+      message: "Closed failure.",
+      retryable: false,
+      diagnosticIds: [],
+    },
+  };
+  for (const check of [
+    "descriptor",
+    "missing-recorded-entry",
+    "publication-shape",
+    "committed-size",
+    "proof-native-identity",
+    "proof-stat",
+    "proof-membership",
+    "native-read-admission",
+    "body-read",
+    "body-hash",
+    "inventory-recheck",
+    "native-identity-recheck",
+  ]) {
+    for (const category of [
+      "original-proof",
+      "history-stage",
+      "retained-target",
+      "committed-inventory",
+      "namespace",
+    ]) {
+      expect(
+        validateContract("NativeReferenceRecoveryPlanEnvelope", {
+          ...envelope,
+          inventoryFailure: { check, category },
+        }).success,
+      ).toBe(true);
+    }
+  }
+  const failure = { check: "proof-stat", category: "original-proof" };
+  for (const bad of [
+    { ...failure, path: "private" },
+    { ...failure, sha256: artifact.sha256 },
+    { ...failure, sid: "private" },
+    { ...failure, acl: "private" },
+    { ...failure, message: "private" },
+    { ...failure, category: "reference-image" },
+    { ...failure, check: "raw exception" },
+    { check: failure.check },
+  ]) {
+    expect(validateContract("RetainedInventoryFailure", bad).success).toBe(
+      false,
+    );
+    expect(
+      validateContract("NativeReferenceRecoveryPlanEnvelope", {
+        ...envelope,
+        inventoryFailure: bad,
+      }).success,
+    ).toBe(false);
+  }
+  for (const status of ["complete", "cancelled", "interrupted"])
+    expect(
+      validateContract("NativeReferenceRecoveryPlanEnvelope", {
+        ...envelope,
+        status,
+        inventoryFailure: failure,
+      }).success,
+    ).toBe(false);
+  expect(
+    validateContract("NativeReferenceRecoveryPlanEnvelope", {
+      ...envelope,
+      inventoryFailure: failure,
+      value: {},
+    }).success,
+  ).toBe(false);
+  expect(
+    validateContract("NativeReferenceRecoveryPlanEnvelope", envelope).success,
+  ).toBe(true);
+});
+
 it("keeps legacy source proof reasons and the additional metadata phase closed", () => {
   const envelope = {
     schemaVersion: "1.0",

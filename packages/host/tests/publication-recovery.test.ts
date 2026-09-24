@@ -18,12 +18,23 @@ import {
   ProjectFileSystem,
   type RetainedReferenceInput,
 } from "../src/filesystem.js";
+import { HostBoundaryError } from "../src/guards.js";
 
-const fault = vi.hoisted(() => ({ unlinkPath: "" }));
+const fault = vi.hoisted(() => ({ unlinkPath: "", shortReadPath: "" }));
 vi.mock("node:fs/promises", async (original) => {
   const actual = await original<typeof import("node:fs/promises")>();
   return {
     ...actual,
+    open: async (...args: Parameters<typeof actual.open>) => {
+      const handle = await actual.open(...args);
+      if (String(args[0]) === fault.shortReadPath) {
+        fault.shortReadPath = "";
+        Object.defineProperty(handle, "read", {
+          value: async (buffer: Uint8Array) => ({ bytesRead: 0, buffer }),
+        });
+      }
+      return handle;
+    },
     unlink: async (target: Parameters<typeof actual.unlink>[0]) => {
       if (String(target).endsWith(fault.unlinkPath) && fault.unlinkPath) {
         fault.unlinkPath = "";
@@ -111,6 +122,20 @@ it.each([
   "grow",
   "truncate",
   "reparse",
+  "descriptor",
+  "missing-registered",
+  "missing-history",
+  "committed-size",
+  "proof-native",
+  "proof-stat",
+  "body-read",
+  "final-inventory",
+  "native-recheck",
+  "native-admission",
+  "unknown-pin",
+  "cancel-pin",
+  "corrupt-close-failure",
+  "diagnostic-isolation",
 ] as const)(
   "read-only retained inspector handles %s without adopting or unlinking history",
   async (kind) => {
@@ -145,7 +170,9 @@ it.each([
         Buffer.of(index + 42),
       );
     const first = targets[0];
-    if (!first) throw new Error("Missing synthetic descriptor");
+    const secondTarget = targets[1];
+    if (!first || !secondTarget)
+      throw new Error("Missing synthetic descriptor");
     const stage = path.join(artifacts, staging, first.stagingId);
     const blob = path.join(artifacts, first.artifact.path);
     if (kind === "published-only") {
@@ -189,10 +216,44 @@ it.each([
       artifacts: [],
       history: [],
     };
+    const sourceBytes = Buffer.from("synthetic original proof");
+    const sourceHash = createHash("sha256").update(sourceBytes).digest("hex");
+    const source = {
+      id: `sha256_${sourceHash}`,
+      sha256: sourceHash,
+      path: `blobs/${sourceHash}`,
+      byteLength: sourceBytes.length,
+      mediaType: "application/octet-stream",
+    };
+    const sourcePath = path.join(artifacts, ...source.path.split("/"));
+    if (
+      [
+        "missing-registered",
+        "committed-size",
+        "proof-native",
+        "proof-stat",
+      ].includes(kind)
+    ) {
+      input.artifacts = [source];
+      if (kind !== "missing-registered")
+        await writeFile(sourcePath, sourceBytes);
+      if (kind === "committed-size")
+        input.artifacts = [{ ...source, byteLength: sourceBytes.length + 1 }];
+    }
+    if (kind === "missing-history")
+      input.history = [
+        { ...first, stagingId: "00000000-0000-4000-8000-000000000077" },
+      ];
+    if (kind === "descriptor")
+      input.targets = [{ ...first, stagingId: "invalid" }, secondTarget];
+    if (kind === "corrupt-close-failure") await writeFile(stage, Buffer.of(44));
     let pins = 0;
     let sequence = 0;
     const closes = new Map<number, number>();
     let charged = 0;
+    let inspectionActive = false;
+    let rootChecks = 0;
+    let mutated = false;
     const files = await ProjectFileSystem.create({
       projectId: context.projectId,
       authority: () => true,
@@ -218,9 +279,18 @@ it.each([
         artifactRootId: "artifacts",
         outputRootId: "outputs",
         authorize: async (actual) => {
-          expect(actual).toEqual(input);
+          if (kind !== "diagnostic-isolation") expect(actual).toEqual(input);
         },
         pin: async (id, relative) => {
+          if (kind === "native-admission")
+            throw new HostBoundaryError(
+              "ACTION_REQUIRED",
+              "Synthetic native owner guard",
+            );
+          if (kind === "unknown-pin")
+            throw new Error("Synthetic unclassified pin exception");
+          if (kind === "cancel-pin")
+            throw new HostBoundaryError("CANCELLED", "Synthetic cancelled pin");
           const filename = path.join(
             id === "artifacts" ? artifacts : outputs,
             ...relative.split("/"),
@@ -229,19 +299,39 @@ it.each([
           expect(stat.isDirectory() || stat.nlink === 1).toBe(true);
           pins++;
           const pinId = ++sequence;
+          if (kind === "final-inventory" && !mutated) {
+            mutated = true;
+            await writeFile(path.join(outputs, "new-output"), Buffer.of(1));
+          }
+          if (id === "artifacts" && relative === "") rootChecks++;
           let closed = false;
           return {
-            check: async () => {},
+            check: async () => {
+              if (kind === "body-read" && !mutated && filename === stage) {
+                mutated = true;
+                fault.shortReadPath = stage;
+              }
+            },
             identity: {
               path: filename,
               volume: stat.dev,
-              file: String(stat.ino),
+              file:
+                kind === "proof-native" &&
+                inspectionActive &&
+                relative === source.path
+                  ? "changed-native-identity"
+                  : kind === "native-recheck" &&
+                      relative === "" &&
+                      id === "artifacts" &&
+                      rootChecks === 2
+                    ? "changed-recheck-identity"
+                    : String(stat.ino),
             },
             close: () => {
               if (!closed) {
                 closes.set(pinId, (closes.get(pinId) ?? 0) + 1);
                 if (
-                  kind === "close-failure" &&
+                  ["close-failure", "corrupt-close-failure"].includes(kind) &&
                   pinId === 1 &&
                   closes.get(pinId) === 1
                 )
@@ -255,7 +345,99 @@ it.each([
       },
     });
     try {
+      if (kind === "proof-native" || kind === "proof-stat") {
+        const proof = await files.read(
+          { artifactRootId: "artifacts", path: source.path },
+          context,
+        );
+        expect(proof.status).toBe("complete");
+        if (kind === "proof-stat") await writeFile(sourcePath, sourceBytes);
+      }
+      inspectionActive = true;
+      if (kind === "diagnostic-isolation") {
+        const bad = {
+          ...input,
+          targets: [{ ...first, stagingId: "invalid" }, secondTarget],
+        };
+        const [failure, success] = await Promise.all([
+          files.inspectRetainedReference(bad, context),
+          files.inspectRetainedReference(input, context),
+        ]);
+        expect(failure.inventoryFailure).toEqual({
+          check: "descriptor",
+          category: "retained-target",
+        });
+        expect(success.status).toBe("complete");
+        expect(success.inventoryFailure).toBeUndefined();
+        if (success.status === "complete") success.value.close();
+        const next = await files.inspectRetainedReference(input, context);
+        expect(next.status).toBe("complete");
+        expect(next.inventoryFailure).toBeUndefined();
+        if (next.status === "complete") next.value.close();
+        return;
+      }
+      if (kind === "unknown-pin") {
+        await expect(
+          files.inspectRetainedReference(input, context),
+        ).rejects.toThrow(/unclassified/);
+        return;
+      }
       const result = await files.inspectRetainedReference(input, context);
+      const expectedDiagnostics: Record<
+        string,
+        { check: string; category: string }
+      > = {
+        descriptor: { check: "descriptor", category: "retained-target" },
+        "missing-registered": {
+          check: "missing-recorded-entry",
+          category: "committed-inventory",
+        },
+        "missing-history": {
+          check: "missing-recorded-entry",
+          category: "history-stage",
+        },
+        "committed-size": {
+          check: "committed-size",
+          category: "committed-inventory",
+        },
+        "proof-native": {
+          check: "proof-native-identity",
+          category: "original-proof",
+        },
+        "proof-stat": { check: "proof-stat", category: "original-proof" },
+        ambiguous: { check: "publication-shape", category: "retained-target" },
+        missing: { check: "publication-shape", category: "retained-target" },
+        hardlink: { check: "publication-shape", category: "retained-target" },
+        grow: { check: "publication-shape", category: "retained-target" },
+        truncate: { check: "publication-shape", category: "retained-target" },
+        corrupt: { check: "body-hash", category: "retained-target" },
+        "corrupt-close-failure": {
+          check: "body-hash",
+          category: "retained-target",
+        },
+        "body-read": { check: "body-read", category: "retained-target" },
+        "final-inventory": {
+          check: "inventory-recheck",
+          category: "namespace",
+        },
+        "native-recheck": {
+          check: "native-identity-recheck",
+          category: "namespace",
+        },
+        "native-admission": {
+          check: "native-read-admission",
+          category: "namespace",
+        },
+      };
+      expect(result.inventoryFailure, kind).toEqual(expectedDiagnostics[kind]);
+      if (kind === "corrupt-close-failure") {
+        expect(result).toMatchObject({
+          status: "failed",
+          error: { code: "ARTIFACT_INTEGRITY" },
+        });
+        expect(pins).toBe(1);
+        await files.closePreservingStages();
+      }
       if (
         ["stage-only", "published-only", "pair", "close-failure"].includes(kind)
       ) {
@@ -303,6 +485,7 @@ it.each([
             await expect(result.value.check()).rejects.toMatchObject({
               code: "ARTIFACT_INTEGRITY",
             });
+            expect(result.inventoryFailure).toBeUndefined();
           }
           if (kind === "close-failure") {
             const second = await files.inspectRetainedReference(input, context);
@@ -326,8 +509,10 @@ it.each([
       } else {
         expect(result.status, kind).not.toBe("complete");
       }
+      await files.closeRetainedProofReads();
       expect(pins).toBe(0);
     } finally {
+      fault.shortReadPath = "";
       await files.closePreservingStages();
       await rm(directory, { recursive: true, force: true });
     }
