@@ -12,6 +12,14 @@ the requested retained bytes and necessary historical stages. Unknown,
 duplicate, foreign, reparse or ambiguous publications deny. Single-link
 stage-only/published-only reads preserve all names; an exact-looking nlink2
 pair is classified as native-read-blocked without reading or unlinking it.
+Historical stages may coexist with an independently committed same-content blob
+only when trusted composition supplies its exact artifact record from the
+authenticated historical recovery-grant inventory. Both must match the current
+registered artifact and historical descriptor, have distinct stat **and native**
+identities, and each remain single-link, pinned, current-owned and byte/hash/length
+verified. Both bodies and EOF probes are metered even if the committed blob was
+already read as source proof. This is not target publication reconciliation:
+target stage/blob ambiguity and all hardlink pairs retain their prior denials.
 Ordinary inspection and publication/reconciliation rules are unchanged.
 Physical reads include shared-meter EOF reservations, and returned read leases
 must be checked and closed. Failed closes stay owned for close-only retry,
@@ -19,6 +27,34 @@ including failures before an inspection result can be returned.
 Source reads in this composition retain their native pins and verified identity
 until `closeRetainedProofReads`; final inventory must match those identities.
 Cleanup attempts all independent closures, retaining failed ones for retry.
+The retained pin provider must supply an async `check` which revalidates current
+authority and the held native root/parent/leaf chain. Source and target body
+reads call it before allocation and after reading, with operation guards; failure
+zeros any allocated body. The native v6 provider admits only the exact rooted
+inherited owner/SYSTEM profile, while ordinary control-file pins stay strict.
+
+`inspectRetainedReference` returns a method-specific failure extension with an
+optional closed `inventoryFailure` check/category. Its state belongs to that one
+invocation; generic `Outcome` and host error contracts are unchanged. Only an
+observed classified guard records it, and cleanup never overwrites the first
+failure. Successful inspection and unclassified/cancelled failures omit it.
+Tags are returned only with the initial method outcome; later calls to a
+successful inspection's `check()` cannot mutate that prior outcome.
+Publication-shape detail, when present, records the first satisfied predicate
+inside an already-rejecting branch, not proof that other conditions passed.
+It is computed from the same in-memory descriptor/stat/native observations;
+acceptance predicates, error codes, read order and cleanup are unchanged.
+The diagnostic does not add scans, reads or permissions, and a retained target
+category is not an assertion of its eventual image/evidence role.
+
+Trusted retained composition may separately provide
+`successorCaptureHistoryArtifacts`: exact provider artifacts from the same
+invocation's verified, grant-bound successor capture proof, not arbitrary later
+receipts. The host bounds and validates each provenance list against current
+artifact metadata and historical descriptors, refusing duplicates within or
+across lists. Either valid provenance uses the identical distinct-native/stat,
+single-link, current-owner pins and independently metered dual-body checks.
+The host does not infer provenance from content equality or the current map.
 
 `authorizeOperation(context, scope, authority)` throws `HostBoundaryError` with
 a contract `ErrorCode`. `Authority` is `(AuthorizationContext) => boolean` and

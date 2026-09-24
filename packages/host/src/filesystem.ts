@@ -18,6 +18,7 @@ import {
   type FileSystemBoundary,
   type OperationContext,
   type Outcome,
+  type RetainedInventoryFailure,
   type StagedArtifact,
   validateContract,
 } from "@design-studio/contracts";
@@ -59,6 +60,7 @@ export interface ProjectFileSystemOptions {
       directory: boolean,
     ): Promise<{
       identity: { path: string; volume: number; file: string };
+      check(): Promise<void>;
       close(): void;
     }>;
   };
@@ -116,6 +118,10 @@ export interface RetainedReferenceInput {
   artifacts: readonly Artifact[];
   targets: readonly CaptureRecoveryStage[];
   history: readonly CaptureRecoveryStage[];
+  /** Exact artifact records authenticated in the historical recovery grant. */
+  committedHistoryArtifacts?: readonly Artifact[];
+  /** Separately verified provider outputs of the grant's exact successor capture. */
+  successorCaptureHistoryArtifacts?: readonly Artifact[];
 }
 export interface RetainedReferenceInspection {
   identitySha256: string;
@@ -130,6 +136,9 @@ export interface RetainedReferenceInspection {
   check(): Promise<void>;
   close(): void;
 }
+export type RetainedReferenceOutcome = Outcome<RetainedReferenceInspection> & {
+  inventoryFailure?: RetainedInventoryFailure;
+};
 /** Instance-owned identity, not a serializable cleanup grant. */
 export interface OwnedPendingPublication {
   readonly projectId: string;
@@ -278,14 +287,27 @@ export class ProjectFileSystem implements FileSystemBoundary {
     stat: Stats,
   ) {
     return (
+      this.sameProofNativeIdentity(proof, pin) &&
+      this.sameProofStat(proof.stat, stat)
+    );
+  }
+  private sameProofNativeIdentity(
+    proof: { identity: RetainedReadPin["identity"] },
+    pin: RetainedReadPin,
+  ) {
+    return (
       proof.identity.path === pin.identity.path &&
       proof.identity.volume === pin.identity.volume &&
-      proof.identity.file === pin.identity.file &&
-      sameFile(proof.stat, stat) &&
-      proof.stat.nlink === stat.nlink &&
-      proof.stat.size === stat.size &&
-      proof.stat.mtimeMs === stat.mtimeMs &&
-      proof.stat.ctimeMs === stat.ctimeMs
+      proof.identity.file === pin.identity.file
+    );
+  }
+  private sameProofStat(before: Stats, stat: Stats) {
+    return (
+      sameFile(before, stat) &&
+      before.nlink === stat.nlink &&
+      before.size === stat.size &&
+      before.mtimeMs === stat.mtimeMs &&
+      before.ctimeMs === stat.ctimeMs
     );
   }
   private readonly recoveries = new WeakMap<OwnedPendingPublication, Pending>();
@@ -615,8 +637,13 @@ export class ProjectFileSystem implements FileSystemBoundary {
         let failed = false;
         let failure: unknown;
         try {
+          if (pin) {
+            await pin.check();
+            guard.check();
+          }
           const observed = pin ? await io(() => lstat(absolute)) : undefined;
           bytes = await this.readBytes(absolute, guard, observed);
+          if (pin) await pin.check();
           await this.resolve(root, request.path);
           guard.check();
           if (pin && observed) {
@@ -1367,14 +1394,42 @@ export class ProjectFileSystem implements FileSystemBoundary {
   inspectRetainedReference(
     supplied: RetainedReferenceInput,
     context: OperationContext,
-  ): Promise<Outcome<RetainedReferenceInspection>> {
+  ): Promise<RetainedReferenceOutcome> {
     const input = structuredClone(supplied);
+    // Only an observed guard can tag this invocation; later cleanup cannot replace it.
+    let inventoryFailure: RetainedInventoryFailure | undefined;
+    function reject(
+      check: RetainedInventoryFailure["check"],
+      category: RetainedInventoryFailure["category"],
+      message: string,
+      detail?: RetainedInventoryFailure["detail"],
+    ): never {
+      inventoryFailure ??= { check, category, ...(detail ? { detail } : {}) };
+      throw new HostBoundaryError("ARTIFACT_INTEGRITY", message);
+    }
+    function observedFailure(
+      error: unknown,
+      check: RetainedInventoryFailure["check"],
+      category: RetainedInventoryFailure["category"],
+    ): never {
+      if (
+        error instanceof HostBoundaryError &&
+        (check === "native-read-admission"
+          ? error.code === "ACTION_REQUIRED"
+          : error.code === "ARTIFACT_INTEGRITY" ||
+            error.code === "PATH_FORBIDDEN")
+      )
+        inventoryFailure ??= { check, category };
+      throw error;
+    }
     return this.execute(context, async (context) => {
       const config = this.options.retainedReferenceInspection;
       if (
         !config ||
         input.targets.length !== 2 ||
         input.history.length > 128 ||
+        (input.committedHistoryArtifacts?.length ?? 0) > 128 ||
+        (input.successorCaptureHistoryArtifacts?.length ?? 0) > 128 ||
         input.artifacts.length > 20000
       )
         throw new HostBoundaryError(
@@ -1392,15 +1447,17 @@ export class ProjectFileSystem implements FileSystemBoundary {
           stage.artifact.mediaType !== "application/octet-stream" ||
           expected.has(stage.stagingId)
         )
-          throw new HostBoundaryError(
-            "ARTIFACT_INTEGRITY",
+          reject(
+            "descriptor",
+            input.targets.includes(stage) ? "retained-target" : "history-stage",
             "Invalid retained stage descriptor.",
           );
         expected.set(stage.stagingId, stage);
       }
       if (new Set(input.targets.map((s) => s.artifact.sha256)).size !== 2)
-        throw new HostBoundaryError(
-          "ARTIFACT_INTEGRITY",
+        reject(
+          "descriptor",
+          "retained-target",
           "Retained outputs are not distinct.",
         );
       const artifacts = new Map(input.artifacts.map((a) => [a.sha256, a]));
@@ -1413,11 +1470,53 @@ export class ProjectFileSystem implements FileSystemBoundary {
             a.path !== `blobs/${a.sha256}`,
         )
       )
-        throw new HostBoundaryError(
-          "ARTIFACT_INTEGRITY",
+        reject(
+          "descriptor",
+          "committed-inventory",
           "Invalid retained artifact inventory.",
         );
-      const pins: { close(): void }[] = [];
+      const sameArtifact = (a: Artifact, b: Artifact | undefined) =>
+        b !== undefined &&
+        a.id === b.id &&
+        a.sha256 === b.sha256 &&
+        a.path === b.path &&
+        a.byteLength === b.byteLength &&
+        a.mediaType === b.mediaType;
+      const committedHistory = new Map(
+        (input.committedHistoryArtifacts ?? []).map((artifact) => [
+          artifact.sha256,
+          artifact,
+        ]),
+      );
+      const successorHistory = new Map(
+        (input.successorCaptureHistoryArtifacts ?? []).map((artifact) => [
+          artifact.sha256,
+          artifact,
+        ]),
+      );
+      if (
+        committedHistory.size !==
+          (input.committedHistoryArtifacts?.length ?? 0) ||
+        successorHistory.size !==
+          (input.successorCaptureHistoryArtifacts?.length ?? 0) ||
+        [...successorHistory.keys()].some((hash) =>
+          committedHistory.has(hash),
+        ) ||
+        [...committedHistory.values(), ...successorHistory.values()].some(
+          (artifact) =>
+            !validateContract("Artifact", artifact).success ||
+            !sameArtifact(artifact, artifacts.get(artifact.sha256)) ||
+            !input.history.some((stage) =>
+              sameArtifact(stage.artifact, artifact),
+            ),
+        )
+      )
+        reject(
+          "descriptor",
+          "history-stage",
+          "Invalid authenticated historical blob inventory.",
+        );
+      const pins: RetainedReadPin[] = [];
       const targets: RetainedReferenceInspection["targets"] = [];
       let closed = false;
       const close = () => {
@@ -1554,12 +1653,16 @@ export class ProjectFileSystem implements FileSystemBoundary {
           await this.checkRoot(root);
           guard.check();
         }
-        if (
-          [...artifacts.keys()].some((hash) => !seenBlobs.has(hash)) ||
-          input.history.some((s) => !seenStages.has(s.stagingId))
-        )
-          throw new HostBoundaryError(
-            "ARTIFACT_INTEGRITY",
+        if ([...artifacts.keys()].some((hash) => !seenBlobs.has(hash)))
+          reject(
+            "missing-recorded-entry",
+            "committed-inventory",
+            "Recorded retained inventory is missing.",
+          );
+        if (input.history.some((s) => !seenStages.has(s.stagingId)))
+          reject(
+            "missing-recorded-entry",
+            "history-stage",
             "Recorded retained inventory is missing.",
           );
         return entries;
@@ -1586,6 +1689,7 @@ export class ProjectFileSystem implements FileSystemBoundary {
         const entries = await scan();
         const identitySha256 = fingerprint(entries);
         const paired = new Set<Entry>();
+        const independentHistory: { stage: Entry; blob: Entry }[] = [];
         const reads: {
           descriptor: CaptureRecoveryStage;
           entry: Entry;
@@ -1606,6 +1710,20 @@ export class ProjectFileSystem implements FileSystemBoundary {
           const isTarget = input.targets.some(
             (s) => s.stagingId === descriptor.stagingId,
           );
+          const historyCoexists =
+            !isTarget &&
+            stage &&
+            blob &&
+            sameArtifact(
+              descriptor.artifact,
+              committedHistory.get(descriptor.artifact.sha256) ??
+                successorHistory.get(descriptor.artifact.sha256),
+            ) &&
+            !sameFile(stage.stat, blob.stat) &&
+            stage.stat.nlink === 1 &&
+            blob.stat.nlink === 1 &&
+            stage.stat.size === descriptor.artifact.byteLength &&
+            blob.stat.size === descriptor.artifact.byteLength;
           if (stage && blob && isTarget) {
             if (
               !sameFile(stage.stat, blob.stat) ||
@@ -1614,9 +1732,15 @@ export class ProjectFileSystem implements FileSystemBoundary {
               stage.stat.size !== descriptor.artifact.byteLength ||
               blob.stat.size !== descriptor.artifact.byteLength
             )
-              throw new HostBoundaryError(
-                "ARTIFACT_INTEGRITY",
+              reject(
+                "publication-shape",
+                "retained-target",
                 "Ambiguous retained publication.",
+                !sameFile(stage.stat, blob.stat)
+                  ? "distinct-target-copies"
+                  : stage.stat.nlink !== 2 || blob.stat.nlink !== 2
+                    ? "link-count-or-shared-identity"
+                    : "recorded-length-mismatch",
               );
             paired.add(stage);
             paired.add(blob);
@@ -1629,13 +1753,32 @@ export class ProjectFileSystem implements FileSystemBoundary {
           const entry = stage ?? (isTarget ? blob : undefined);
           if (
             !entry ||
-            (stage && blob) ||
+            (stage && blob && !historyCoexists) ||
             entry.stat.nlink !== 1 ||
             entry.stat.size !== descriptor.artifact.byteLength
           )
-            throw new HostBoundaryError(
-              "ARTIFACT_INTEGRITY",
+            reject(
+              "publication-shape",
+              isTarget ? "retained-target" : "history-stage",
               "Retained publication is missing or ambiguous.",
+              !entry
+                ? "missing-stage-or-entry"
+                : stage &&
+                    blob &&
+                    !historyCoexists &&
+                    !sameArtifact(
+                      descriptor.artifact,
+                      committedHistory.get(descriptor.artifact.sha256) ??
+                        successorHistory.get(descriptor.artifact.sha256),
+                    )
+                  ? "unproven-history-coexistence"
+                  : entry.stat.nlink !== 1 ||
+                      (stage &&
+                        blob &&
+                        (sameFile(stage.stat, blob.stat) ||
+                          blob.stat.nlink !== 1))
+                    ? "link-count-or-shared-identity"
+                    : "recorded-length-mismatch",
             );
           const target = isTarget
             ? {
@@ -1647,9 +1790,37 @@ export class ProjectFileSystem implements FileSystemBoundary {
             : undefined;
           if (target) targets.push(target);
           reads.push({ descriptor, entry, ...(target ? { target } : {}) });
+          if (historyCoexists) {
+            independentHistory.push({ stage, blob });
+            reads.push({ descriptor, entry: blob });
+          }
         }
         const nativeIdentities: RetainedReadPin["identity"][] = [];
+        const entryIdentities = new Map<Entry, RetainedReadPin["identity"]>();
         const proofKeys = new Set(this.proofReads.keys());
+        const category = (
+          entry: Entry,
+        ): RetainedInventoryFailure["category"] => {
+          if (entry.directory || entry.rootId !== config.artifactRootId)
+            return "namespace";
+          if (this.proofReads.has(`${entry.rootId}\0${entry.relative}`))
+            return "original-proof";
+          if (
+            input.targets.some(
+              (s) =>
+                entry.relative === s.artifact.path ||
+                entry.relative.endsWith(`/${s.stagingId}`),
+            )
+          )
+            return "retained-target";
+          if (
+            input.history.some((s) =>
+              entry.relative.endsWith(`/${s.stagingId}`),
+            )
+          )
+            return "history-stage";
+          return "committed-inventory";
+        };
         for (const entry of entries) {
           if (paired.has(entry)) continue;
           if (!entry.directory && entry.stat.nlink !== 1)
@@ -1663,29 +1834,62 @@ export class ProjectFileSystem implements FileSystemBoundary {
             artifact &&
             entry.stat.size !== artifact.byteLength
           )
-            throw new HostBoundaryError(
-              "ARTIFACT_INTEGRITY",
+            reject(
+              "committed-size",
+              "committed-inventory",
               "Recorded blob length differs.",
             );
-          const pin = await config.pin(
-            entry.rootId,
-            entry.relative,
-            entry.directory,
-          );
+          let pin: RetainedReadPin;
+          try {
+            pin = await config.pin(
+              entry.rootId,
+              entry.relative,
+              entry.directory,
+            );
+          } catch (error) {
+            observedFailure(error, "native-read-admission", category(entry));
+          }
           pins.push(pin);
           const proofKey = `${entry.rootId}\0${entry.relative}`;
           const prior = this.proofReads.get(proofKey);
-          if (prior && !this.sameProofRead(prior, pin, entry.stat))
-            throw new HostBoundaryError(
-              "ARTIFACT_INTEGRITY",
+          if (prior && !this.sameProofNativeIdentity(prior, pin))
+            reject(
+              "proof-native-identity",
+              "original-proof",
+              "Source proof changed before retained inspection.",
+            );
+          if (prior && !this.sameProofStat(prior.stat, entry.stat))
+            reject(
+              "proof-stat",
+              "original-proof",
               "Source proof changed before retained inspection.",
             );
           proofKeys.delete(proofKey);
           nativeIdentities.push(pin.identity);
+          entryIdentities.set(entry, pin.identity);
+        }
+        for (const { stage, blob } of independentHistory) {
+          const staged = entryIdentities.get(stage);
+          const committed = entryIdentities.get(blob);
+          if (
+            !staged ||
+            !committed ||
+            (staged.volume === committed.volume &&
+              staged.file === committed.file)
+          )
+            reject(
+              "publication-shape",
+              "history-stage",
+              "Historical stage and committed blob identities are not independent.",
+              !staged || !committed
+                ? "native-identity-unavailable"
+                : "native-identity-not-distinct",
+            );
         }
         if (proofKeys.size)
-          throw new HostBoundaryError(
-            "ARTIFACT_INTEGRITY",
+          reject(
+            "proof-membership",
+            "original-proof",
             "Source proof is outside the retained inventory.",
           );
         const check = async () => {
@@ -1696,18 +1900,24 @@ export class ProjectFileSystem implements FileSystemBoundary {
             );
           await config.authorize(input, context);
           if (fingerprint(await scan()) !== identitySha256)
-            throw new HostBoundaryError(
-              "ARTIFACT_INTEGRITY",
+            reject(
+              "inventory-recheck",
+              "namespace",
               "Retained identity inventory changed.",
             );
           let index = 0;
           for (const entry of entries) {
             if (paired.has(entry)) continue;
-            const fresh = await config.pin(
-              entry.rootId,
-              entry.relative,
-              entry.directory,
-            );
+            let fresh: RetainedReadPin;
+            try {
+              fresh = await config.pin(
+                entry.rootId,
+                entry.relative,
+                entry.directory,
+              );
+            } catch (error) {
+              observedFailure(error, "native-read-admission", category(entry));
+            }
             pins.push(fresh);
             const prior = nativeIdentities[index++];
             if (
@@ -1716,8 +1926,9 @@ export class ProjectFileSystem implements FileSystemBoundary {
               fresh.identity.volume !== prior.volume ||
               fresh.identity.file !== prior.file
             )
-              throw new HostBoundaryError(
-                "ARTIFACT_INTEGRITY",
+              reject(
+                "native-identity-recheck",
+                category(entry),
                 "Current native retained identity changed.",
               );
             fresh.close();
@@ -1736,18 +1947,50 @@ export class ProjectFileSystem implements FileSystemBoundary {
               context,
               "read",
             );
-            const bytes = await this.readBytes(
-              entry.absolute,
-              guard,
-              entry.stat,
+            const pin = pins.find(
+              (candidate) => candidate.identity.path === entry.absolute,
             );
+            if (!pin)
+              reject(
+                "native-read-admission",
+                category(entry),
+                "Retained body has no owned native read pin.",
+              );
+            try {
+              await pin.check();
+            } catch (error) {
+              observedFailure(error, "native-read-admission", category(entry));
+            }
+            guard.check();
+            let bytes: Uint8Array;
+            try {
+              bytes = await this.readBytes(entry.absolute, guard, entry.stat);
+            } catch (error) {
+              observedFailure(error, "body-read", category(entry));
+            }
+            try {
+              try {
+                await pin.check();
+              } catch (error) {
+                observedFailure(
+                  error,
+                  "native-read-admission",
+                  category(entry),
+                );
+              }
+              guard.check();
+            } catch (error) {
+              bytes.fill(0);
+              throw error;
+            }
             if (
               bytes.length !== descriptor.artifact.byteLength ||
               sha256(bytes) !== descriptor.artifact.sha256
             ) {
               bytes.fill(0);
-              throw new HostBoundaryError(
-                "ARTIFACT_INTEGRITY",
+              reject(
+                "body-hash",
+                category(entry),
                 "Retained bytes differ from the journal.",
               );
             }
@@ -1768,6 +2011,15 @@ export class ProjectFileSystem implements FileSystemBoundary {
         try {
           close();
         } catch (cleanup) {
+          if (error instanceof HostBoundaryError)
+            throw new HostBoundaryError(
+              error.code,
+              "Retained validation and close failed.",
+              error.unavailable,
+              {
+                cause: new AggregateError([error, cleanup]),
+              },
+            );
           throw new AggregateError(
             [error, cleanup],
             "Retained validation and close failed.",
@@ -1775,7 +2027,14 @@ export class ProjectFileSystem implements FileSystemBoundary {
         }
         throw error;
       }
-    });
+    }).then((outcome) =>
+      outcome.status !== "complete" &&
+      outcome.status !== "partial" &&
+      outcome.status !== "cancelled" &&
+      inventoryFailure
+        ? { ...outcome, inventoryFailure }
+        : outcome,
+    );
   }
   inspectReferencePublications(
     input: readonly CaptureRecoveryStage[],

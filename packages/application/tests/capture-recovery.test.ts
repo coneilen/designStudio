@@ -70,6 +70,9 @@ import {
   NativeCaptureStartupCleanupRequired,
 } from "../src/capture-runtime-internal.js";
 import { RecoveryDecisions } from "../src/recovery.js";
+import { ReferenceInput } from "../src/reference-input.js";
+import { ReferenceReader } from "../src/reference-proof.js";
+import * as referencePublications from "../src/reference-publications.js";
 import {
   DIAGNOSTIC_APPROVAL_CONFIRMATION,
   DIAGNOSTIC_DOWNLOAD_CONFIRMATION,
@@ -88,7 +91,34 @@ import {
 const seam = vi.hoisted(() => ({
   work: undefined as CaptureWork | undefined,
   onCurrent: undefined as (() => Promise<void>) | undefined,
+  measureReads: false,
+  physicalReads: 0,
 }));
+vi.mock("node:fs/promises", async (original) => {
+  const actual = await original<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    open: async (...args: Parameters<typeof actual.open>) => {
+      const handle = await actual.open(...args);
+      const read = handle.read;
+      Object.defineProperty(handle, "read", {
+        value: async (...input: unknown[]) => {
+          const result: unknown = await Reflect.apply(read, handle, input);
+          if (
+            seam.measureReads &&
+            result &&
+            typeof result === "object" &&
+            "bytesRead" in result &&
+            typeof result.bytesRead === "number"
+          )
+            seam.physicalReads += result.bytesRead;
+          return result;
+        },
+      });
+      return handle;
+    },
+  };
+});
 vi.mock("@design-studio/project-host", async (original) => ({
   ...(await original<typeof import("@design-studio/project-host")>()),
   acquireCaptureWork: () => {
@@ -164,6 +194,9 @@ async function createFixture(
     repaired?: boolean;
     priorResourceUse?: boolean;
     stageCount?: number;
+    committedStageBytes?: boolean;
+    successorStageBytes?: boolean;
+    fixedClock?: boolean;
   } = {},
 ) {
   const scope = captureTestScope();
@@ -243,6 +276,7 @@ async function createFixture(
     | undefined;
   let validationMode = false;
   let clockOffset = 0;
+  const fixedNow = history.fixedClock ? Date.now() : undefined;
   let store: LocalStore;
   let policy: ReturnType<typeof nativeCapturePolicy>;
   let credentialSha256 = "b".repeat(64);
@@ -324,6 +358,7 @@ async function createFixture(
             "Synthetic retained pin refused.",
           );
         return {
+          check: async () => {},
           handle: 1,
           byteLength: stat.size,
           identity: {
@@ -374,7 +409,9 @@ async function createFixture(
     seam.work = work;
     policy = nativeCapturePolicy(work);
     const now = policy.clock.now.bind(policy.clock);
-    vi.spyOn(policy.clock, "now").mockImplementation(() => now() + clockOffset);
+    vi.spyOn(policy.clock, "now").mockImplementation(
+      () => (fixedNow ?? now()) + clockOffset,
+    );
     try {
       if (validationMode) {
         validation = await openNativeReferenceValidation(project);
@@ -596,11 +633,17 @@ async function createFixture(
               for (let index = 0; index < (history.stageCount ?? 1); index++)
                 value(
                   await execution.stage(
-                    canonicalBytes({
-                      file: { version: "synthetic_version" },
-                      index,
-                      privateNode: "DO-NOT-EMIT-PROVIDER-DATA",
-                    }),
+                    canonicalBytes(
+                      history.committedStageBytes
+                        ? resources
+                        : history.successorStageBytes
+                          ? { file: { version: "v1" } }
+                          : {
+                              file: { version: "synthetic_version" },
+                              index,
+                              privateNode: "DO-NOT-EMIT-PROVIDER-DATA",
+                            },
+                    ),
                   ),
                 );
             throw new HostBoundaryError(
@@ -860,15 +903,16 @@ async function createFixture(
       });
       return value(await store.jobs.getStages(originalJobId, context));
     },
-    async ordinaryReceipt(id: string) {
+    async ordinaryReceipt(
+      id: string,
+      bytes = canonicalBytes({ ordinary: true, id }),
+    ) {
       const context = await policy.issue({
         jobId: id,
         requestId: id,
         signal: scope.signal,
       });
-      const stage = value(
-        await store.stage(canonicalBytes({ ordinary: true, id }), context),
-      );
+      const stage = value(await store.stage(bytes, context));
       return store.commit([stage], context);
     },
     async mutate(change: (record: StoredJob) => void) {
@@ -1769,6 +1813,17 @@ it.each([
   "valid",
   "diagnostic-valid",
   "diagnostic-retained-valid",
+  "diagnostic-retained-coexisting-history",
+  "diagnostic-retained-coexisting-current-only",
+  "diagnostic-retained-successor-output",
+  "diagnostic-retained-successor-record",
+  "diagnostic-retained-successor-receipt",
+  "diagnostic-retained-successor-protection",
+  "diagnostic-retained-successor-extra-output",
+  "diagnostic-retained-successor-version",
+  "diagnostic-retained-successor-foreign-job",
+  "diagnostic-retained-successor-authority",
+  "diagnostic-reference-lease-expired",
   "diagnostic-retained-unknown-stage",
   "diagnostic-retained-missing-protection",
   "diagnostic-retained-extra-input",
@@ -1788,7 +1843,17 @@ it.each([
   "authenticates retained predecessor stages after successor conversion and private exports: %s",
   async (fault) => {
     const retained = fault.startsWith("diagnostic-retained-");
-    const f = await fixture(true, undefined, { repaired: true });
+    const coexistence = fault === "diagnostic-retained-coexisting-history";
+    const successorCoexistence = fault.startsWith(
+      "diagnostic-retained-successor-",
+    );
+    const validSuccessor = fault === "diagnostic-retained-successor-output";
+    const f = await fixture(true, undefined, {
+      repaired: true,
+      committedStageBytes: coexistence,
+      successorStageBytes: successorCoexistence,
+      fixedClock: true,
+    });
     const beforeRecord = await f.record();
     const beforeStages = await f.stages();
     const stage = required(beforeStages[0]);
@@ -1813,6 +1878,24 @@ it.each([
       stage.stagingId,
     );
     const beforeBytes = await readFile(stagePath);
+    const committedPath = path.join(
+      f.artifacts,
+      ...stage.staged.artifact.path.split("/"),
+    );
+    const beforeStageIdentity = await lstat(stagePath);
+    const beforeCommittedIdentity = coexistence
+      ? await lstat(committedPath)
+      : undefined;
+    if (successorCoexistence)
+      await expect(lstat(committedPath)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    if (coexistence) {
+      expect(beforeStageIdentity.nlink).toBe(1);
+      expect(beforeCommittedIdentity?.nlink).toBe(1);
+      expect(beforeCommittedIdentity?.ino).not.toBe(beforeStageIdentity.ino);
+      expect(await readFile(committedPath)).toEqual(beforeBytes);
+    }
     if (fault === "timestamp-tie-unrelated") {
       const now = f.policy.clock.now();
       vi.spyOn(f.policy.clock, "now").mockReturnValue(now);
@@ -1961,6 +2044,25 @@ it.each([
     required(seam.work).recoveryAuthority = async () => {
       throw new Error("Reference must not inspect the credential journal");
     };
+    const settlementFailures: string[] = [];
+    const update = f.store.jobs.update.bind(f.store.jobs);
+    const settlement =
+      fault === "diagnostic-reference-lease-expired"
+        ? vi
+            .spyOn(f.store.jobs, "update")
+            .mockImplementation(async (...args) => {
+              const signal = args[3].signal;
+              const result = await update(...args);
+              expect(args[3].signal).toBe(signal);
+              if (
+                args[2].kind === "settle-usage" &&
+                result.status !== "complete" &&
+                result.status !== "partial"
+              )
+                settlementFailures.push(result.error.code);
+              return result;
+            })
+        : undefined;
     const image = vi
       .spyOn(FigmaHttpsTransport.prototype, "image")
       .mockImplementation(async (_url, budget) => {
@@ -1968,6 +2070,8 @@ it.each([
         const bytes = png(true, 2, 2);
         budget.receive(bytes.length);
         budget.decoded(bytes.length);
+        if (fault === "diagnostic-reference-lease-expired")
+          f.advanceClock(5001);
         return { status: 200, mediaType: "image/png", bytes };
       });
     if (fault === "unknown-stage") {
@@ -2006,6 +2110,14 @@ it.each([
     if (fault === "missing-protection")
       removeSyntheticCaptureProtection(f.store, f.initial.job.id);
     const run = required(f.runtime.reference).bind(f.runtime);
+    let closedProof: (() => unknown) | undefined;
+    if (successorCoexistence) {
+      expect(await readFile(committedPath)).toEqual(beforeBytes);
+      expect((await lstat(committedPath)).ino).not.toBe(
+        beforeStageIdentity.ino,
+      );
+      expect((await lstat(committedPath)).nlink).toBe(1);
+    }
     const planned = await run(
       { operation: "reference-plan", requestId },
       new AbortController().signal,
@@ -2047,7 +2159,26 @@ it.each([
       },
       new AbortController().signal,
     );
+    const decoderCalls = legacy?.mock.calls.length;
     legacy?.mockRestore();
+    settlement?.mockRestore();
+    if (fault === "diagnostic-reference-lease-expired") {
+      expect(result.status).toBe("failed");
+      expect(result.value).toBeUndefined();
+      expect(result.inputAccounting).toMatchObject({
+        phase: "acquisition",
+        networkBytes: 87,
+      });
+      expect(settlementFailures).toEqual(["CONFLICT"]);
+      expect(decoderCalls).toBe(0);
+      expect(image).toHaveBeenCalledTimes(1);
+      expect(api).not.toHaveBeenCalled();
+      expect(f.vault).not.toHaveBeenCalled();
+      expect(await f.record()).toEqual(beforeRecord);
+      expect(await f.stages()).toEqual(beforeStages);
+      expect(await readFile(stagePath)).toEqual(beforeBytes);
+      return;
+    }
     expect(result.status, JSON.stringify(result)).toBe(
       diagnostic ? "unavailable" : "complete",
     );
@@ -2137,6 +2268,18 @@ it.each([
       );
       if (retained) {
         f.setFault(undefined);
+        if (fault === "diagnostic-retained-coexisting-current-only") {
+          value(
+            await f.ordinaryReceipt(
+              "later_unprotected_same_content",
+              beforeBytes,
+            ),
+          );
+          expect(await readFile(committedPath)).toEqual(beforeBytes);
+          expect((await lstat(committedPath)).ino).not.toBe(
+            (await lstat(stagePath)).ino,
+          );
+        }
         f.advanceClock(40000);
         const metadata = await run(
           {
@@ -2171,13 +2314,198 @@ it.each([
             required(downloaded.value?.job?.id),
             fault === "diagnostic-retained-extra-input" ? "job-input" : "job",
           );
-        const recovered = await f.validateRetained(
-          required(metadata.value?.metadata?.jobSha256),
-        );
+        if (successorCoexistence) {
+          const inventory = referencePublications.retainedReferenceInventory;
+          vi.spyOn(
+            referencePublications,
+            "retainedReferenceInventory",
+          ).mockImplementationOnce(async (reader, state, proposal, token) => {
+            expect(token).toBeDefined();
+            closedProof = () =>
+              reader.verifiedCaptureOutputs(required(token), proposal);
+            const originalBinding = structuredClone(proposal);
+            expect(() => reader.verifiedCaptureOutputs({}, proposal)).toThrow();
+            expect(() =>
+              reader.verifiedCaptureOutputs({ ...token }, proposal),
+            ).toThrow();
+            expect(() =>
+              reader.verifiedCaptureOutputs(
+                JSON.parse(JSON.stringify(token)),
+                proposal,
+              ),
+            ).toThrow();
+            const outputs = reader.verifiedCaptureOutputs(
+              required(token),
+              proposal,
+            );
+            outputs.artifacts.length = 0;
+            expect(
+              reader.verifiedCaptureOutputs(required(token), proposal).artifacts
+                .length,
+            ).toBeGreaterThan(0);
+            for (const field of [
+              "sourceVersion",
+              "originalJobId",
+              "originalRecordSha256",
+              "originalReceiptSha256",
+              "acquisitionId",
+            ] as const)
+              expect(() =>
+                reader.verifiedCaptureOutputs(required(token), {
+                  ...proposal,
+                  binding: { ...proposal.binding, [field]: "wrong" },
+                }),
+              ).toThrow();
+            const foreign = new ReferenceReader(
+              reader.work,
+              reader.store,
+              reader.files,
+              reader.context,
+              reader.input,
+              true,
+              true,
+            );
+            try {
+              expect(() =>
+                foreign.verifiedCaptureOutputs(required(token), proposal),
+              ).toThrow();
+            } finally {
+              await foreign.close();
+            }
+            expect(proposal).toEqual(originalBinding);
+            const current = vi
+              .spyOn(reader.work, "isCurrent")
+              .mockReturnValue(false);
+            try {
+              expect(() =>
+                reader.verifiedCaptureOutputs(required(token), proposal),
+              ).toThrow();
+            } finally {
+              current.mockRestore();
+            }
+            const altered = structuredClone(state);
+            const successor = required(
+              altered.jobs.find(
+                (r) => r.job.id === proposal.binding.originalJobId,
+              ),
+            );
+            const receipt = required(
+              altered.receipts.find(
+                (entry) => entry.receipt.jobId === successor.job.id,
+              ),
+            );
+            if (fault === "diagnostic-retained-successor-record")
+              successor.rowVersion++;
+            if (fault === "diagnostic-retained-successor-receipt")
+              receipt.receipt.idempotency.payloadSha256 = "f".repeat(64);
+            if (fault === "diagnostic-retained-successor-protection")
+              altered.references = altered.references.filter(
+                (entry) =>
+                  !(
+                    entry.kind === "job" &&
+                    entry.owner === receipt.receipt.id &&
+                    entry.artifactId === stage.staged.artifact.id
+                  ),
+              );
+            if (fault === "diagnostic-retained-successor-extra-output")
+              receipt.receipt.outputs.push(
+                structuredClone(stage.staged.artifact),
+              );
+            if (fault === "diagnostic-retained-successor-foreign-job")
+              successor.job.id = "foreign_capture";
+            const actualProposal =
+              fault === "diagnostic-retained-successor-version"
+                ? {
+                    ...proposal,
+                    binding: { ...proposal.binding, sourceVersion: "wrong" },
+                  }
+                : proposal;
+            if (fault === "diagnostic-retained-successor-authority") {
+              const beforeBytes = reader.bytes;
+              const revoked = vi
+                .spyOn(reader.work, "referenceValidationAuthority")
+                .mockRejectedValue(
+                  new HostBoundaryError(
+                    "FORBIDDEN",
+                    "Synthetic current async validation authority revoked.",
+                  ),
+                );
+              try {
+                await expect(
+                  inventory(reader, altered, actualProposal, token),
+                ).rejects.toThrow();
+                expect(reader.bytes).toBe(beforeBytes);
+                throw new HostBoundaryError(
+                  "FORBIDDEN",
+                  "Synthetic current async validation authority revoked.",
+                );
+              } finally {
+                revoked.mockRestore();
+              }
+            }
+            const inventoryResult = await inventory(
+              reader,
+              altered,
+              actualProposal,
+              token,
+            );
+            if (validSuccessor) {
+              expect(inventoryResult.committedHistoryArtifacts).toEqual([]);
+              expect(inventoryResult.successorCaptureHistoryArtifacts).toEqual([
+                stage.staged.artifact,
+              ]);
+              const providerArtifacts = reader
+                .verifiedCaptureOutputs(required(token), proposal)
+                .artifacts.filter((item) =>
+                  ["metadata", "nodes", "render-map"].includes(item.role),
+                )
+                .map((item) => item.artifact);
+              expect(providerArtifacts).toContainEqual(stage.staged.artifact);
+            }
+            return inventoryResult;
+          });
+        }
+        const measured = coexistence || validSuccessor;
+        const charges: number[] = [];
+        const reserve = ReferenceInput.prototype.reserveRead;
+        const meter = measured
+          ? vi
+              .spyOn(ReferenceInput.prototype, "reserveRead")
+              .mockImplementation(function (this: ReferenceInput, count) {
+                reserve.call(this, count);
+                charges.push(count);
+              })
+          : undefined;
+        seam.physicalReads = 0;
+        seam.measureReads = measured;
+        const recovered = await f
+          .validateRetained(required(metadata.value?.metadata?.jobSha256))
+          .finally(() => {
+            seam.measureReads = false;
+            meter?.mockRestore();
+          });
+        if (closedProof) expect(closedProof).toThrow();
         expect(recovered.status, JSON.stringify(recovered)).toBe(
-          fault === "diagnostic-retained-valid" ? "complete" : "failed",
+          fault === "diagnostic-retained-valid" || coexistence || validSuccessor
+            ? "complete"
+            : "failed",
         );
-        if (fault === "diagnostic-retained-valid") {
+        if (fault === "diagnostic-retained-coexisting-current-only")
+          expect(recovered).toMatchObject({
+            status: "failed",
+            reason: "inventory-invalid",
+            error: { code: "ARTIFACT_INTEGRITY" },
+            inventoryFailure: {
+              check: "publication-shape",
+              category: "history-stage",
+              detail: "unproven-history-coexistence",
+            },
+          });
+        if (
+          fault === "diagnostic-retained-valid" ||
+          coexistence ||
+          validSuccessor
+        ) {
           expect(recovered.value).toMatchObject({
             historicalStatus: "interrupted",
             eligibility: "eligible-for-recovery-review",
@@ -2185,6 +2513,45 @@ it.each([
           expect(recovered.inputAccounting?.privateBytes).toBeLessThan(
             26214400,
           );
+          expect(recovered.inputAccounting?.networkBytes).toBe(0);
+          expect(recovered.inventoryFailure).toBeUndefined();
+          if (measured) {
+            const charged = charges.reduce((sum, count) => sum + count, 0);
+            const eof = charges.filter((count) => count === 1).length;
+            expect(recovered.inputAccounting?.privateBytes).toBe(charged);
+            expect(charged).toBe(seam.physicalReads + eof);
+            expect(
+              charges.filter((count) => count === beforeBytes.length).length,
+            ).toBeGreaterThanOrEqual(2);
+            const measurement = {
+              physical: seam.physicalReads,
+              eof,
+              charged,
+              network: recovered.inputAccounting?.networkBytes,
+            };
+            if (coexistence)
+              expect(measurement).toEqual({
+                physical: 54713,
+                eof: 32,
+                charged: 54745,
+                network: 0,
+              });
+            else
+              expect(measurement).toEqual({
+                physical: 53879,
+                eof: 32,
+                charged: 53911,
+                network: 0,
+              });
+            expect(await readFile(committedPath)).toEqual(beforeBytes);
+            if (beforeCommittedIdentity)
+              expect((await lstat(committedPath)).ino).toBe(
+                beforeCommittedIdentity.ino,
+              );
+            expect((await lstat(stagePath)).ino).toBe(beforeStageIdentity.ino);
+            expect((await lstat(committedPath)).nlink).toBe(1);
+            expect((await lstat(stagePath)).nlink).toBe(1);
+          }
         }
       }
       await f.reopen();

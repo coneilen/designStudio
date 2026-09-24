@@ -5171,6 +5171,64 @@ export const foundationSchema = {
         }
       }
     },
+    "RetainedInventoryFailure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "check",
+        "category"
+      ],
+      "properties": {
+        "check": {
+          "enum": [
+            "descriptor",
+            "missing-recorded-entry",
+            "publication-shape",
+            "committed-size",
+            "proof-native-identity",
+            "proof-stat",
+            "proof-membership",
+            "native-read-admission",
+            "body-read",
+            "body-hash",
+            "inventory-recheck",
+            "native-identity-recheck"
+          ]
+        },
+        "category": {
+          "enum": [
+            "original-proof",
+            "history-stage",
+            "retained-target",
+            "committed-inventory",
+            "namespace"
+          ]
+        },
+        "detail": {
+          "enum": [
+            "missing-stage-or-entry",
+            "unproven-history-coexistence",
+            "distinct-target-copies",
+            "link-count-or-shared-identity",
+            "recorded-length-mismatch",
+            "native-identity-unavailable",
+            "native-identity-not-distinct"
+          ]
+        }
+      },
+      "if": {
+        "required": [
+          "detail"
+        ]
+      },
+      "then": {
+        "properties": {
+          "check": {
+            "const": "publication-shape"
+          }
+        }
+      }
+    },
     "NativeReferenceRecoveryPlanEnvelope": {
       "type": "object",
       "additionalProperties": false,
@@ -5211,6 +5269,7 @@ export const foundationSchema = {
             "authority-denied",
             "ineligible-job",
             "job-changed",
+            "source-metadata-invalid",
             "source-proof-invalid",
             "inventory-invalid",
             "evidence-invalid",
@@ -5228,6 +5287,30 @@ export const foundationSchema = {
         },
         "error": {
           "$ref": "#/definitions/ContractError"
+        },
+        "inventoryFailure": {
+          "$ref": "#/definitions/RetainedInventoryFailure"
+        }
+      },
+      "if": {
+        "required": [
+          "inventoryFailure"
+        ]
+      },
+      "then": {
+        "required": [
+          "error",
+          "reason"
+        ],
+        "properties": {
+          "status": {
+            "const": "failed"
+          }
+        },
+        "not": {
+          "required": [
+            "value"
+          ]
         }
       }
     },

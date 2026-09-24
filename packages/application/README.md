@@ -18,12 +18,87 @@ color and partial-reference limitations remain explicit. Unrelated committed
 blobs/exports receive bounded namespace/identity checks, not a misleading
 whole-project body-integrity claim; necessary historical stages are verified.
 
+A failed historical capture can legitimately retain a stage whose bytes already
+exist in a separately committed blob (for example a protected input snapshot).
+The ordinary recovery grant authenticated both objects. Retained validation
+derives a narrow committed-history artifact list only **after** verifying that
+grant's original filesystem digest and protected historical reference graph.
+Current inventory membership alone, a later same-content receipt, or a caller
+list cannot establish historical membership. Both independent single-link
+bodies are pinned and read/hash-verified; neither is adopted, removed or modified.
+An additional, separate provenance may establish a blob created after the grant:
+an exact `metadata`, `nodes` or `render-map` output of the grant's authorized
+successful successor capture. A same-reader opaque token is minted only after
+the existing full physical capture receipt, request, manifest, source/version
+proof succeeds. Current captured record/receipt digests, receipt scope,
+project/actor/request, protected input/output edges and exact artifact records
+must still match that snapshot. A foreign/serialized/closed-reader token or a
+generic later receipt cannot supply this authority. The old grant filesystem
+digest is never changed; it proves the old stage, not later blob existence.
+The two artifact-provenance lists stay separate. Exact overlap prefers the old
+grant and is omitted from the successor list; the host rejects duplicate or
+overlapping supplied lists. Neither source admits conversion/report/control
+outputs or unrelated captures. No additional source-proof body pass is performed;
+the existing independent historical stage/blob reads remain fully metered.
+The full synthetic successor-output case charges 53,879 physical bytes plus
+32 EOF reservations = 53,911 private bytes, zero network.
+The full synthetic grant/successor/conversion/reference/diagnostic regression
+charges 54,713 physical bytes plus 32 EOF reservations = 54,745 private bytes,
+zero network, including both historical reads. Its negative control rejects an
+otherwise identical blob committed only after the grant. The separate real-native
+dual-read fixture charges 2,051 physical bytes plus four EOF probes = 2,055.
+These are synthetic measurements, not proof of the live history's physical shape.
+
 Single-link stage-only and published-only outputs can yield
 `eligible-for-recovery-review`. An exact-looking two-name/two-link publication
 is explicitly `known-pair-native-read-blocked`: the native owner/DACL helper
 does not admit multi-link reads. No reconciliation, unlink, adoption, retry,
 provider/DNS/vault call, receipt, approval or persistent plan is performed.
 Metadata-only and ordinary full inspection retain their previous behavior.
+
+The additional closed reason `source-metadata-invalid` distinguishes initial
+original-reference metadata/receipt lookup and context issuance from later
+`source-proof-invalid` lineage/body verification. The existing reason remains
+valid for older envelopes. These are broad phases plus the existing error code,
+not precise native ACL subguards; neither reveals paths, SIDs or exception text.
+A prior `source-proof-invalid` response cannot retrospectively identify which
+phase or native check failed. Synthetic inherited-ACL compatibility evidence is
+not proof of a historical private-file ACL or of current live recoverability.
+
+Failed retained inspection may additionally return closed
+`inventoryFailure: { check, category }`. The check identifies an actually
+observed descriptor, membership, publication, proof-native-identity versus
+proof-stat, body-read/hash, native admission, or recheck guard. The category is
+only `original-proof`, `history-stage`, `retained-target`,
+`committed-inventory` or `namespace`; it never asserts an image/evidence role.
+Both fields are allowlisted enums, with no path, hash, SID, ACL or exception
+text. The first failing guard is kept per invocation, not shared across calls.
+Unclassified exceptions, cancellation, successful plans and failures outside
+retained inspection carry no inventory diagnostic. The original reason/error
+code, nonretryable status and cleanup ownership remain authoritative; diagnostics
+do not confer partial eligibility or weaken any read/identity/security check.
+No new body read, scan or budget allowance is introduced by this metadata.
+The diagnostic covers only the initial `inspectRetainedReference` outcome,
+including its internal final recheck. A later post-decode `inspection.check()`
+failure keeps its existing `state-changed` reason without retroactively adding a
+tag to the successful initial outcome. Malformed internal diagnostic metadata is
+discarded while the original failure/error code is retained; it never turns a
+failed inspection into success or legitimizes extra private fields.
+
+Only `publication-shape` may also include an optional closed `detail` enum:
+`missing-stage-or-entry`, `unproven-history-coexistence`,
+`distinct-target-copies`, `link-count-or-shared-identity`,
+`recorded-length-mismatch`, `native-identity-unavailable` or
+`native-identity-not-distinct`. Legacy shape failures without detail remain valid.
+This is the **first satisfied diagnostic predicate**, not a sole-cause claim:
+unproven historical coexistence is reported before link/length defects; target
+copies are reported before link/length defects; link failures precede length
+failures. Native identity availability is checked before distinctness. Missing
+history is normally rejected by the earlier inventory-membership guard, so the
+shape missing-entry label also covers defensive/unreachable historical states.
+Details use only values already inspected by the rejecting guard; no additional
+read, scan or authority is introduced. Success/cancellation and other checks
+cannot carry this field, and no name, path, SID, hash or raw error is exposed.
 
 The closed projection contains hashes, counts, dimensions, dispositions and a
 stable proof, never bytes, paths, private URLs or design text. The proof also
@@ -42,6 +117,14 @@ verified source scope without another source-body pass.
 The realistic synthetic 2.4 MB source/847,196-byte PNG case charges 5,698,604
 private bytes (5,698,575 physical bytes plus 29 EOF reservations), zero network.
 This is validation-only evidence, not a recovery-commit or live-image claim.
+The published-only retained-state fixture uses a fixed synthetic policy clock
+and explicitly advances it for expired-job validation. It must reach the actual
+`job-after-artifacts` fault exactly once, retain two published files with the
+original staged hashes/inodes, and have no surviving stage names. An independent
+control advances the lease before the actual commit and verifies interruption
+with two stage-only files and no hit of that fault. This distinguishes physical
+states without weakening production lease checks or changing timed test cases;
+an arbitrary `interrupted` result alone does not establish publication.
 Failed cleanup retains ownership and the meter, joins independent cleanup,
 preserves the primary error and rejects further execution until close-only
 continuation succeeds.

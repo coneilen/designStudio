@@ -16,6 +16,9 @@ export interface ReadLease extends Lease {
   readonly byteLength: number;
   read(buffer: Buffer): number;
 }
+export interface RetainedReadLease extends ReadLease {
+  check(): void;
+}
 export interface InstallationEntry extends Lease {
   write(bytes: Buffer): void;
   finalize(publicBrowser?: boolean): void;
@@ -33,6 +36,12 @@ export interface Native {
   inspect(filename: string, directory: boolean, sid?: string): Lease;
   exclusive(filename: string, sid: string): Lease;
   pinRead(filename: string, directory: boolean, sid?: string): ReadLease;
+  pinRetainedRoot(filename: string, sid: string): RetainedReadLease;
+  pinRetainedChild(
+    parent: RetainedReadLease,
+    name: string,
+    directory: boolean,
+  ): RetainedReadLease;
   pinInstallation(
     filename: string,
     directory: boolean,
@@ -513,6 +522,68 @@ async function load(): Promise<Native> {
       throw failure("CreateFileW");
     return handle;
   }
+  // Only a pinned, branded root/parent can reach this predicate. Control readers
+  // continue to use checkAcl, including protected file leaves admitted here.
+  function checkRetainedAcl(
+    handle: Handle,
+    sid: string,
+    directory: boolean,
+  ): void {
+    const owner: unknown[] = [null];
+    const acl: unknown[] = [null];
+    const descriptor: unknown[] = [null];
+    const code = securityInfo(handle, 1, 5, owner, null, acl, null, descriptor);
+    if (code !== 0) throw failure("GetSecurityInfo(retained)", code);
+    preserving(
+      () => {
+        if (sidString(owner[0]) !== sid)
+          refuse("Retained descendant owner changed.");
+        const control = Buffer.alloc(2);
+        if (!descriptorControl(descriptor[0], control, Buffer.alloc(4)))
+          throw failure("GetSecurityDescriptorControl(retained)");
+        if (control.readUInt16LE() & 0x1000) {
+          if (directory)
+            refuse("Retained inheritance chain contains a protected subtree.");
+          checkAcl(handle, sid, false);
+          return;
+        }
+        if (
+          (control.readUInt16LE() & 0x110c) !== 4 ||
+          !acl[0] ||
+          !validAcl(acl[0])
+        )
+          refuse("Retained descendant requires a nondefaulted inherited DACL.");
+        const header = Buffer.from(koffi.decode(acl[0], "uint8_t", 8));
+        if (header.readUInt16LE(4) !== 2)
+          refuse("Retained descendant requires exactly two inherited grants.");
+        const seen = new Set<string>();
+        for (let index = 0; index < 2; index++) {
+          const ace: unknown[] = [null];
+          if (!getAce(acl[0], index, ace)) throw failure("GetAce(retained)");
+          const bytes = Buffer.from(koffi.decode(ace[0], "uint8_t", 8));
+          const length = bytes.readUInt16LE(2);
+          if (
+            bytes[0] !== 0 ||
+            bytes[1] !== (directory ? 0x13 : 0x10) ||
+            bytes.readUInt32LE(4) !== 0x1f01ff ||
+            length < 20 ||
+            length > 76
+          )
+            refuse("Retained descendant ACE is outside the inherited profile.");
+          const trustee = Buffer.from(
+            koffi.decode(ace[0], 8, "uint8_t", length - 8),
+          );
+          if (trustee.length !== 8 + 4 * (trustee[1] ?? 0))
+            refuse("Retained descendant trustee has an ambiguous layout.");
+          const aceSid = sidString(trustee);
+          if ((aceSid !== sid && aceSid !== "S-1-5-18") || seen.has(aceSid))
+            refuse("Retained descendant trustee is outside the owned profile.");
+          seen.add(aceSid);
+        }
+      },
+      () => free(descriptor[0]),
+    );
+  }
   function inspectHandle(
     handle: Handle,
     filename: string,
@@ -558,6 +629,15 @@ async function load(): Promise<Native> {
     sid?: string,
     installation = false,
     publicBrowser = false,
+    inspect = (handle: Handle) =>
+      inspectHandle(
+        handle,
+        filename,
+        directory,
+        sid,
+        installation,
+        publicBrowser,
+      ),
   ): ReadLease {
     const handle = open(
       filename,
@@ -569,14 +649,7 @@ async function load(): Promise<Native> {
     );
     let identity: Identity;
     try {
-      identity = inspectHandle(
-        handle,
-        filename,
-        directory,
-        sid,
-        installation,
-        publicBrowser,
-      );
+      identity = inspect(handle);
     } catch (error) {
       return preserving(
         () => {
@@ -629,9 +702,77 @@ async function load(): Promise<Native> {
       },
     };
   }
+  const retained = new WeakMap<
+    RetainedReadLease,
+    { sid: string; directory: boolean; filename: string; check(): void }
+  >();
+  function retainedPin(
+    filename: string,
+    directory: boolean,
+    sid: string,
+    parent?: RetainedReadLease,
+  ): RetainedReadLease {
+    const inspect = (handle: Handle) => {
+      if (principal() !== sid) refuse("Retained native principal changed.");
+      parent?.check();
+      const identity = inspectHandle(handle, filename, directory);
+      if (parent) {
+        if (identity.volume !== parent.identity.volume)
+          refuse("Retained descendant changed native volume.");
+        checkRetainedAcl(handle, sid, directory);
+      } else checkAcl(handle, sid, true);
+      return identity;
+    };
+    const lease = pin(filename, directory, undefined, false, false, inspect);
+    let closed = false;
+    const identity = Object.freeze({ ...lease.identity });
+    const check = () => {
+      if (closed) refuse("Retained native pin is closed.");
+      const fresh = inspect(lease.handle);
+      if (fresh.file !== identity.file || fresh.volume !== identity.volume)
+        refuse("Retained native identity changed.");
+    };
+    const result: RetainedReadLease = Object.freeze({
+      handle: lease.handle,
+      identity,
+      byteLength: lease.byteLength,
+      check,
+      read(buffer: Buffer) {
+        check();
+        const count = lease.read(buffer);
+        check();
+        return count;
+      },
+      close() {
+        lease.close();
+        closed = true;
+      },
+    });
+    retained.set(result, { sid, directory, filename, check });
+    return result;
+  }
   return {
     principal,
-    pinRead: pin,
+    pinRead: (filename, directory, sid) => pin(filename, directory, sid),
+    pinRetainedRoot: (filename, sid) => retainedPin(filename, true, sid),
+    pinRetainedChild(parent, name, directory) {
+      const admitted = retained.get(parent);
+      if (
+        !admitted?.directory ||
+        !/^[A-Za-z0-9_.-]{1,120}$/.test(name) ||
+        name === "." ||
+        name === ".." ||
+        /[. ]$/.test(name)
+      )
+        refuse("Retained child requires a branded parent and one exact name.");
+      admitted.check();
+      return retainedPin(
+        path.join(admitted.filename, name),
+        directory,
+        admitted.sid,
+        parent,
+      );
+    },
     pinInstallation: (filename, directory, sid, publicBrowser = false) =>
       pin(filename, directory, sid, true, publicBrowser),
     createInstallationEntry(filename, directory, sid) {

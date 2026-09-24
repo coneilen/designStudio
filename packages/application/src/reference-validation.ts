@@ -7,6 +7,7 @@ import type {
   NativeReferenceRecoveryPlanEnvelope,
   OperationContext,
   ReferenceRecoveryPlan,
+  RetainedInventoryFailure,
 } from "@design-studio/contracts";
 import { parseContract, validateContract } from "@design-studio/contracts";
 import { canonicalBytes, canonicalDigest } from "@design-studio/design-ir";
@@ -51,7 +52,7 @@ import {
   renewalProposal,
   same,
 } from "./reference-proof.js";
-import { retainedReferenceStages } from "./reference-publications.js";
+import { retainedReferenceInventory } from "./reference-publications.js";
 import {
   DIAGNOSTIC_APPROVAL_CONFIRMATION,
   REFERENCE_APPROVAL_CONFIRMATION,
@@ -555,6 +556,7 @@ export async function openNativeReferenceValidation(project: CaptureProject) {
       let result: NativeReferenceRecoveryPlanEnvelope;
       let cleanupFailure: NativeCaptureCleanupRequired | undefined;
       let finalContext: OperationContext | undefined;
+      let inventoryFailure: RetainedInventoryFailure | undefined;
       try {
         if (
           Object.keys(owned).sort().join(",") !==
@@ -595,7 +597,7 @@ export async function openNativeReferenceValidation(project: CaptureProject) {
           return reader;
         };
         let proof = await issue(ids.approval, [ids.original, ids.job]);
-        reason = "source-proof-invalid";
+        reason = "source-metadata-invalid";
         const predecessorMetadata = unwrap(
           await db.referenceJobMetadata(ids.job, proof.context),
         );
@@ -708,7 +710,7 @@ export async function openNativeReferenceValidation(project: CaptureProject) {
           DIAGNOSTIC_APPROVAL_CONFIRMATION,
         );
         reason = "inventory-invalid";
-        const history = await retainedReferenceStages(
+        const history = await retainedReferenceInventory(
           proof,
           {
             ...state,
@@ -716,12 +718,35 @@ export async function openNativeReferenceValidation(project: CaptureProject) {
             stages: state.stages.filter((s) => s.jobId !== jobId),
           },
           proposal,
+          source.verifiedCapture,
         );
-        expectedInspection = { artifacts: state.artifacts, targets, history };
+        expectedInspection = {
+          artifacts: state.artifacts,
+          targets,
+          history: history.stages,
+          committedHistoryArtifacts: history.committedHistoryArtifacts,
+          successorCaptureHistoryArtifacts:
+            history.successorCaptureHistoryArtifacts,
+        };
         input.phase = "inspection";
-        inspection = unwrap(
-          await fs.inspectRetainedReference(expectedInspection, proof.context),
+        const inspected = await fs.inspectRetainedReference(
+          expectedInspection,
+          proof.context,
         );
+        if (
+          inspected.status !== "complete" &&
+          inspected.status !== "partial" &&
+          inspected.status !== "cancelled" &&
+          inspected.inventoryFailure
+        ) {
+          const diagnostic = validateContract(
+            "RetainedInventoryFailure",
+            inspected.inventoryFailure,
+          );
+          if (diagnostic.success)
+            inventoryFailure = structuredClone(diagnostic.value);
+        }
+        inspection = unwrap(inspected);
         if (
           inspection.targets.some(
             (t) => t.publication === "known-pair-native-read-blocked",
@@ -821,6 +846,9 @@ export async function openNativeReferenceValidation(project: CaptureProject) {
             retryable: false,
             diagnosticIds: [],
           },
+          ...(failure.code !== "CANCELLED" && inventoryFailure
+            ? { inventoryFailure }
+            : {}),
         };
       } finally {
         const errors = await finishInspection();

@@ -18,12 +18,23 @@ import {
   ProjectFileSystem,
   type RetainedReferenceInput,
 } from "../src/filesystem.js";
+import { HostBoundaryError } from "../src/guards.js";
 
-const fault = vi.hoisted(() => ({ unlinkPath: "" }));
+const fault = vi.hoisted(() => ({ unlinkPath: "", shortReadPath: "" }));
 vi.mock("node:fs/promises", async (original) => {
   const actual = await original<typeof import("node:fs/promises")>();
   return {
     ...actual,
+    open: async (...args: Parameters<typeof actual.open>) => {
+      const handle = await actual.open(...args);
+      if (String(args[0]) === fault.shortReadPath) {
+        fault.shortReadPath = "";
+        Object.defineProperty(handle, "read", {
+          value: async (buffer: Uint8Array) => ({ bytesRead: 0, buffer }),
+        });
+      }
+      return handle;
+    },
     unlink: async (target: Parameters<typeof actual.unlink>[0]) => {
       if (String(target).endsWith(fault.unlinkPath) && fault.unlinkPath) {
         fault.unlinkPath = "";
@@ -111,6 +122,20 @@ it.each([
   "grow",
   "truncate",
   "reparse",
+  "descriptor",
+  "missing-registered",
+  "missing-history",
+  "committed-size",
+  "proof-native",
+  "proof-stat",
+  "body-read",
+  "final-inventory",
+  "native-recheck",
+  "native-admission",
+  "unknown-pin",
+  "cancel-pin",
+  "corrupt-close-failure",
+  "diagnostic-isolation",
 ] as const)(
   "read-only retained inspector handles %s without adopting or unlinking history",
   async (kind) => {
@@ -145,7 +170,9 @@ it.each([
         Buffer.of(index + 42),
       );
     const first = targets[0];
-    if (!first) throw new Error("Missing synthetic descriptor");
+    const secondTarget = targets[1];
+    if (!first || !secondTarget)
+      throw new Error("Missing synthetic descriptor");
     const stage = path.join(artifacts, staging, first.stagingId);
     const blob = path.join(artifacts, first.artifact.path);
     if (kind === "published-only") {
@@ -189,10 +216,44 @@ it.each([
       artifacts: [],
       history: [],
     };
+    const sourceBytes = Buffer.from("synthetic original proof");
+    const sourceHash = createHash("sha256").update(sourceBytes).digest("hex");
+    const source = {
+      id: `sha256_${sourceHash}`,
+      sha256: sourceHash,
+      path: `blobs/${sourceHash}`,
+      byteLength: sourceBytes.length,
+      mediaType: "application/octet-stream",
+    };
+    const sourcePath = path.join(artifacts, ...source.path.split("/"));
+    if (
+      [
+        "missing-registered",
+        "committed-size",
+        "proof-native",
+        "proof-stat",
+      ].includes(kind)
+    ) {
+      input.artifacts = [source];
+      if (kind !== "missing-registered")
+        await writeFile(sourcePath, sourceBytes);
+      if (kind === "committed-size")
+        input.artifacts = [{ ...source, byteLength: sourceBytes.length + 1 }];
+    }
+    if (kind === "missing-history")
+      input.history = [
+        { ...first, stagingId: "00000000-0000-4000-8000-000000000077" },
+      ];
+    if (kind === "descriptor")
+      input.targets = [{ ...first, stagingId: "invalid" }, secondTarget];
+    if (kind === "corrupt-close-failure") await writeFile(stage, Buffer.of(44));
     let pins = 0;
     let sequence = 0;
     const closes = new Map<number, number>();
     let charged = 0;
+    let inspectionActive = false;
+    let rootChecks = 0;
+    let mutated = false;
     const files = await ProjectFileSystem.create({
       projectId: context.projectId,
       authority: () => true,
@@ -218,9 +279,18 @@ it.each([
         artifactRootId: "artifacts",
         outputRootId: "outputs",
         authorize: async (actual) => {
-          expect(actual).toEqual(input);
+          if (kind !== "diagnostic-isolation") expect(actual).toEqual(input);
         },
         pin: async (id, relative) => {
+          if (kind === "native-admission")
+            throw new HostBoundaryError(
+              "ACTION_REQUIRED",
+              "Synthetic native owner guard",
+            );
+          if (kind === "unknown-pin")
+            throw new Error("Synthetic unclassified pin exception");
+          if (kind === "cancel-pin")
+            throw new HostBoundaryError("CANCELLED", "Synthetic cancelled pin");
           const filename = path.join(
             id === "artifacts" ? artifacts : outputs,
             ...relative.split("/"),
@@ -229,18 +299,39 @@ it.each([
           expect(stat.isDirectory() || stat.nlink === 1).toBe(true);
           pins++;
           const pinId = ++sequence;
+          if (kind === "final-inventory" && !mutated) {
+            mutated = true;
+            await writeFile(path.join(outputs, "new-output"), Buffer.of(1));
+          }
+          if (id === "artifacts" && relative === "") rootChecks++;
           let closed = false;
           return {
+            check: async () => {
+              if (kind === "body-read" && !mutated && filename === stage) {
+                mutated = true;
+                fault.shortReadPath = stage;
+              }
+            },
             identity: {
               path: filename,
               volume: stat.dev,
-              file: String(stat.ino),
+              file:
+                kind === "proof-native" &&
+                inspectionActive &&
+                relative === source.path
+                  ? "changed-native-identity"
+                  : kind === "native-recheck" &&
+                      relative === "" &&
+                      id === "artifacts" &&
+                      rootChecks === 2
+                    ? "changed-recheck-identity"
+                    : String(stat.ino),
             },
             close: () => {
               if (!closed) {
                 closes.set(pinId, (closes.get(pinId) ?? 0) + 1);
                 if (
-                  kind === "close-failure" &&
+                  ["close-failure", "corrupt-close-failure"].includes(kind) &&
                   pinId === 1 &&
                   closes.get(pinId) === 1
                 )
@@ -254,7 +345,123 @@ it.each([
       },
     });
     try {
+      if (kind === "proof-native" || kind === "proof-stat") {
+        const proof = await files.read(
+          { artifactRootId: "artifacts", path: source.path },
+          context,
+        );
+        expect(proof.status).toBe("complete");
+        if (kind === "proof-stat") await writeFile(sourcePath, sourceBytes);
+      }
+      inspectionActive = true;
+      if (kind === "diagnostic-isolation") {
+        const bad = {
+          ...input,
+          targets: [
+            { ...first, artifact: { ...first.artifact, byteLength: 2 } },
+            secondTarget,
+          ],
+        };
+        const [failure, success] = await Promise.all([
+          files.inspectRetainedReference(bad, context),
+          files.inspectRetainedReference(input, context),
+        ]);
+        expect(failure.inventoryFailure).toEqual({
+          check: "publication-shape",
+          category: "retained-target",
+          detail: "recorded-length-mismatch",
+        });
+        expect(success.status).toBe("complete");
+        expect(success.inventoryFailure).toBeUndefined();
+        if (success.status === "complete") success.value.close();
+        const next = await files.inspectRetainedReference(input, context);
+        expect(next.status).toBe("complete");
+        expect(next.inventoryFailure).toBeUndefined();
+        if (next.status === "complete") next.value.close();
+        return;
+      }
+      if (kind === "unknown-pin") {
+        await expect(
+          files.inspectRetainedReference(input, context),
+        ).rejects.toThrow(/unclassified/);
+        return;
+      }
       const result = await files.inspectRetainedReference(input, context);
+      const expectedDiagnostics: Record<
+        string,
+        { check: string; category: string; detail?: string }
+      > = {
+        descriptor: { check: "descriptor", category: "retained-target" },
+        "missing-registered": {
+          check: "missing-recorded-entry",
+          category: "committed-inventory",
+        },
+        "missing-history": {
+          check: "missing-recorded-entry",
+          category: "history-stage",
+        },
+        "committed-size": {
+          check: "committed-size",
+          category: "committed-inventory",
+        },
+        "proof-native": {
+          check: "proof-native-identity",
+          category: "original-proof",
+        },
+        "proof-stat": { check: "proof-stat", category: "original-proof" },
+        ambiguous: {
+          check: "publication-shape",
+          category: "retained-target",
+          detail: "distinct-target-copies",
+        },
+        missing: {
+          check: "publication-shape",
+          category: "retained-target",
+          detail: "missing-stage-or-entry",
+        },
+        hardlink: {
+          check: "publication-shape",
+          category: "retained-target",
+          detail: "link-count-or-shared-identity",
+        },
+        grow: {
+          check: "publication-shape",
+          category: "retained-target",
+          detail: "recorded-length-mismatch",
+        },
+        truncate: {
+          check: "publication-shape",
+          category: "retained-target",
+          detail: "recorded-length-mismatch",
+        },
+        corrupt: { check: "body-hash", category: "retained-target" },
+        "corrupt-close-failure": {
+          check: "body-hash",
+          category: "retained-target",
+        },
+        "body-read": { check: "body-read", category: "retained-target" },
+        "final-inventory": {
+          check: "inventory-recheck",
+          category: "namespace",
+        },
+        "native-recheck": {
+          check: "native-identity-recheck",
+          category: "namespace",
+        },
+        "native-admission": {
+          check: "native-read-admission",
+          category: "namespace",
+        },
+      };
+      expect(result.inventoryFailure, kind).toEqual(expectedDiagnostics[kind]);
+      if (kind === "corrupt-close-failure") {
+        expect(result).toMatchObject({
+          status: "failed",
+          error: { code: "ARTIFACT_INTEGRITY" },
+        });
+        expect(pins).toBe(1);
+        await files.closePreservingStages();
+      }
       if (
         ["stage-only", "published-only", "pair", "close-failure"].includes(kind)
       ) {
@@ -302,6 +509,7 @@ it.each([
             await expect(result.value.check()).rejects.toMatchObject({
               code: "ARTIFACT_INTEGRITY",
             });
+            expect(result.inventoryFailure).toBeUndefined();
           }
           if (kind === "close-failure") {
             const second = await files.inspectRetainedReference(input, context);
@@ -325,13 +533,289 @@ it.each([
       } else {
         expect(result.status, kind).not.toBe("complete");
       }
+      await files.closeRetainedProofReads();
       expect(pins).toBe(0);
     } finally {
+      fault.shortReadPath = "";
       await files.closePreservingStages();
       await rm(directory, { recursive: true, force: true });
     }
   },
 );
+it.each([
+  "valid",
+  "valid-successor",
+  "cross-provenance",
+  "successor-foreign-artifact",
+  "successor-duplicate",
+  "unproven",
+  "unproven-wrong-length",
+  "linked-wrong-length",
+  "foreign-artifact",
+  "extra-proof",
+  "duplicate-proof",
+  "unregistered",
+  "blob-corrupt",
+  "stage-corrupt",
+  "blob-size",
+  "stage-size",
+  "linked",
+  "missing-history",
+  "target-copy",
+  "native-same-identity",
+  "native-same-close",
+  "blob-swap",
+] as const)(
+  "history coexistence requires authenticated independent single-link bodies: %s",
+  async (kind) => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), "retained-history-synthetic-"),
+    );
+    const artifacts = path.join(directory, "artifacts");
+    const outputs = path.join(directory, "outputs");
+    const staging = ".host-00000000-0000-4000-8000-000000000001";
+    await mkdir(path.join(artifacts, staging), { recursive: true });
+    await mkdir(path.join(artifacts, "blobs"));
+    await mkdir(outputs);
+    const bodies = [Buffer.of(1), Buffer.of(2), Buffer.of(3, 4)];
+    const descriptors = bodies.map((bytes, index) => {
+      const hash = createHash("sha256").update(bytes).digest("hex");
+      return {
+        stagingId: `00000000-0000-4000-8000-00000000000${index + 2}`,
+        jobId: index === 2 ? "historical_failed" : "diagnostic_target",
+        requestId: index === 2 ? "historical_failed" : "diagnostic_target",
+        artifact: {
+          id: `sha256_${hash}`,
+          sha256: hash,
+          path: `blobs/${hash}`,
+          byteLength: bytes.length,
+          mediaType: "application/octet-stream",
+        },
+      };
+    });
+    const [first, second, historical] = descriptors;
+    if (!first || !second || !historical)
+      throw new Error("Missing synthetic history descriptor.");
+    const historyPath = path.join(artifacts, staging, historical.stagingId);
+    const blobPath = path.join(
+      artifacts,
+      ...historical.artifact.path.split("/"),
+    );
+    for (const [index, descriptor] of descriptors.entries())
+      await writeFile(
+        path.join(artifacts, staging, descriptor.stagingId),
+        bodies[index] ?? Buffer.alloc(0),
+      );
+    await writeFile(blobPath, bodies[2] ?? Buffer.alloc(0));
+    const input: RetainedReferenceInput = {
+      targets: [first, second],
+      history: [historical],
+      artifacts: [historical.artifact],
+      committedHistoryArtifacts: [historical.artifact],
+    };
+    if (
+      kind === "valid-successor" ||
+      kind === "successor-foreign-artifact" ||
+      kind === "successor-duplicate"
+    )
+      input.committedHistoryArtifacts = [];
+    if (kind === "valid-successor" || kind === "cross-provenance")
+      input.successorCaptureHistoryArtifacts = [historical.artifact];
+    if (kind === "successor-foreign-artifact")
+      input.successorCaptureHistoryArtifacts = [
+        { ...historical.artifact, id: "foreign" },
+      ];
+    if (kind === "successor-duplicate")
+      input.successorCaptureHistoryArtifacts = [
+        historical.artifact,
+        historical.artifact,
+      ];
+    if (kind === "unproven" || kind === "unproven-wrong-length")
+      input.committedHistoryArtifacts = [];
+    if (kind === "unproven-wrong-length")
+      await writeFile(blobPath, Buffer.of(3));
+    if (kind === "foreign-artifact")
+      input.committedHistoryArtifacts = [
+        { ...historical.artifact, id: "foreign" },
+      ];
+    if (kind === "extra-proof")
+      input.committedHistoryArtifacts = [historical.artifact, first.artifact];
+    if (kind === "duplicate-proof")
+      input.committedHistoryArtifacts = [
+        historical.artifact,
+        historical.artifact,
+      ];
+    if (kind === "unregistered") {
+      input.artifacts = [];
+      input.committedHistoryArtifacts = [];
+    }
+    if (kind === "blob-corrupt") await writeFile(blobPath, Buffer.of(4, 3));
+    if (kind === "stage-corrupt") await writeFile(historyPath, Buffer.of(4, 3));
+    if (kind === "blob-size") await writeFile(blobPath, Buffer.of(3));
+    if (kind === "stage-size") await writeFile(historyPath, Buffer.of(3));
+    if (kind === "linked" || kind === "linked-wrong-length") {
+      await rm(blobPath);
+      await link(historyPath, blobPath);
+      if (kind === "linked-wrong-length")
+        await writeFile(blobPath, Buffer.of(3));
+    }
+    if (kind === "missing-history") await rm(historyPath);
+    if (kind === "target-copy")
+      await writeFile(
+        path.join(artifacts, ...first.artifact.path.split("/")),
+        bodies[0] ?? Buffer.alloc(0),
+      );
+    const context = syntheticContext();
+    context.authorization.grants.push(
+      ...["artifacts", "outputs"].map((resourceId) => ({
+        resourceKind: "artifact" as const,
+        resourceId,
+        operations: ["read"] as ["read"],
+      })),
+    );
+    const before = await lstat(historyPath).catch(() => undefined);
+    let charged = 0;
+    let reads = 0;
+    let pins = 0;
+    let swapped = false;
+    let failedClose = false;
+    const files = await ProjectFileSystem.create({
+      projectId: context.projectId,
+      authority: () => true,
+      roots: [
+        {
+          id: "artifacts",
+          path: artifacts,
+          access: "read",
+          trustedExclusiveAccess: true,
+          managedBlobs: true,
+        },
+        {
+          id: "outputs",
+          path: outputs,
+          access: "read",
+          trustedExclusiveAccess: true,
+        },
+      ],
+      reserveRead: (bytes) => {
+        charged += bytes;
+        if (bytes === 1) reads++;
+      },
+      retainedReferenceInspection: {
+        artifactRootId: "artifacts",
+        outputRootId: "outputs",
+        authorize: async (actual) => {
+          expect(actual).toEqual(input);
+        },
+        pin: async (id, relative) => {
+          const filename = path.join(
+            id === "artifacts" ? artifacts : outputs,
+            ...relative.split("/"),
+          );
+          const stat = await lstat(filename);
+          pins++;
+          let closed = false;
+          return {
+            identity: {
+              path: filename,
+              volume: stat.dev,
+              file:
+                ["native-same-identity", "native-same-close"].includes(kind) &&
+                filename === blobPath
+                  ? String(before?.ino)
+                  : String(stat.ino),
+            },
+            check: async () => {
+              if (kind === "blob-swap" && filename === blobPath && !swapped) {
+                swapped = true;
+                await rename(blobPath, path.join(directory, "previous"));
+                await writeFile(blobPath, Buffer.of(3, 4));
+              }
+            },
+            close: () => {
+              if (
+                kind === "native-same-close" &&
+                filename === blobPath &&
+                !failedClose
+              ) {
+                failedClose = true;
+                throw new Error("Synthetic close after native shape failure.");
+              }
+              if (!closed) {
+                closed = true;
+                pins--;
+              }
+            },
+          };
+        },
+      },
+    });
+    try {
+      const result = await files.inspectRetainedReference(input, context);
+      if (kind === "valid" || kind === "valid-successor") {
+        expect(result.status, JSON.stringify(result)).toBe("complete");
+        if (result.status !== "complete")
+          throw new Error("Missing valid inspection.");
+        try {
+          expect(charged).toBe(10); // Two 1-byte targets, two 2-byte history bodies, four EOF probes.
+          expect(reads).toBe(6);
+          expect(
+            result.value.targets.map((entry) => entry.publication),
+          ).toEqual(["stage-only", "stage-only"]);
+          await result.value.check();
+          expect((await lstat(historyPath)).ino).toBe(before?.ino);
+          expect(await readFile(historyPath)).toEqual(Buffer.of(3, 4));
+          expect(await readFile(blobPath)).toEqual(Buffer.of(3, 4));
+        } finally {
+          result.value.close();
+        }
+      } else {
+        expect(result.status, kind).not.toBe("complete");
+        if (kind === "target-copy")
+          expect(result.inventoryFailure).toEqual({
+            check: "publication-shape",
+            category: "retained-target",
+            detail: "distinct-target-copies",
+          });
+        if (
+          [
+            "unproven",
+            "unproven-wrong-length",
+            "linked-wrong-length",
+            "linked",
+            "blob-size",
+            "stage-size",
+            "native-same-identity",
+            "native-same-close",
+          ].includes(kind)
+        )
+          expect(result.inventoryFailure).toEqual({
+            check: "publication-shape",
+            category: "history-stage",
+            detail: kind.startsWith("unproven")
+              ? "unproven-history-coexistence"
+              : kind.startsWith("linked")
+                ? "link-count-or-shared-identity"
+                : kind.startsWith("native-same")
+                  ? "native-identity-not-distinct"
+                  : "recorded-length-mismatch",
+          });
+        if (kind === "native-same-close") {
+          expect(result).toMatchObject({
+            error: { code: "ARTIFACT_INTEGRITY" },
+          });
+          expect(pins).toBe(1);
+          await files.closePreservingStages();
+        }
+      }
+      expect(pins).toBe(0);
+    } finally {
+      await files.closePreservingStages();
+      await rm(directory, { recursive: true });
+    }
+  },
+);
+
 it("post-crash pair recovery requires a trusted reservation and exact hash/inode pair", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "studio-crash-owned-"));
   const context = syntheticContext();

@@ -79,11 +79,50 @@ parallelism. Both phases are failure-gated; the workflow shows them as separate
 steps and does not run the combined command again. This intentionally changes
 native test scheduling, not product authorization, lease or time-budget rules.
 
-The overall Workspace CI job watchdog is **25 minutes**, increased from 15 after
-the two complete local phases measured 851.19 seconds (14.19 minutes), before
-checkout/install/build/drift/smoke overhead. This is an infrastructure allowance,
-not a per-test, hook, product deadline or operation-budget increase. All assertions
-remain failure-gated; no automatic retry or `continue-on-error` is added.
+The overall Workspace CI job watchdog is **35 minutes**. The earlier increase
+from 15 to 25 minutes covered two local phases measured at 851.19 seconds.
+With expanded coverage, hosted run `35952509962` passed all 146 portable files
+in 1181.45 seconds and all 27 native files in 234.14 seconds, plus roughly
+50 seconds of setup/build work. The 25-minute job watchdog then cancelled smoke
+about 33 seconds after it started; smoke was **incomplete, not passed**.
+The 25-to-35-minute change is a bounded infrastructure allowance, not a runtime
+performance guarantee or a per-test, hook, product deadline, lease or operation-
+budget increase. Existing 5-second tests and the explicit 60-second cold native
+driver keep their limits. All assertions and sequential phases remain failure-
+gated; no retries, `continue-on-error`, worker, partition, skip or cache changes
+are introduced.
+
+Two non-timing reference-fixture groups explicitly use a fixed synthetic policy
+clock: the realistic diagnostic input-budget case, and the retained predecessor
+proof/state/graph/export table. Their prerequisite captures and legacy-reference
+receipts must be established before those assertions are meaningful; hosted I/O
+duration is not the behavior these cases measure. Default fixture clocks, real
+clock sleeps, native performance/cold validation, scheduler/deadline tests and
+all operation/test limits are unchanged. Explicit logical advances still expire
+jobs and approvals, and the timestamp-tie negative remains exercised.
+Separate controls advance the actual capture execution clock to lease expiry
+and the legacy-reference clock by 5001 ms before effect settlement: the real
+`Execution.check` still rejects with `LEASE_LOST`, and the real settlement ledger
+still rejects with `CONFLICT` before decoding. Outer envelope translations can
+differ; these synthetic controls establish the mechanism, not the exact timing
+or translated cause of an earlier CI run. Physical byte-budget and history
+integrity assertions remain unchanged.
+
+The storage cancellation-control tests separate queued-context snapshotting from
+capacity admission. The snapshot case still mutates the caller's request after
+queueing a real cancellation and checks the original identity. The capacity case
+prepares a fresh owned SQLite store with **127 genuine sequential control
+transactions in `beforeEach`**, under the unchanged default 10-second hook limit.
+Its default 5-second test body verifies the persisted 127 records, admits control
+128 with exactly one version increment, refuses 129 without changing any record,
+and replays control 0 at capacity without budget/usage mutation. No rows are
+manufactured or shared across cases. Original setup promises and store queues
+are joined before cleanup; cancellation during a late open or an actual seeded
+write is tested separately and prevents the next seed transaction.
+This separates bounded fixture preparation from the operation under assertion,
+not a product latency guarantee or a test/hook allowance increase. The earlier
+hosted timeout is retained as failure evidence; a fast isolated run does not
+establish the hosted I/O cause.
 
 `tests/unit-partition.ts` is the reviewed exact-file inventory. The checker uses
 the original `packages/**/*.test.ts` discovery minus the original smoke/default

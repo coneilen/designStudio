@@ -26,17 +26,23 @@ export async function ownedTest(
   operation: (
     root: string,
     own: (registry: FixtureProjectRegistry) => FixtureProjectRegistry,
+    beforeCleanup: (close: () => void | Promise<void>) => void,
   ) => Promise<void>,
 ): Promise<void> {
   const root = await mkdtemp(path.join(os.tmpdir(), "ds-ph-"));
   const identity = await lstat(root, { bigint: true });
   const registries: FixtureProjectRegistry[] = [];
+  const closures: (() => void | Promise<void>)[] = [];
   const errors: unknown[] = [];
   try {
-    await operation(root, (registry) => {
-      registries.push(registry);
-      return registry;
-    });
+    await operation(
+      root,
+      (registry) => {
+        registries.push(registry);
+        return registry;
+      },
+      (close) => closures.push(close),
+    );
   } catch (error) {
     errors.push(error);
   }
@@ -47,7 +53,20 @@ export async function ownedTest(
       errors.push(error);
     }
   }
+  let resourcesClosed = true;
+  for (const close of closures.reverse()) {
+    try {
+      await close();
+    } catch (error) {
+      resourcesClosed = false;
+      errors.push(error);
+    }
+  }
   try {
+    if (!resourcesClosed)
+      throw new Error(
+        "Refusing cleanup: synthetic resource ownership has not closed.",
+      );
     const current = await lstat(root, { bigint: true });
     if (
       identity.dev !== current.dev ||

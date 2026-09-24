@@ -1,6 +1,6 @@
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { lstat, mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import {
   DEFAULT_BUDGETS,
   type OperationContext,
@@ -8,7 +8,17 @@ import {
   validateContract,
 } from "@design-studio/contracts";
 import Database from "better-sqlite3";
-import { afterEach, aroundEach, expect, test } from "vitest";
+import {
+  afterEach,
+  aroundEach,
+  beforeEach,
+  describe,
+  expect,
+  onTestFinished,
+  test,
+  vi,
+} from "vitest";
+import { AsyncTestScope } from "../../jobs/tests/async-scope.js";
 import {
   decodeBackup,
   encodeBackup,
@@ -23,11 +33,16 @@ import type {
   JobWorkerExpected,
   StoredJob,
 } from "../src/job-types.js";
-import { closeSettledStores, inStorageTest } from "./lifetime.js";
+import {
+  closeSettledStores,
+  inStorageTest,
+  storageTestSignal,
+} from "./lifetime.js";
 import { bytes, context, diskFixture, hash, revision } from "./support.js";
 
 const roots: string[] = [];
 const stores: LocalStore[] = [];
+const seedScopes: AsyncTestScope[] = [];
 aroundEach((run, context) => inStorageTest(context.signal, run));
 const nativeBinding = resolve(
   ".tools\\sqlite-prebuild\\build\\Release\\better_sqlite3.node",
@@ -39,6 +54,8 @@ const error = {
   diagnosticIds: [],
 };
 afterEach(async () => {
+  for (const scope of seedScopes) await scope.close();
+  seedScopes.length = 0;
   await closeSettledStores(stores);
   for (const root of roots.splice(0))
     await rm(root, { recursive: true, force: true });
@@ -1196,9 +1213,9 @@ test("cancel controls survive authenticated backup/restore without reapplying ol
   expect(replay.record.rowVersion).toBeGreaterThan(accepted.record.rowVersion);
 });
 
-test("cancel admission is bounded and snapshots control identity before queueing", async () => {
+test("cancel admission snapshots control identity before queueing", async () => {
   const f = await setup();
-  let record = value(await f.store.jobs.create(f.submission(), f.ctx()));
+  const record = value(await f.store.jobs.create(f.submission(), f.ctx()));
   const ctx = f.ctx("cancel0");
   const pending = f.store.jobs.cancelWithReceipt(
     record.job.id,
@@ -1208,34 +1225,221 @@ test("cancel admission is bounded and snapshots control identity before queueing
   ctx.requestId = "mutated";
   const first = value(await pending);
   expect(first.control.key).toBe("cancel0");
-  record = first.record;
-  for (let i = 1; i < 128; i++)
-    record = value(
+  expect(first.control.expectedVersion).toBe(record.rowVersion);
+  expect(first.record.rowVersion).toBe(record.rowVersion + 1);
+  expect(first.record.cancelControls).toEqual([first.control]);
+  expect(first.record.job.budget).toEqual(record.job.budget);
+  expect(first.record.usage).toEqual(record.usage);
+});
+
+function prepareCancelCapacity(signal: AbortSignal) {
+  const scope = new AsyncTestScope(signal);
+  seedScopes.push(scope);
+  let phase = "setup";
+  let completedControls = 0;
+  const started = performance.now();
+  const report = () =>
+    console.error(
+      JSON.stringify({
+        scope: "synthetic cancel-capacity setup aborted",
+        phase,
+        completedControls,
+        elapsedMs: Math.round(performance.now() - started),
+      }),
+    );
+  signal.addEventListener("abort", report, { once: true });
+  const pending = scope.track(
+    inStorageTest(scope.signal, async () => {
+      scope.signal.throwIfAborted();
+      const f = await setup();
+      scope.signal.throwIfAborted();
+      phase = "create-job";
+      let record = value(await f.store.jobs.create(f.submission(), f.ctx()));
+      const initial = structuredClone(record);
+      phase = "seed-controls";
+      for (let index = 0; index < 127; index++) {
+        scope.signal.throwIfAborted();
+        record = value(
+          await f.store.jobs.cancelWithReceipt(
+            record.job.id,
+            record.rowVersion,
+            f.ctx(`cancel${index}`),
+          ),
+        ).record;
+        completedControls++;
+      }
+      scope.signal.throwIfAborted();
+      expect(record.cancelControls).toHaveLength(127);
+      return { f, initial, record };
+    }),
+  );
+  void pending.then(
+    () => signal.removeEventListener("abort", report),
+    () => signal.removeEventListener("abort", report),
+  );
+  return { scope, pending };
+}
+
+describe("cancel-control capacity from genuine bounded preparation", () => {
+  let prepared:
+    | Awaited<ReturnType<typeof prepareCancelCapacity>["pending"]>
+    | undefined;
+  beforeEach(async ({ signal }) => {
+    prepared = undefined;
+    prepared = await prepareCancelCapacity(signal).pending;
+  });
+  test("admits exactly control 128, rejects 129 without mutation, and replays at capacity", async () => {
+    const { f, initial, record: seeded } = required(prepared);
+    const before = value(await f.store.jobs.get(seeded.job.id, f.ctx()));
+    expect(before).toEqual(seeded);
+    expect(before.cancelControls).toHaveLength(127);
+    expect(before.cancelControls?.map((control) => control.key)).toEqual(
+      Array.from({ length: 127 }, (_, index) => `cancel${index}`),
+    );
+    const admitted = value(
       await f.store.jobs.cancelWithReceipt(
-        record.job.id,
-        record.rowVersion,
-        f.ctx(`cancel${i}`),
+        before.job.id,
+        before.rowVersion,
+        f.ctx("cancel127"),
       ),
-    ).record;
-  expect(
-    await f.store.jobs.cancelWithReceipt(
-      record.job.id,
-      record.rowVersion,
-      f.ctx("overflow"),
-    ),
-  ).toMatchObject({ error: { code: "INPUT_LIMIT" } });
-  expect(
-    value(
+    );
+    const full = admitted.record;
+    expect(full.rowVersion).toBe(before.rowVersion + 1);
+    expect(full.cancelControls).toHaveLength(128);
+    expect(
+      new Set(full.cancelControls?.map((control) => control.key)).size,
+    ).toBe(128);
+    expect(full.cancelControls?.slice(0, 127)).toEqual(before.cancelControls);
+    expect(admitted.control.key).toBe("cancel127");
+    expect(admitted.control.expectedVersion).toBe(before.rowVersion);
+    expect(
       await f.store.jobs.cancelWithReceipt(
-        record.job.id,
-        first.control.expectedVersion,
+        full.job.id,
+        full.rowVersion,
+        f.ctx("overflow"),
+      ),
+    ).toMatchObject({ status: "failed", error: { code: "INPUT_LIMIT" } });
+    expect(value(await f.store.jobs.get(full.job.id, f.ctx()))).toEqual(full);
+    const first = required(full.cancelControls?.[0]);
+    expect(first.expectedVersion).toBe(initial.rowVersion);
+    const replay = value(
+      await f.store.jobs.cancelWithReceipt(
+        full.job.id,
+        first.expectedVersion,
         f.ctx("cancel0"),
       ),
-    ).record,
-  ).toEqual(record);
-  expect(record.job.budget).toEqual(first.record.job.budget);
-  expect(record.usage).toEqual(first.record.usage);
+    );
+    expect(replay.control).toEqual(first);
+    expect(replay.record).toEqual(full);
+    expect(value(await f.store.jobs.get(full.job.id, f.ctx()))).toEqual(full);
+    expect(full.job.budget).toEqual(initial.job.budget);
+    expect(full.usage).toEqual(initial.usage);
+  });
 });
+
+test.each(["setup", "write"] as const)(
+  "cancelled capacity preparation joins original %s before SQLite cleanup",
+  async (kind) => {
+    const signal = storageTestSignal();
+    const runner = new AbortController();
+    let release!: () => void;
+    let entered!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const entry = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const cancel = () => {
+      runner.abort();
+      release();
+    };
+    signal.addEventListener("abort", cancel, { once: true });
+    let opened: LocalStore | undefined;
+    let root: string | undefined;
+    const controls = new Set<string>();
+    let signalObserved: AbortSignal | undefined;
+    const original = LocalStore.open.bind(LocalStore);
+    const opening = vi
+      .spyOn(LocalStore, "open")
+      .mockImplementationOnce(async (options) => {
+        const authorize = options.authorize;
+        opened = await original({
+          ...options,
+          authorize: async (...args) => {
+            const ctx = args[0];
+            if (/^cancel\d+$/.test(ctx.requestId)) controls.add(ctx.requestId);
+            if (
+              kind === "write" &&
+              ctx.requestId === "cancel3" &&
+              !signalObserved
+            ) {
+              signalObserved = ctx.signal;
+              entered();
+              await gate;
+            }
+            return authorize(...args);
+          },
+        });
+        root = options.databasePath;
+        if (kind === "setup") {
+          entered();
+          await gate;
+        }
+        return opened;
+      });
+    const seed = prepareCancelCapacity(runner.signal);
+    const rejected = expect(seed.pending).rejects.toThrow();
+    try {
+      await entry;
+      if (!opened || !root) throw new Error("Missing owned capacity database.");
+      const closingStore = vi.spyOn(opened, "close");
+      runner.abort();
+      let joined = false;
+      const joinedSeed = seed.scope.close().then(() => {
+        joined = true;
+      });
+      await Promise.resolve();
+      expect(joined).toBe(false);
+      expect(closingStore).not.toHaveBeenCalled();
+      expect(controls.has("cancel4")).toBe(false);
+      if (kind === "write") expect(signalObserved).toBe(seed.scope.signal);
+      release();
+      await rejected;
+      await joinedSeed;
+      expect(controls.has("cancel4")).toBe(false);
+      expect(joined).toBe(true);
+      if (kind === "write") {
+        const store = opened;
+        const persisted = value(
+          await inStorageTest(new AbortController().signal, () =>
+            store.jobs.get("job-work", context("inspect-cancelled-seed")),
+          ),
+        );
+        expect(persisted.cancelControls?.map((control) => control.key)).toEqual(
+          ["cancel0", "cancel1", "cancel2"],
+        );
+      }
+      const directory = dirname(root);
+      onTestFinished(async () => {
+        try {
+          expect(closingStore).toHaveBeenCalled();
+          await expect(lstat(directory)).rejects.toMatchObject({
+            code: "ENOENT",
+          });
+        } finally {
+          closingStore.mockRestore();
+        }
+      });
+    } finally {
+      release();
+      await rejected;
+      await seed.scope.close();
+      opening.mockRestore();
+      signal.removeEventListener("abort", cancel);
+    }
+  },
+);
 
 test("fixture cancellation stays bound to its original async scope and cleanup joins SQLite work", async () => {
   const f = await setup();

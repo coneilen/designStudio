@@ -1,5 +1,12 @@
-import type { FigmaReferenceProposal } from "@design-studio/contracts";
+import type {
+  Artifact,
+  FigmaReferenceProposal,
+} from "@design-studio/contracts";
 import { canonicalDigest } from "@design-studio/design-ir";
+import {
+  CAPTURE_HANDLER_ID,
+  CAPTURE_HANDLER_VERSION,
+} from "@design-studio/figma-capture";
 import type { CaptureRecoveryStage } from "@design-studio/host";
 import {
   type CaptureRecoveryState,
@@ -97,6 +104,19 @@ export async function retainedReferenceStages(
   state: CaptureRecoveryState,
   proposal: FigmaReferenceProposal,
 ): Promise<CaptureRecoveryStage[]> {
+  return (await retainedReferenceInventory(reader, state, proposal)).stages;
+}
+
+export async function retainedReferenceInventory(
+  reader: ReferenceReader,
+  state: CaptureRecoveryState,
+  proposal: FigmaReferenceProposal,
+  verifiedCapture?: object,
+): Promise<{
+  stages: CaptureRecoveryStage[];
+  committedHistoryArtifacts: Artifact[];
+  successorCaptureHistoryArtifacts: Artifact[];
+}> {
   const successor = state.jobs.find(
     (record) => record.job.id === proposal.binding.originalJobId,
   );
@@ -125,7 +145,11 @@ export async function retainedReferenceStages(
   });
   if (!binding) {
     if (pending.length) throw new ApplicationError("ACTION_REQUIRED");
-    return [];
+    return {
+      stages: [],
+      committedHistoryArtifacts: [],
+      successorCaptureHistoryArtifacts: [],
+    };
   }
   const key = recoveryKey(binding.originalJobId);
   const receipts = state.receipts.filter(
@@ -226,12 +250,108 @@ export async function retainedReferenceStages(
       )
       .map((entry) => entry.artifactId),
   );
+  const historicalArtifacts = historic.artifacts.filter((artifact) =>
+    ids.has(artifact.id),
+  );
   if (
     canonicalDigest({
-      artifacts: historic.artifacts.filter((artifact) => ids.has(artifact.id)),
+      artifacts: historicalArtifacts,
       stages: descriptors,
     }) !== grant.filesystemSha256
   )
     throw new ApplicationError("ARTIFACT_INTEGRITY");
-  return descriptors;
+  let successorCaptureHistoryArtifacts: Artifact[] = [];
+  if (verifiedCapture) {
+    const verified = reader.verifiedCaptureOutputs(verifiedCapture, proposal);
+    const entries = state.receipts.filter(
+      (entry) => entry.receipt.jobId === successor.job.id,
+    );
+    const entry = entries[0];
+    const captured = entry?.receipt;
+    const outputIds = state.references
+      .filter((r) => r.kind === "job" && r.owner === captured?.id)
+      .map((r) => r.artifactId)
+      .sort();
+    const inputIds = state.references
+      .filter((r) => r.kind === "job-input" && r.owner === successor.job.id)
+      .map((r) => r.artifactId)
+      .sort();
+    if (
+      state.jobs.filter((r) => r.job.id === successor.job.id).length !== 1 ||
+      entries.length !== 1 ||
+      !entry ||
+      !captured ||
+      successor.job.id !== proposal.binding.originalJobId ||
+      successor.requestId !== proposal.binding.originalRequestId ||
+      successor.job.projectId !== proposal.binding.projectId ||
+      successor.job.actorId !== proposal.binding.actorId ||
+      successor.handlerId !== CAPTURE_HANDLER_ID ||
+      successor.handlerVersion !== CAPTURE_HANDLER_VERSION ||
+      successor.authorityRef !== `native_${reader.work.policySha256}` ||
+      successor.job.operation !== "capture" ||
+      successor.job.status !== "completed" ||
+      successor.job.attempt !== 1 ||
+      canonicalDigest(successor) !== proposal.binding.originalRecordSha256 ||
+      canonicalDigest(captured) !== proposal.binding.originalReceiptSha256 ||
+      !same(captured, verified.receipt) ||
+      !same(successor.job.receipt, captured) ||
+      entry.scope !==
+        JSON.stringify([
+          "job-v1",
+          proposal.binding.projectId,
+          proposal.binding.actorId,
+          "capture",
+          successor.requestId,
+        ]) ||
+      captured.projectId !== proposal.binding.projectId ||
+      captured.jobId !== successor.job.id ||
+      captured.idempotency.projectId !== proposal.binding.projectId ||
+      captured.idempotency.actorId !== proposal.binding.actorId ||
+      captured.idempotency.operation !== "capture" ||
+      captured.idempotency.key !== successor.requestId ||
+      captured.integrity !== "verified" ||
+      captured.publication !== "atomic" ||
+      successor.finalOutputSha256 !== captured.idempotency.payloadSha256 ||
+      !same(outputIds, captured.outputs.map((a) => a.id).sort()) ||
+      !same(
+        inputIds,
+        [
+          ...new Set([
+            successor.job.input.id,
+            successor.job.resources.snapshotId,
+            binding.authorization.id,
+          ]),
+        ].sort(),
+      ) ||
+      captured.outputs.some(
+        (artifact) =>
+          !state.artifacts.some((current) => same(current, artifact)),
+      )
+    )
+      throw new ApplicationError("ARTIFACT_INTEGRITY");
+    successorCaptureHistoryArtifacts = verified.artifacts
+      .filter((item) => ["metadata", "nodes", "render-map"].includes(item.role))
+      .map((item) => item.artifact)
+      .filter((artifact) =>
+        descriptors.some((stage) => same(stage.artifact, artifact)),
+      );
+    if (
+      successorCaptureHistoryArtifacts.some(
+        (artifact) =>
+          !captured.outputs.some((output) => same(output, artifact)),
+      )
+    )
+      throw new ApplicationError("ARTIFACT_INTEGRITY");
+  }
+  // Prefer the older grant provenance when the exact artifact is proven by both.
+  return {
+    stages: descriptors,
+    committedHistoryArtifacts: historicalArtifacts.filter((artifact) =>
+      descriptors.some((stage) => same(stage.artifact, artifact)),
+    ),
+    successorCaptureHistoryArtifacts: successorCaptureHistoryArtifacts.filter(
+      (artifact) =>
+        !historicalArtifacts.some((historic) => same(historic, artifact)),
+    ),
+  };
 }

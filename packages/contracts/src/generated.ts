@@ -842,6 +842,7 @@ export interface ContractCatalog {
   ReferenceJobUsage: ReferenceJobUsage;
   ReferenceJobMetadata: ReferenceJobMetadata;
   ReferenceRecoveryPlan: ReferenceRecoveryPlan;
+  RetainedInventoryFailure: RetainedInventoryFailure;
   NativeReferenceRecoveryPlanEnvelope: NativeReferenceRecoveryPlanEnvelope;
   NativeReferenceEnvelope: NativeReferenceEnvelope;
   Operation: Operation;
@@ -2607,6 +2608,34 @@ export interface ReferenceRecoveryPlan {
 }
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "RetainedInventoryFailure".
+ */
+export interface RetainedInventoryFailure {
+  check:
+    | "descriptor"
+    | "missing-recorded-entry"
+    | "publication-shape"
+    | "committed-size"
+    | "proof-native-identity"
+    | "proof-stat"
+    | "proof-membership"
+    | "native-read-admission"
+    | "body-read"
+    | "body-hash"
+    | "inventory-recheck"
+    | "native-identity-recheck";
+  category: "original-proof" | "history-stage" | "retained-target" | "committed-inventory" | "namespace";
+  detail?:
+    | "missing-stage-or-entry"
+    | "unproven-history-coexistence"
+    | "distinct-target-copies"
+    | "link-count-or-shared-identity"
+    | "recorded-length-mismatch"
+    | "native-identity-unavailable"
+    | "native-identity-not-distinct";
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "NativeReferenceRecoveryPlanEnvelope".
  */
 export interface NativeReferenceRecoveryPlanEnvelope {
@@ -2621,6 +2650,7 @@ export interface NativeReferenceRecoveryPlanEnvelope {
     | "authority-denied"
     | "ineligible-job"
     | "job-changed"
+    | "source-metadata-invalid"
     | "source-proof-invalid"
     | "inventory-invalid"
     | "evidence-invalid"
@@ -2633,6 +2663,7 @@ export interface NativeReferenceRecoveryPlanEnvelope {
     | "cleanup-incomplete";
   inputAccounting?: ReferenceInputAccounting;
   error?: ContractError;
+  inventoryFailure?: RetainedInventoryFailure;
 }
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema

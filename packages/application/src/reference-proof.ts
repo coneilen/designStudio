@@ -1,7 +1,9 @@
 import type {
   ArtifactReference,
+  CommitReceipt,
   ContractName,
   ContractTypes,
+  FigmaCaptureManifest,
   FigmaReferenceProposal,
   JsonObject,
   JsonValue,
@@ -66,6 +68,15 @@ export function referenceIds(work: CaptureWork, requestId: string) {
   return { original, job, approval: `approval_${job}` };
 }
 export class ReferenceReader {
+  private closed = false;
+  private readonly verifiedCaptures = new WeakMap<
+    object,
+    {
+      binding: FigmaReferenceProposal["binding"];
+      receipt: CommitReceipt;
+      artifacts: FigmaCaptureManifest["artifacts"];
+    }
+  >();
   get bytes() {
     return this.input.privateBytes;
   }
@@ -187,7 +198,35 @@ export class ReferenceReader {
     }
   }
   async close() {
+    this.closed = true;
     await this.watch.close();
+  }
+  verifiedCaptureOutputs(token: object, proposal: FigmaReferenceProposal) {
+    this.guard.check();
+    const verified = this.verifiedCaptures.get(token);
+    if (this.closed || !this.work.isCurrent() || !verified)
+      throw new ApplicationError("FORBIDDEN");
+    const originalAcquisition =
+      proposal.diagnosticPredecessor?.jobId ?? proposal.binding.acquisitionId;
+    if (
+      proposal.diagnosticPredecessor &&
+      proposal.binding.acquisitionId !==
+        `diagnostic_${canonicalDigest([
+          "original-reference-diagnostic-slot-v1",
+          verified.binding.projectId,
+          originalAcquisition,
+          proposal.diagnosticPredecessor.receiptSha256,
+        ])}`
+    )
+      throw new ApplicationError("ARTIFACT_INTEGRITY");
+    if (
+      !same(verified.binding, {
+        ...proposal.binding,
+        acquisitionId: originalAcquisition,
+      })
+    )
+      throw new ApplicationError("ARTIFACT_INTEGRITY");
+    return structuredClone(verified);
   }
   async png(bytes: Uint8Array) {
     await this.check();
@@ -207,9 +246,11 @@ export class ReferenceReader {
     await this.check();
     return result;
   }
-  async proposal(
-    requestId: string,
-  ): Promise<{ proposal: FigmaReferenceProposal; url: string }> {
+  async proposal(requestId: string): Promise<{
+    proposal: FigmaReferenceProposal;
+    url: string;
+    verifiedCapture: object;
+  }> {
     const supplement = await this.check();
     const { original, job } = referenceIds(this.work, requestId);
     const record = unwrap(await this.store.jobs.get(original, this.context));
@@ -410,9 +451,19 @@ export class ReferenceReader {
       ...(target.expiresAt ? { urlExpiresAt: target.expiresAt } : {}),
     };
     await this.check();
+    const verifiedCapture = Object.freeze({});
+    this.verifiedCaptures.set(
+      verifiedCapture,
+      structuredClone({
+        binding: facts.binding,
+        receipt,
+        artifacts: manifest.artifacts,
+      }),
+    );
     return {
       proposal: { ...facts, proofSha256: canonicalDigest(facts) },
       url: target.url,
+      verifiedCapture,
     };
   }
 }

@@ -3,6 +3,161 @@ import { referenceDiagnosticFields, validateContract } from "../src/index.js";
 import { DEFAULT_BUDGETS } from "../src/profile.js";
 
 const artifact = { id: `sha256_${"a".repeat(64)}`, sha256: "a".repeat(64) };
+it("closes inventory failure diagnostics to enum-only failed plans with no value", () => {
+  const envelope = {
+    schemaVersion: "1.0",
+    operation: "reference-recovery-plan",
+    projectId: "synthetic",
+    requestId: "original",
+    status: "failed",
+    reason: "inventory-invalid",
+    error: {
+      code: "ARTIFACT_INTEGRITY",
+      message: "Closed failure.",
+      retryable: false,
+      diagnosticIds: [],
+    },
+  };
+  for (const check of [
+    "descriptor",
+    "missing-recorded-entry",
+    "publication-shape",
+    "committed-size",
+    "proof-native-identity",
+    "proof-stat",
+    "proof-membership",
+    "native-read-admission",
+    "body-read",
+    "body-hash",
+    "inventory-recheck",
+    "native-identity-recheck",
+  ]) {
+    for (const category of [
+      "original-proof",
+      "history-stage",
+      "retained-target",
+      "committed-inventory",
+      "namespace",
+    ]) {
+      expect(
+        validateContract("NativeReferenceRecoveryPlanEnvelope", {
+          ...envelope,
+          inventoryFailure: { check, category },
+        }).success,
+      ).toBe(true);
+    }
+  }
+  const failure = { check: "proof-stat", category: "original-proof" };
+  const shape = { check: "publication-shape", category: "history-stage" };
+  for (const detail of [
+    "missing-stage-or-entry",
+    "unproven-history-coexistence",
+    "distinct-target-copies",
+    "link-count-or-shared-identity",
+    "recorded-length-mismatch",
+    "native-identity-unavailable",
+    "native-identity-not-distinct",
+  ]) {
+    expect(
+      validateContract("NativeReferenceRecoveryPlanEnvelope", {
+        ...envelope,
+        inventoryFailure: { ...shape, detail },
+      }).success,
+    ).toBe(true);
+    expect(
+      validateContract("RetainedInventoryFailure", { ...failure, detail })
+        .success,
+    ).toBe(false);
+    for (const status of ["complete", "cancelled"])
+      expect(
+        validateContract("NativeReferenceRecoveryPlanEnvelope", {
+          ...envelope,
+          status,
+          inventoryFailure: { ...shape, detail },
+        }).success,
+      ).toBe(false);
+  }
+  for (const detail of ["private-path", { path: "private" }, true, 1])
+    expect(
+      validateContract("RetainedInventoryFailure", { ...shape, detail })
+        .success,
+    ).toBe(false);
+  expect(
+    validateContract("RetainedInventoryFailure", {
+      ...shape,
+      detail: "unproven-history-coexistence",
+      path: "private",
+    }).success,
+  ).toBe(false);
+  for (const bad of [
+    { ...failure, path: "private" },
+    { ...failure, sha256: artifact.sha256 },
+    { ...failure, sid: "private" },
+    { ...failure, acl: "private" },
+    { ...failure, message: "private" },
+    { ...failure, category: "reference-image" },
+    { ...failure, check: "raw exception" },
+    { check: failure.check },
+  ]) {
+    expect(validateContract("RetainedInventoryFailure", bad).success).toBe(
+      false,
+    );
+    expect(
+      validateContract("NativeReferenceRecoveryPlanEnvelope", {
+        ...envelope,
+        inventoryFailure: bad,
+      }).success,
+    ).toBe(false);
+  }
+  for (const status of ["complete", "cancelled", "interrupted"])
+    expect(
+      validateContract("NativeReferenceRecoveryPlanEnvelope", {
+        ...envelope,
+        status,
+        inventoryFailure: failure,
+      }).success,
+    ).toBe(false);
+  expect(
+    validateContract("NativeReferenceRecoveryPlanEnvelope", {
+      ...envelope,
+      inventoryFailure: failure,
+      value: {},
+    }).success,
+  ).toBe(false);
+  expect(
+    validateContract("NativeReferenceRecoveryPlanEnvelope", envelope).success,
+  ).toBe(true);
+});
+
+it("keeps legacy source proof reasons and the additional metadata phase closed", () => {
+  const envelope = {
+    schemaVersion: "1.0",
+    operation: "reference-recovery-plan",
+    projectId: "synthetic",
+    requestId: "original",
+    status: "failed",
+  };
+  for (const reason of ["source-proof-invalid", "source-metadata-invalid"])
+    expect(
+      validateContract("NativeReferenceRecoveryPlanEnvelope", {
+        ...envelope,
+        reason,
+      }).success,
+    ).toBe(true);
+  for (const detail of [
+    { reason: "native ACL text" },
+    { reason: "source-metadata-invalid", path: "private" },
+    { reason: "source-metadata-invalid", sid: "private" },
+    { reason: "source-metadata-invalid", acl: "private" },
+  ])
+    expect(
+      validateContract("NativeReferenceRecoveryPlanEnvelope", {
+        ...envelope,
+        ...detail,
+      }).success,
+    ).toBe(false);
+});
+
 it("keeps retained-byte plans closed and distinct from recovered acquisition receipts", () => {
   const stage = {
     role: "evidence",

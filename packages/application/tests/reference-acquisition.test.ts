@@ -12,13 +12,17 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { NativeReferenceEnvelope } from "@design-studio/contracts";
+import type {
+  NativeReferenceEnvelope,
+  StagedArtifact,
+} from "@design-studio/contracts";
 import { fakeComplete } from "@design-studio/contracts/testing";
 import { canonicalBytes, hashBytes } from "@design-studio/design-ir";
 import {
   authorizeOperation,
   HostBoundaryError,
   ProjectFileSystem,
+  WINDOWS_PUBLICATION_PROFILE,
 } from "@design-studio/host";
 import { JobService } from "@design-studio/jobs";
 import type { CaptureProject, CaptureWork } from "@design-studio/project-host";
@@ -35,11 +39,15 @@ import {
   FigmaHttpsTransport,
 } from "../../figma-capture/dist/transport.js";
 import { png } from "../../figma-capture/tests/support.js";
+import { Execution } from "../../jobs/dist/execution.js";
 import { nativeCapturePolicy } from "../../project-host/dist/capture-authority.js";
 import { CAPTURE_DIAGNOSTIC_POLICY_SHA256 } from "../../project-host/src/capture-diagnostic-profile.js";
 import { CAPTURE_POLICY_SHA256 } from "../../project-host/src/capture-profile.js";
 import { CAPTURE_REFERENCE_POLICY_SHA256 } from "../../project-host/src/capture-reference-profile.js";
+import { loadNative, type ReadLease } from "../../project-host/src/native.js";
+import { pinRetainedReferenceEntry } from "../../project-host/src/reference-validation-entry.js";
 import { REFERENCE_VALIDATION_POLICY_SHA256 } from "../../project-host/src/reference-validation-profile.js";
+import { createRetainedOwnerFixture } from "../../project-host/tests/retained-owner-fixture.js";
 import { initializeImmutableSqlite } from "../../storage/dist/immutable-sqlite.js";
 import { rewriteSyntheticRetainedEvidence } from "../../storage/tests/capture-recovery-corruption.js";
 import { syntheticImmutableSnapshot } from "../../storage/tests/support.js";
@@ -115,6 +123,8 @@ afterEach(async () => {
   }
 });
 const origin = "https://figma-alpha-api.s3.us-west-2.amazonaws.com";
+const nativeRetainedMode =
+  process.env.DESIGN_STUDIO_SYNTHETIC_RETAINED_NATIVE === "1";
 function required<T>(value: T | undefined): T {
   if (value === undefined) throw new Error("Missing synthetic evidence");
   return value;
@@ -130,16 +140,38 @@ async function fixture(
     nodeVersion?: string;
     renderNode?: string;
     diagnostic?: boolean;
+    fixedClock?: boolean;
   } = {},
 ) {
+  const nativeMode = nativeRetainedMode;
+  const native = nativeMode ? await loadNative() : undefined;
+  const sid = native?.principal();
+  const retainedPins = new Set<ReadLease>();
+  let nativeAdmissions = 0;
+  let strictDenials = 0;
   initializeImmutableSqlite(
     path.resolve(
       ".tools\\sqlite-prebuild\\build\\Release\\better_sqlite3.node",
     ),
   );
-  const root = await mkdtemp(path.join(tmpdir(), "reference-synthetic-"));
-  for (const name of ["artifacts", "outputs"])
-    await mkdir(path.join(root, name));
+  const root = await mkdtemp(
+    path.join(
+      tmpdir(),
+      nativeMode ? "ds-ph-reference-" : "reference-synthetic-",
+    ),
+  );
+  const ownerFixture = nativeMode
+    ? await createRetainedOwnerFixture(root)
+    : undefined;
+  await ownerFixture?.declareTree("artifacts");
+  await ownerFixture?.declareTree("outputs");
+  let ownerPreparation:
+    | { entries: number; naturalOwnerDenials: number; normalized: number }
+    | undefined;
+  for (const name of ["artifacts", "outputs"]) {
+    if (native && sid) native.createDirectory(path.join(root, name), sid);
+    else await mkdir(path.join(root, name));
+  }
   const project = {
     projectId: "project_synthetic",
     artifactRootId: "artifacts_synthetic",
@@ -170,7 +202,9 @@ async function fixture(
   let admitted = true;
   let vaultAllowed = true;
   let fault: string | undefined;
+  const faultHits: string[] = [];
   let clockOffset = 0;
+  const fixedNow = options.fixedClock ? Date.now() : undefined;
   let diagnosticPolicy = CAPTURE_DIAGNOSTIC_POLICY_SHA256;
   const vault = vi.fn();
   const ready = vi.fn(async () => undefined);
@@ -179,7 +213,9 @@ async function fixture(
   vi.spyOn(ProjectFileSystem, "create").mockImplementation((o) =>
     create({
       ...o,
-      publicationProfile: "portable-atomic",
+      publicationProfile: nativeMode
+        ? WINDOWS_PUBLICATION_PROFILE
+        : "portable-atomic",
       reserveRead: (bytes, context) => {
         const event: (typeof reads)[number] = { bytes, allowed: false };
         reads.push(event);
@@ -220,7 +256,10 @@ async function fixture(
     currentStore = await openStore({
       ...o,
       fault: (point) => {
-        if (point === fault) throw new Error("Synthetic publication fault");
+        if (point === fault) {
+          faultHits.push(point);
+          throw new Error("Synthetic publication fault");
+        }
       },
     });
     return currentStore;
@@ -262,11 +301,49 @@ async function fixture(
             pinReferenceValidationEntry: async (
               rootId: string,
               relative: string,
+              directory: boolean,
             ) => {
               const rootPath =
                 rootId === project.artifactRootId
                   ? project.paths.artifacts
                   : project.paths.outputs;
+              if (native && sid) {
+                if (
+                  rootId !== project.artifactRootId &&
+                  rootId !== `outputs_${project.projectId}`
+                )
+                  throw new Error(
+                    "Synthetic native root is outside the fixture.",
+                  );
+                if (relative !== "") {
+                  expect(() =>
+                    native.pinRead(
+                      path.join(rootPath, ...relative.split("/")),
+                      directory,
+                      sid,
+                    ),
+                  ).toThrow(/protected/);
+                  strictDenials++;
+                }
+                const pin = await pinRetainedReferenceEntry({
+                  root: rootPath,
+                  relative,
+                  directory,
+                  sid,
+                  retainedPins,
+                  authorize: async () => {
+                    if (!current || !admitted)
+                      throw new HostBoundaryError(
+                        "FORBIDDEN",
+                        "Synthetic native authority revoked.",
+                      );
+                    const strictRoot = native.inspect(rootPath, true, sid);
+                    strictRoot.close();
+                  },
+                });
+                nativeAdmissions++;
+                return pin;
+              }
               const filename = path.join(rootPath, ...relative.split("/"));
               const stat = await lstat(filename);
               if (
@@ -289,6 +366,7 @@ async function fixture(
                   file: String(stat.ino),
                 },
                 byteLength: stat.size,
+                check: async () => {},
                 read: () => {
                   throw new Error("Synthetic pin does not read bodies");
                 },
@@ -346,7 +424,7 @@ async function fixture(
     policy = nativeCapturePolicy(work);
     const originalNow = policy.clock.now.bind(policy.clock);
     vi.spyOn(policy.clock, "now").mockImplementation(
-      () => originalNow() + clockOffset,
+      () => (fixedNow ?? originalNow()) + clockOffset,
     );
     if (validationMode)
       validation = await openNativeReferenceValidation(project);
@@ -410,6 +488,8 @@ async function fixture(
   cleanups.push(async () => {
     await validation?.close();
     await runtime.close();
+    expect(retainedPins.size).toBe(0);
+    ownerFixture?.close();
     await rm(root, { recursive: true, force: true });
   });
   const capture = await initial.execute(
@@ -494,6 +574,35 @@ async function fixture(
   const openValidation = async () => {
     await runtime.close();
     await validation?.close();
+    if (ownerFixture && sid) {
+      const natural = await ownerFixture.inspect();
+      let naturalOwnerDenials = 0;
+      for (const entry of natural) {
+        if (entry.owner === sid) continue;
+        const [tree, ...parts] = entry.relative.split("/");
+        if (tree !== "artifacts" && tree !== "outputs")
+          throw new Error("Synthetic owner fixture escaped declared trees.");
+        await expect(
+          pinRetainedReferenceEntry({
+            root: project.paths[tree],
+            relative: parts.join("/"),
+            directory: entry.directory,
+            sid,
+            retainedPins,
+            authorize: async () => {},
+          }),
+        ).rejects.toThrow(/owner/);
+        naturalOwnerDenials++;
+      }
+      expect(retainedPins.size).toBe(0);
+      const prepared = await ownerFixture.prepare();
+      expect(prepared).toEqual(natural);
+      ownerPreparation = {
+        entries: natural.length,
+        naturalOwnerDenials,
+        normalized: natural.filter((entry) => entry.owner !== sid).length,
+      };
+    }
     validationMode = true;
     firstInventoryRoot = true;
     await open();
@@ -508,7 +617,16 @@ async function fixture(
       failInventoryPinClose = true;
     },
     get readPins() {
-      return readPins;
+      return nativeMode ? retainedPins.size : readPins;
+    },
+    get nativeAdmissions() {
+      return nativeAdmissions;
+    },
+    get strictDenials() {
+      return strictDenials;
+    },
+    get ownerPreparation() {
+      return ownerPreparation;
     },
     validateRetained: async (
       expectedJob: string,
@@ -622,6 +740,75 @@ async function fixture(
       return runtime;
     },
     blobs,
+    faultHits,
+    observeDiagnosticCommit: (expireLease = false) => {
+      const db = required(currentStore);
+      const commit = db.jobs.commitJob.bind(db.jobs);
+      const observed: {
+        staged: StagedArtifact;
+        filename: string;
+        dev: number;
+        ino: number;
+      }[] = [];
+      const spy = vi
+        .spyOn(db.jobs, "commitJob")
+        .mockImplementationOnce(async (...args) => {
+          for (const staged of args[2].outputs) {
+            const names = (await readdir(project.paths.artifacts)).filter(
+              (name) => name.startsWith(".host-"),
+            );
+            const matches: string[] = [];
+            for (const name of names) {
+              if (
+                (
+                  await readdir(path.join(project.paths.artifacts, name))
+                ).includes(staged.stagingId)
+              )
+                matches.push(
+                  path.join(project.paths.artifacts, name, staged.stagingId),
+                );
+            }
+            expect(matches).toHaveLength(1);
+            const filename = required(matches[0]);
+            const stat = await lstat(filename);
+            expect(stat.nlink).toBe(1);
+            observed.push({ staged, filename, dev: stat.dev, ino: stat.ino });
+          }
+          if (expireLease) clockOffset += 5001;
+          return commit(...args);
+        });
+      return {
+        spy,
+        observed,
+        async physical() {
+          return Promise.all(
+            observed.map(async ({ staged, filename, dev, ino }) => {
+              const stageExists = (
+                await readdir(path.dirname(filename))
+              ).includes(path.basename(filename));
+              const target = path.join(
+                project.paths.artifacts,
+                ...staged.artifact.path.split("/"),
+              );
+              const blobExists = (await readdir(path.dirname(target))).includes(
+                path.basename(target),
+              );
+              const actual = blobExists ? target : filename;
+              const stat = await lstat(actual);
+              const bytes = await readFile(actual);
+              expect(hashBytes(bytes)).toBe(staged.artifact.sha256);
+              expect(bytes.length).toBe(staged.artifact.byteLength);
+              expect([stat.dev, stat.ino, stat.nlink]).toEqual([dev, ino, 1]);
+              return {
+                stageExists,
+                blobExists,
+                sha256: staged.artifact.sha256,
+              };
+            }),
+          );
+        },
+      };
+    },
     advanceClock: (milliseconds: number) => {
       clockOffset += milliseconds;
     },
@@ -910,8 +1097,44 @@ function realisticReferencePng() {
   return authoredPng(6, 8, raw, [srgb()], [], 460, 460);
 }
 
+it("fixed-clock budget setup still rejects an explicitly expired capture execution lease", async () => {
+  const original = Execution.prototype.check;
+  let expired = false;
+  let guardCode: string | undefined;
+  const check = vi
+    .spyOn(Execution.prototype, "check")
+    .mockImplementation(function (this: Execution) {
+      const signal = this.context.signal;
+      if (!expired && this.record.job.operation === "capture") {
+        expired = true;
+        vi.spyOn(this.context.clock, "now").mockReturnValue(
+          Date.parse(required(this.record.job.lease).expiresAt),
+        );
+      }
+      try {
+        return original.call(this);
+      } catch (error) {
+        if (expired && error instanceof HostBoundaryError)
+          guardCode ??= error.code;
+        throw error;
+      } finally {
+        expect(this.context.signal).toBe(signal);
+      }
+    });
+  try {
+    await expect(fixture({ fixedClock: true })).rejects.toThrow(
+      /capture-not-committed/,
+    );
+    expect(expired).toBe(true);
+    expect(guardCode).toBe("LEASE_LOST");
+  } finally {
+    check.mockRestore();
+  }
+});
+
 it("completes a diagnostic with realistic synthetic source bytes within the invocation input budget", async () => {
   const f = await fixture({
+    fixedClock: true,
     diagnostic: true,
     nodeBytes: 2400000,
     frameSize: 460,
@@ -996,12 +1219,64 @@ it("completes a diagnostic with realistic synthetic source bytes within the invo
   expect(f.vault).not.toHaveBeenCalled();
 });
 
-it("validates actual published-only retained bytes offline without rewriting the interrupted acquisition", async () => {
-  const f = await fixture({ diagnostic: true });
+it("an expired diagnostic commit cannot stand in for the configured after-artifacts interruption", async () => {
+  const f = await fixture({ diagnostic: true, fixedClock: true });
   await legacyReferenceFailure(f);
   const approved = await f.diagnosticApprove();
+  const observation = f.observeDiagnosticCommit(true);
   f.setFault("job-after-artifacts");
-  expect((await f.diagnosticDownload(approved)).status).toBe("interrupted");
+  try {
+    const result = await f.diagnosticDownload(approved);
+    const physical = await observation.physical();
+    expect(result).toMatchObject({
+      status: "interrupted",
+      error: { code: "ACTION_REQUIRED" },
+      value: { job: { status: "interrupted", error: { code: "CONFLICT" } } },
+    });
+    expect(observation.spy).toHaveBeenCalledTimes(1);
+    expect(observation.observed).toHaveLength(2);
+    expect(f.faultHits).toEqual([]);
+    expect(
+      physical.map(({ stageExists, blobExists }) => ({
+        stageExists,
+        blobExists,
+      })),
+    ).toEqual([
+      { stageExists: true, blobExists: false },
+      { stageExists: true, blobExists: false },
+    ]);
+    expect(result.value?.receipt).toBeUndefined();
+    expect(f.image).toHaveBeenCalledTimes(2);
+    expect(f.api).not.toHaveBeenCalled();
+    expect(f.vault).not.toHaveBeenCalled();
+  } finally {
+    observation.spy.mockRestore();
+  }
+});
+
+it("validates actual published-only retained bytes offline without rewriting the interrupted acquisition", async () => {
+  const f = await fixture({ diagnostic: true, fixedClock: true });
+  await legacyReferenceFailure(f);
+  const approved = await f.diagnosticApprove();
+  const observation = f.observeDiagnosticCommit();
+  f.setFault("job-after-artifacts");
+  const interrupted = await f.diagnosticDownload(approved);
+  observation.spy.mockRestore();
+  expect(interrupted.status, JSON.stringify(interrupted)).toBe("interrupted");
+  expect(f.faultHits).toEqual(["job-after-artifacts"]);
+  expect(interrupted.value?.job?.error?.code).toBe("INTERNAL_ERROR");
+  expect(interrupted.value?.receipt).toBeUndefined();
+  expect(observation.observed).toHaveLength(2);
+  const published = await observation.physical();
+  expect(
+    published.map(({ stageExists, blobExists }) => ({
+      stageExists,
+      blobExists,
+    })),
+  ).toEqual([
+    { stageExists: false, blobExists: true },
+    { stageExists: false, blobExists: true },
+  ]);
   f.setFault();
   f.advanceClock(40000);
   const metadata = await f.run({
@@ -1033,6 +1308,7 @@ it("validates actual published-only retained bytes offline without rewriting the
   const again = await f.validateRetained(expectedJob);
   expect(again.value).toEqual(result.value);
   expect(await f.blobs()).toEqual(before);
+  expect(await observation.physical()).toEqual(published);
   await f.reopen();
   const after = await f.run({
     operation: "reference-diagnostic-inspect",
@@ -1040,13 +1316,14 @@ it("validates actual published-only retained bytes offline without rewriting the
     inspection: "metadata-only",
   });
   expect(after.value).toEqual(metadata.value);
+  expect(await observation.physical()).toEqual(published);
   expect(f.image).not.toHaveBeenCalled();
   expect(f.api).not.toHaveBeenCalled();
   expect(f.vault).not.toHaveBeenCalled();
   expect(f.ready).not.toHaveBeenCalled();
 });
 
-it("validates stage-only realistic source and PNG under the unchanged physical read budget including closure", async () => {
+it(`validates stage-only realistic source and PNG under the unchanged physical read budget including closure${nativeRetainedMode ? " [native]" : ""}`, async () => {
   const f = await fixture({
     diagnostic: true,
     nodeBytes: 2400000,
@@ -1088,6 +1365,7 @@ it("validates stage-only realistic source and PNG under the unchanged physical r
     "stage-only",
     "stage-only",
   ]);
+  expect(result.inventoryFailure).toBeUndefined();
   const charged = f.reads
     .filter((read) => read.allowed)
     .reduce((sum, read) => sum + read.bytes, 0);
@@ -1119,6 +1397,47 @@ it("validates stage-only realistic source and PNG under the unchanged physical r
       "physical": 5698575,
     }
   `);
+  if (nativeRetainedMode) {
+    expect(f.nativeAdmissions).toBeGreaterThan(29);
+    expect(f.strictDenials).toBeGreaterThan(29);
+    const preparation = required(f.ownerPreparation);
+    expect(preparation.entries).toBeGreaterThan(2);
+    expect(preparation.naturalOwnerDenials).toBe(preparation.normalized);
+    console.log(
+      `retained-native-owner-fixture: ${JSON.stringify(preparation)}; owner-only; DACL/control/names/identity/bytes unchanged`,
+    );
+    console.log(
+      "retained-native-history: real native pins; strict inherited denial; private=5698604; physical=5698575; eof=29; network=0; pins=0",
+    );
+  }
+});
+
+it("distinguishes initial source metadata denial from later lineage proof without exposing native details", async () => {
+  const { f, expectedJob } = await interruptedValidationFixture();
+  const metadata = vi
+    .spyOn(LocalStore.prototype, "referenceJobMetadata")
+    .mockRejectedValueOnce(
+      new HostBoundaryError(
+        "ACTION_REQUIRED",
+        "Synthetic private metadata guard detail",
+      ),
+    );
+  try {
+    const result = await f.validateRetained(expectedJob);
+    expect(result).toMatchObject({
+      status: "failed",
+      reason: "source-metadata-invalid",
+      error: { code: "ACTION_REQUIRED" },
+      inputAccounting: { privateBytes: 0, networkBytes: 0, phase: "proof" },
+    });
+    expect(result.value).toBeUndefined();
+    expect(result.inventoryFailure).toBeUndefined();
+    expect(JSON.stringify(result)).not.toContain(
+      "Synthetic private metadata guard detail",
+    );
+  } finally {
+    metadata.mockRestore();
+  }
 });
 
 async function interruptedValidationFixture() {
@@ -1168,6 +1487,7 @@ it.each(["approval", "source", "bounds", "dimensions", "png"] as const)(
     const result = await f.validateRetained(expectedJob);
     expect(result.status, JSON.stringify(result)).toBe("failed");
     expect(result.reason).toBe("evidence-invalid");
+    expect(result.inventoryFailure).toBeUndefined();
     expect(result.value).toBeUndefined();
     expect(f.readPins).toBe(0);
     expect(f.image).not.toHaveBeenCalled();
@@ -1190,11 +1510,122 @@ it("rejects same-byte source inode replacement between verified proof reads and 
       status: "failed",
       reason: "inventory-invalid",
       error: { code: "ARTIFACT_INTEGRITY" },
+      inventoryFailure: {
+        check: "proof-native-identity",
+        category: "original-proof",
+      },
     });
     expect(result.value).toBeUndefined();
     expect(f.readPins).toBe(0);
   } finally {
     replaced.mockRestore();
+  }
+});
+
+it.each([
+  "tagged",
+  "shape-detail",
+  "cancelled",
+  "unclassified",
+  "invalid-tag",
+] as const)(
+  "retained inventory failure projection stays local and closed: %s",
+  async (kind) => {
+    const { f, expectedJob } = await interruptedValidationFixture();
+    const inspect = vi
+      .spyOn(ProjectFileSystem.prototype, "inspectRetainedReference")
+      .mockImplementationOnce(async (_input, context) => {
+        const outcome = {
+          schemaVersion: "1.0" as const,
+          projectId: context.projectId,
+          requestId: context.requestId,
+          status:
+            kind === "cancelled" ? ("cancelled" as const) : ("failed" as const),
+          error: {
+            code:
+              kind === "cancelled"
+                ? ("CANCELLED" as const)
+                : ("ARTIFACT_INTEGRITY" as const),
+            message:
+              "Synthetic private path/SID/exception must never be projected.",
+            retryable: false,
+            diagnosticIds: [],
+          },
+          diagnosticIds: [],
+        };
+        if (kind !== "unclassified")
+          Reflect.set(outcome, "inventoryFailure", {
+            check:
+              kind === "shape-detail"
+                ? "publication-shape"
+                : "missing-recorded-entry",
+            category: "history-stage",
+            ...(kind === "shape-detail"
+              ? { detail: "unproven-history-coexistence" }
+              : {}),
+            ...(kind === "invalid-tag" ? { path: "synthetic-private" } : {}),
+          });
+        return outcome;
+      });
+    try {
+      const result = await f.validateRetained(expectedJob);
+      expect(result.status).toBe(kind === "cancelled" ? "cancelled" : "failed");
+      expect(result.error?.code).toBe(
+        kind === "cancelled" ? "CANCELLED" : "ARTIFACT_INTEGRITY",
+      );
+      expect(result.error?.retryable).toBe(false);
+      expect(result.value).toBeUndefined();
+      expect(result.inventoryFailure).toEqual(
+        kind === "shape-detail"
+          ? {
+              check: "publication-shape",
+              category: "history-stage",
+              detail: "unproven-history-coexistence",
+            }
+          : kind === "tagged"
+            ? { check: "missing-recorded-entry", category: "history-stage" }
+            : undefined,
+      );
+      expect(JSON.stringify(result)).not.toMatch(
+        /synthetic-private|private path|SID\/exception/,
+      );
+      expect(f.readPins).toBe(0);
+    } finally {
+      inspect.mockRestore();
+    }
+  },
+);
+
+it("post-decode recheck failure does not invent an initial inventory diagnostic", async () => {
+  const { f, expectedJob } = await interruptedValidationFixture();
+  const original = ProjectFileSystem.prototype.inspectRetainedReference;
+  const inspect = vi
+    .spyOn(ProjectFileSystem.prototype, "inspectRetainedReference")
+    .mockImplementationOnce(async function (this: ProjectFileSystem, ...args) {
+      const result = await original.apply(this, args);
+      expect(result.status).toBe("complete");
+      expect(result.inventoryFailure).toBeUndefined();
+      if (result.status === "complete")
+        result.value.check = async () => {
+          throw new HostBoundaryError(
+            "ARTIFACT_INTEGRITY",
+            "Synthetic later native identity changed.",
+          );
+        };
+      return result;
+    });
+  try {
+    const result = await f.validateRetained(expectedJob);
+    expect(result).toMatchObject({
+      status: "failed",
+      reason: "state-changed",
+      error: { code: "ARTIFACT_INTEGRITY", retryable: false },
+    });
+    expect(result.value).toBeUndefined();
+    expect(result.inventoryFailure).toBeUndefined();
+    expect(f.readPins).toBe(0);
+  } finally {
+    inspect.mockRestore();
   }
 });
 
