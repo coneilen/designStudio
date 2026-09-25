@@ -40,7 +40,10 @@ import type {
   RecoveryFacts,
   TrustedJobHandler,
 } from "../src/types.js";
-import type { TestObservation } from "./test-observation.js";
+import type {
+  ObservationCounters,
+  TestObservation,
+} from "./test-observation.js";
 import {
   AsyncTestScope,
   inTestScope,
@@ -72,11 +75,14 @@ aroundEach((run, context) => inJobsTest(context.signal, run));
 export function ownCleanup(close: () => Promise<void>) {
   cleanup.push(close);
 }
+export function jobsCleanupCount(): number {
+  return cleanup.length;
+}
 afterEach(async () => {
   const observed = observations.get(testScope());
   let settled = false;
   try {
-    observed?.phase("scope-join");
+    observed?.phase("support-scope-join");
     await testScope().close();
     const errors: unknown[] = [];
     for (const close of [...cleanup].reverse()) {
@@ -107,6 +113,7 @@ async function createFixture(
     clock?: Clock;
     seed?: boolean;
     observation?: TestObservation;
+    observationCounters?: () => ObservationCounters;
   } = {},
 ) {
   const scope = testScope();
@@ -163,6 +170,7 @@ async function createFixture(
       activeJobs: jobsValid ? activeJobs : null,
       pendingAuthorities: authoritiesValid ? pendingAuthorities : null,
       pendingBodies: pending instanceof Set ? pending.size : null,
+      ...options.observationCounters?.(),
     };
   });
   const current = () => {
@@ -427,9 +435,11 @@ async function createFixture(
   };
   const open = () => {
     current();
+    observed?.phase("store-open");
     const pending = LocalStore.open(settings).then((opened) => {
       stores.push(opened);
       current();
+      observed?.phase("fixture-open");
       return opened;
     });
     openings.add(pending);
@@ -445,6 +455,7 @@ async function createFixture(
     sha256: createHash("sha256").update(inputBytes).digest("hex"),
   };
   if (options.seed !== false) {
+    observed?.phase("seed");
     const seedCtx = context("seed");
     const inputStage = value(await store.stage(inputBytes, seedCtx));
     value(await store.commit([inputStage], seedCtx));

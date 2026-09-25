@@ -4,27 +4,100 @@ import { detail } from "../src/boundary.js";
 import type { HandlerResult, JobExecution } from "../src/types.js";
 import { AsyncTestScope } from "./async-scope.js";
 import {
+  fixture as createFixture,
   makeService as createService,
   deferred,
-  fixture,
+  jobsCleanupCount,
   ownCleanup,
   value,
 } from "./support.js";
+import {
+  type ObservationCounters,
+  observeSelectedTest,
+  type TestObservation,
+} from "./test-observation.js";
+import { testScope } from "./test-scope.js";
 
 let scope: AsyncTestScope;
-beforeEach(({ signal }) => {
+const observations = new WeakMap<
+  AsyncTestScope,
+  {
+    observer: TestObservation;
+    counters: () => ObservationCounters;
+    progress: { submitIndex: number; completedSubmits: number };
+  }
+>();
+let previousSupport: AsyncTestScope | undefined;
+const pendingCount = (owner: AsyncTestScope | undefined) => {
+  const pending: unknown = owner && Reflect.get(owner, "pending");
+  return pending instanceof Set ? pending.size : null;
+};
+beforeEach(({ signal, task }) => {
+  const priorScheduler = scope;
+  const priorSupport = previousSupport;
+  const support = testScope();
+  const observed = observeSelectedTest(task.name, signal);
+  const progress = { submitIndex: 0, completedSubmits: 0 };
+  // Sample prior owners before replacing the existing module-global scheduler scope.
+  observed.counters(() => ({
+    priorSchedulerPending: pendingCount(priorScheduler),
+    priorSupportPending: pendingCount(priorSupport),
+    cleanupEntries: jobsCleanupCount(),
+  }));
+  observed.phase("setup");
   scope = new AsyncTestScope(signal);
   const owner = scope;
-  ownCleanup(() => owner.close());
+  previousSupport = support;
+  const counters = (): ObservationCounters => ({
+    schedulerPending: pendingCount(owner),
+    supportPending: pendingCount(support),
+    priorSchedulerPending: pendingCount(priorScheduler),
+    priorSupportPending: pendingCount(priorSupport),
+    cleanupEntries: jobsCleanupCount(),
+    schedulerOwnerMatches: scope === owner ? 1 : 0,
+    schedulerAborted: owner.signal.aborted ? 1 : 0,
+    supportAborted: support.signal.aborted ? 1 : 0,
+    ...progress,
+  });
+  observations.set(owner, { observer: observed, counters, progress });
+  observed.counters(counters);
+  ownCleanup(async () => {
+    observed.phase("scheduler-scope-join");
+    await owner.close();
+  });
 });
-function test(name: string, work: () => Promise<void>) {
-  it(name, () => scope.track(work()));
+function fixture(options: Parameters<typeof createFixture>[0] = {}) {
+  const observation = observations.get(scope);
+  return createFixture({
+    ...options,
+    ...(observation
+      ? {
+          observation: observation.observer,
+          observationCounters: observation.counters,
+        }
+      : {}),
+  });
+}
+function test(
+  name: string,
+  work: (observed: TestObservation) => Promise<void>,
+) {
+  it(name, () => {
+    const observed = observations.get(scope)?.observer;
+    if (!observed) throw new Error("Missing scheduler test observation");
+    observed.phase("body");
+    const settled = observed.pending();
+    return scope.track(work(observed).finally(settled));
+  });
 }
 function makeService(...args: Parameters<typeof createService>) {
   const service = createService(...args);
   const owner = scope;
+  const observed = observations.get(owner)?.observer;
   args[0].ownCleanup(async () => {
+    observed?.phase("scheduler-scope-join");
     await owner.close();
+    observed?.phase("service-stop");
     value(await service.stop());
   });
   return service;
@@ -44,8 +117,12 @@ for (const cap of [1, 4]) {
     let release: ReturnType<typeof deferred<HandlerResult>>;
     const running: JobExecution[] = [];
     const ids = ["work", "other", "third", "fourth", "fifth"];
-    beforeEach(() =>
-      scope.track(
+    beforeEach(() => {
+      const observed = observations.get(scope);
+      if (!observed) throw new Error("Missing original setup observation");
+      observed.observer.phase("setup");
+      const settled = observed.observer.pending();
+      return scope.track(
         (async () => {
           running.length = 0;
           competitor = undefined;
@@ -64,20 +141,24 @@ for (const cap of [1, 4]) {
             { maxWorkers: cap },
           );
           for (const id of ids) {
+            observed.progress.submitIndex++;
+            observed.observer.phase("submit");
             value(
               await s.submit(
                 f.submission(id, [`resource-${id}`]),
                 f.context(id, scope.signal),
               ),
             );
+            observed.progress.completedSubmits++;
             clock.advance(1);
           }
-        })(),
-      ),
-    );
-    test(`cap ${cap}: retained slots survive interruption and a competing scheduler`, () =>
+        })().finally(settled),
+      );
+    });
+    test(`cap ${cap}: retained slots survive interruption and a competing scheduler`, (observed) =>
       scope.track(
         (async () => {
+          observed.phase("run-once");
           value(await s.runOnce());
           expect(running).toHaveLength(cap);
           clock.advance(1000);
@@ -95,6 +176,7 @@ for (const cap of [1, 4]) {
           expect(competingCalls).toBe(0);
           expect(running.every((ex) => ex.context.signal.aborted)).toBe(true);
           release.resolve({ kind: "fail", error: detail("LEASE_LOST") });
+          observed.phase("attempt-wait");
           for (const ex of running)
             value(
               await s.waitForAttempt(
@@ -113,7 +195,7 @@ for (const cap of [1, 4]) {
       ));
   });
 }
-test("restart never treats an expired lease as proof of stopped execution", async () => {
+test("restart never treats an expired lease as proof of stopped execution", async (observed) => {
   const clock = createFakeClock(Date.parse("2026-09-17T00:00:00Z"));
   const f = await fixture({ clock });
   const queued = value(await f.store.jobs.create(f.submission(), f.context()));
@@ -126,12 +208,14 @@ test("restart never treats an expired lease as proof of stopped execution", asyn
       f.context(),
     ),
   );
+  observed.phase("restart");
   await f.reopen();
   let calls = 0;
   const s = makeService(f, async () => {
     calls++;
     return { kind: "wait", error: detail("ACTION_REQUIRED") };
   });
+  observed.phase("run-once");
   value(await s.runOnce());
   expect(value(await s.get("job-work", f.context())).status).toBe("running");
   clock.advance(1000);
@@ -141,15 +225,18 @@ test("restart never treats an expired lease as proof of stopped execution", asyn
   expect(job.lease?.ownerId).toBe("dead-worker");
   expect(calls).toBe(0);
 });
-test("queued and safely waiting jobs respect their original absolute deadline", async () => {
+test("queued and safely waiting jobs respect their original absolute deadline", async (observed) => {
   const clock = createFakeClock(Date.parse("2026-09-17T00:00:00Z"));
   const f = await fixture({ clock });
   const s = makeService(f, async () => ({
     kind: "wait",
     error: detail("ACTION_REQUIRED"),
   }));
+  observed.phase("submit");
   value(await s.submit(f.submission(), f.context()));
+  observed.phase("run-once");
   value(await s.runOnce());
+  observed.phase("attempt-wait");
   value(await s.waitForAttempt("job-work", f.context()));
   value(await s.submit(f.submission("other"), f.context("other")));
   clock.advance(30000);
@@ -159,7 +246,7 @@ test("queued and safely waiting jobs respect their original absolute deadline", 
     "failed",
   );
 });
-test("bounded stop retains an uncooperative callback and its slot until actual return", async () => {
+test("bounded stop retains an uncooperative callback and its slot until actual return", async (observed) => {
   const clock = createFakeClock(Date.parse("2026-09-17T00:00:00Z"));
   const f = await fixture({ clock });
   const started = deferred<JobExecution>();
@@ -171,14 +258,19 @@ test("bounded stop retains an uncooperative callback and its slot until actual r
     started.resolve(ex);
     return release.promise;
   });
+  observed.phase("submit");
   value(await s.submit(f.submission(), f.context()));
+  observed.phase("run-once");
   value(await s.start());
+  observed.phase("fake-clock-wait");
   const execution = await scope.wait(started.promise);
   const interrupted = deferred<void>();
   f.setFault((point) => {
     if (point === "before-commit") interrupted.resolve();
   });
+  observed.phase("service-stop");
   const stopping = s.stop(500);
+  observed.phase("fake-clock-wait");
   await scope.wait(interrupted.promise);
   f.setFault(undefined);
   clock.advance(500);
@@ -197,7 +289,7 @@ test("bounded stop retains an uncooperative callback and its slot until actual r
     value: { active: 0 },
   });
 });
-test("stop during admission cannot launch a callback after stop has returned", async () => {
+test("stop during admission cannot launch a callback after stop has returned", async (observed) => {
   const clock = createFakeClock(Date.parse("2026-09-17T00:00:00Z"));
   const f = await fixture({ clock });
   const observing = deferred<void>();
@@ -220,9 +312,13 @@ test("stop during admission cannot launch a callback after stop has returned", a
       },
     },
   );
+  observed.phase("submit");
   value(await s.submit(f.submission(), f.context()));
+  observed.phase("run-once");
   const turn = s.runOnce();
+  observed.phase("fake-clock-wait");
   await scope.wait(observing.promise);
+  observed.phase("service-stop");
   const stopping = s.stop(100);
   release.resolve();
   await turn;
@@ -231,7 +327,7 @@ test("stop during admission cannot launch a callback after stop has returned", a
   expect(value(await s.get("job-work", f.context())).status).toBe("queued");
 });
 
-test("a hung issuer has a finite allowance and cannot launch after its late reply", async () => {
+test("a hung issuer has a finite allowance and cannot launch after its late reply", async (observed) => {
   const clock = createFakeClock(Date.parse("2026-09-17T00:00:00Z"));
   const f = await fixture({ clock });
   const issuing = deferred<AbortSignal>();
@@ -255,8 +351,11 @@ test("a hung issuer has a finite allowance and cannot launch after its late repl
       },
     },
   );
+  observed.phase("submit");
   value(await s.submit(f.submission(), f.context()));
+  observed.phase("run-once");
   const turn = s.runOnce();
+  observed.phase("fake-clock-wait");
   const signal = await scope.wait(issuing.promise);
   clock.advance(100);
   value(await turn);
@@ -265,19 +364,23 @@ test("a hung issuer has a finite allowance and cannot launch after its late repl
     "waiting-for-user",
   );
   release.resolve();
+  observed.phase("service-stop");
   value(await s.stop());
   expect(calls).toBe(0);
 });
 
-test("explicit current-policy resume retains logical identity and original limits", async () => {
+test("explicit current-policy resume retains logical identity and original limits", async (observed) => {
   const f = await fixture();
   let calls = 0;
   const s = makeService(f, async () => {
     calls++;
     return { kind: "wait", error: detail("ACTION_REQUIRED") };
   });
+  observed.phase("submit");
   const original = value(await s.submit(f.submission(), f.context()));
+  observed.phase("run-once");
   value(await s.runOnce());
+  observed.phase("attempt-wait");
   value(await s.waitForAttempt("job-work", f.context()));
   const record = value(await f.store.jobs.get("job-work", f.context()));
   const evidence = await f.evidence(record, {
@@ -306,7 +409,7 @@ test("explicit current-policy resume retains logical identity and original limit
   expect(calls).toBe(2);
 });
 
-test("wait cancellation does not cancel durable work or leak mutable private views", async () => {
+test("wait cancellation does not cancel durable work or leak mutable private views", async (observed) => {
   const f = await fixture();
   const started = deferred<JobExecution>();
   const release = gate<HandlerResult>({
@@ -317,8 +420,11 @@ test("wait cancellation does not cancel durable work or leak mutable private vie
     started.resolve(ex);
     return release.promise;
   });
+  observed.phase("submit");
   value(await s.submit(f.submission(), f.context()));
+  observed.phase("run-once");
   value(await s.runOnce());
+  observed.phase("fake-clock-wait");
   const ex = await scope.wait(started.promise);
   const waiter = new AbortController();
   const waiting = s.wait("job-work", f.context("observer", waiter.signal));

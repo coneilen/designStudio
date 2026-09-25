@@ -20,6 +20,24 @@ const cases = {
     "persistence",
   "partial stage receipt survives unavailable journal refresh and cannot complete":
     "stage-refresh",
+  "cap 1: retained slots survive interruption and a competing scheduler":
+    "jobs-cap1",
+  "cap 4: retained slots survive interruption and a competing scheduler":
+    "jobs-cap4",
+  "restart never treats an expired lease as proof of stopped execution":
+    "jobs-restart",
+  "queued and safely waiting jobs respect their original absolute deadline":
+    "jobs-deadline",
+  "bounded stop retains an uncooperative callback and its slot until actual return":
+    "jobs-stop",
+  "stop during admission cannot launch a callback after stop has returned":
+    "jobs-admission",
+  "a hung issuer has a finite allowance and cannot launch after its late reply":
+    "jobs-issuer",
+  "explicit current-policy resume retains logical identity and original limits":
+    "jobs-resume",
+  "wait cancellation does not cancel durable work or leak mutable private views":
+    "jobs-wait",
 } as const;
 const phases = [
   "setup",
@@ -49,6 +67,9 @@ const phases = [
   "capture",
   "reference-operation",
   "cleanup",
+  "scheduler-scope-join",
+  "support-scope-join",
+  "fake-clock-wait",
 ] as const;
 type Phase = (typeof phases)[number];
 const counterKeys = [
@@ -67,6 +88,16 @@ const counterKeys = [
   "stores",
   "activeStoreOperations",
   "queueSequence",
+  "schedulerPending",
+  "supportPending",
+  "priorSchedulerPending",
+  "priorSupportPending",
+  "cleanupEntries",
+  "schedulerOwnerMatches",
+  "schedulerAborted",
+  "supportAborted",
+  "submitIndex",
+  "completedSubmits",
 ] as const;
 export type ObservationCounters = Partial<
   Record<(typeof counterKeys)[number], number | null>

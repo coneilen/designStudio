@@ -164,6 +164,19 @@ actual observed work and owners settle; pending work is never joined or
 cancelled by the observer. The existing ownership risks and the hosted
 six-failure cause remain unproven; this instrumentation is not a timing fix.
 
+The same bounded observer also admits the **nine exact existing jobs-scheduler
+cases**, after a later run first timed out in cap-4 setup and then in five
+bodies. No broad name matching is added. It distinguishes scheduler and support
+scope pending counts, observes prior captured scopes and cleanup entries before
+scope replacement, and records store-open, submit progress, fake-clock waits
+and actual cleanup boundaries without new waits or I/O. Unknown counters are
+`null`; callbacks retain their original observer. The five-submit preparation,
+clock advances, 5-second bodies and 10-second hooks remain unchanged.
+Two deterministic synthetic gates around real open/first-submit settlement
+confirmed cleanup and next-admission protections; they did not reproduce the
+hosted stall or justify consolidating the scopes. The extension collects
+future CI evidence only and does not claim a causal fix.
+
 The storage cancellation-control tests separate queued-context snapshotting from
 capacity admission. The snapshot case still mutates the caller's request after
 queueing a real cancellation and checks the original identity. The capacity case

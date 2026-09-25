@@ -156,7 +156,7 @@ describe("owned conditional test bodies", () => {
   const observedTestName =
     "fails closed when serialized finalization itself outlives the lease";
 
-  it("closed test observer is disabled outside the exact six names without allocating resources", () => {
+  it("closed test observer is disabled outside its exact names without allocating resources", () => {
     const fixture = observationFixture();
     const runner = new AbortController();
     const observer = observeSelectedTest(
@@ -419,6 +419,132 @@ describe("owned conditional test bodies", () => {
     });
     expect(fixture.lines.join("")).not.toContain("private");
   });
+  it("admits exactly the nine jobs scheduler cases with closed identities and typed owner counters", () => {
+    const names = [
+      [
+        "cap 1: retained slots survive interruption and a competing scheduler",
+        "jobs-cap1",
+      ],
+      [
+        "cap 4: retained slots survive interruption and a competing scheduler",
+        "jobs-cap4",
+      ],
+      [
+        "restart never treats an expired lease as proof of stopped execution",
+        "jobs-restart",
+      ],
+      [
+        "queued and safely waiting jobs respect their original absolute deadline",
+        "jobs-deadline",
+      ],
+      [
+        "bounded stop retains an uncooperative callback and its slot until actual return",
+        "jobs-stop",
+      ],
+      [
+        "stop during admission cannot launch a callback after stop has returned",
+        "jobs-admission",
+      ],
+      [
+        "a hung issuer has a finite allowance and cannot launch after its late reply",
+        "jobs-issuer",
+      ],
+      [
+        "explicit current-policy resume retains logical identity and original limits",
+        "jobs-resume",
+      ],
+      [
+        "wait cancellation does not cancel durable work or leak mutable private views",
+        "jobs-wait",
+      ],
+    ] as const;
+    for (const [name, caseId] of names) {
+      const fixture = observationFixture();
+      const runner = new AbortController();
+      const observer = observeSelectedTest(
+        name,
+        runner.signal,
+        () => fixture.source,
+      );
+      observer.counters(() => ({
+        schedulerPending: 1,
+        supportPending: 0,
+        priorSchedulerPending: null,
+        priorSupportPending: null,
+        cleanupEntries: 3,
+        schedulerOwnerMatches: 1,
+        schedulerAborted: 0,
+        supportAborted: 0,
+        submitIndex: 1,
+        completedSubmits: 0,
+      }));
+      observer.phase("store-open");
+      runner.abort();
+      observer.closed();
+      const records = fixture.lines.map((line) => JSON.parse(line));
+      expect(records.every((record) => record.caseId === caseId)).toBe(true);
+      expect(records.find((record) => record.event === "abort")).toMatchObject({
+        phase: "store-open",
+        schedulerPending: 1,
+        supportPending: 0,
+        priorSchedulerPending: null,
+        unavailableCounters: 2,
+      });
+      expect(records.at(-1)).toMatchObject({
+        event: "closed",
+        observerResourcesClosed: true,
+      });
+      expect(fixture.lines.join("")).not.toContain(name);
+      expect(getEventListeners(runner.signal, "abort")).toHaveLength(0);
+      observeSelectedTest(`${name} unapproved`, runner.signal, () => {
+        throw new Error("No new observer admission");
+      }).closed();
+    }
+  });
+
+  it("keeps late scheduler setup observations on their captured observer until original settlement", async () => {
+    const oldFixture = observationFixture(),
+      nextFixture = observationFixture();
+    const oldRunner = new AbortController(),
+      nextRunner = new AbortController();
+    const oldObserver = observeSelectedTest(
+      "cap 4: retained slots survive interruption and a competing scheduler",
+      oldRunner.signal,
+      () => oldFixture.source,
+    );
+    const release = deferred<void>();
+    const settled = oldObserver.pending();
+    const late = release.promise
+      .then(() => {
+        oldObserver.phase("scheduler-scope-join");
+      })
+      .finally(settled);
+    oldRunner.abort();
+    oldObserver.closed();
+    const nextObserver = observeSelectedTest(
+      "restart never treats an expired lease as proof of stopped execution",
+      nextRunner.signal,
+      () => nextFixture.source,
+    );
+    const count = nextFixture.lines.length;
+    try {
+      expect(oldFixture.releases).toBe(0);
+      release.resolve();
+      await late;
+      expect(nextFixture.lines).toHaveLength(count);
+      expect(oldFixture.releases).toBe(1);
+      expect(JSON.parse(oldFixture.lines.at(-1) ?? "")).toMatchObject({
+        event: "closed",
+        caseId: "jobs-cap4",
+        pendingObservedWork: 0,
+      });
+    } finally {
+      release.resolve();
+      await late;
+      nextObserver.closed();
+    }
+  });
+
   const owned = ownTests(it);
   owned.skipIf(false)("tracks the original skipIf body promise", async () => {
     const pending: unknown = Reflect.get(testScope(), "pending");
