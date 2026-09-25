@@ -704,6 +704,10 @@ test("cold-native offline recovery publishes with real immutable DB pins and wri
     expect(result.stdout).toMatch(
       /offline-reference-budget: private=\d+; eof=\d+; network=0; pins=0/,
     );
+    expect(result.stdout).toContain(
+      "offline-backup-paths: source=240; pending=305; final=297; raw-preimage=equal; native-callbacks=ordinary",
+    );
+    console.log(result.stdout.match(/offline-backup-paths: [^\n]+/)?.[0]);
     console.log(
       result.stdout.match(
         /offline-reference-budget: private=\d+; eof=\d+; network=0; pins=0/,

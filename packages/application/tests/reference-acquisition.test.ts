@@ -73,6 +73,7 @@ import {
 } from "../../storage/tests/lifetime.js";
 import {
   backupSyntheticOffline,
+  observeSyntheticDatabasePreimage,
   observeSyntheticReference,
 } from "../../storage/tests/reference-recovery-observer.js";
 import {
@@ -322,6 +323,7 @@ async function createFixture(
     diagnostic?: boolean;
     fixedClock?: boolean;
     offline?: boolean;
+    longDatabase?: boolean;
     telemetry?: "conversion-provenance" | "converted-archive";
   } = {},
 ) {
@@ -333,6 +335,7 @@ async function createFixture(
   );
   const { measure } = telemetry;
   const stores: LocalStore[] = [];
+  const backupReaders = new Set<{ close(): void }>();
   const fileSystems: ProjectFileSystem[] = [];
   const runtimes: NativeCaptureRuntime[] = [];
   const validations: Awaited<
@@ -351,12 +354,16 @@ async function createFixture(
       ".tools\\sqlite-prebuild\\build\\Release\\better_sqlite3.node",
     ),
   );
-  const root = await mkdtemp(
-    path.join(
-      tmpdir(),
-      nativeMode ? "ds-ph-reference-" : "reference-synthetic-",
-    ),
-  );
+  let rootPrefix = nativeMode ? "ds-ph-reference-" : "reference-synthetic-";
+  if (options.longDatabase) {
+    if (!nativeMode || !options.offline)
+      throw new Error("Long database fixture requires native offline mode.");
+    const padding = 224 - path.join(tmpdir(), rootPrefix).length - 6;
+    if (padding < 0)
+      throw new Error("Synthetic temp root exceeds the admitted DB bound.");
+    rootPrefix += "d".repeat(padding);
+  }
+  const root = await mkdtemp(path.join(tmpdir(), rootPrefix));
   let ownerFixture:
     | Awaited<ReturnType<typeof createRetainedOwnerFixture>>
     | undefined;
@@ -382,6 +389,14 @@ async function createFixture(
           "Reference runtime ownership did not close.",
         );
       await closeSettledStores(stores);
+      for (const reader of backupReaders) {
+        try {
+          reader.close();
+          backupReaders.delete(reader);
+        } catch (error) {
+          errors.push(error);
+        }
+      }
       for (const files of fileSystems) {
         try {
           await files.closePreservingStages();
@@ -395,6 +410,7 @@ async function createFixture(
           "Reference filesystem ownership did not close.",
         );
       expect(retainedPins.size).toBe(0);
+      expect(backupReaders.size).toBe(0);
       closePortablePins(portablePins);
       expect(portablePins.size).toBe(0);
       ownerFixture?.close();
@@ -468,6 +484,12 @@ async function createFixture(
   const ready = vi.fn(async () => undefined);
   const reads: { bytes: number; allowed: boolean }[] = [];
   const ledger: { phase: string; bytes: number }[] = [];
+  const backupPublications: {
+    pendingUnits: number;
+    finalUnits: number;
+    byteLength: number;
+    sha256: string;
+  }[] = [];
   if (options.offline) {
     const reserve = ReferenceInput.prototype.reserveRead;
     vi.spyOn(ReferenceInput.prototype, "reserveRead").mockImplementation(
@@ -652,27 +674,36 @@ async function createFixture(
               };
             },
             prepareReferenceBackup: async (filename: string) => {
+              expect(filename.startsWith("\\\\?\\")).toBe(false);
+              expect(
+                filename.startsWith(`${project.paths.database}.migration-v4-`),
+              ).toBe(true);
               if (native && sid && options.offline)
                 native.createFile(filename, sid, Buffer.alloc(0));
               else await writeFile(filename, new Uint8Array(), { flag: "wx" });
             },
-            pinReferenceBackup: async (filename) =>
-              native && sid && options.offline
+            pinReferenceBackup: async (filename) => {
+              expect(filename.startsWith("\\\\?\\")).toBe(false);
+              return native && sid && options.offline
                 ? pinReferenceBackupFile(filename, {
                     owner: work,
                     sid,
                     retainedPins,
                     current: work.current,
                   })
-                : syntheticBackupPin(filename),
+                : syntheticBackupPin(filename);
+            },
             publishReferenceBackup: async (
               source: string,
               destination: string,
               context: import("@design-studio/contracts").OperationContext,
               proof,
             ) => {
-              if (native && sid && options.offline)
-                return publishReferenceBackupFile({
+              expect(source.startsWith("\\\\?\\")).toBe(false);
+              expect(destination.startsWith("\\\\?\\")).toBe(false);
+              expect(source).toBe(`${destination}.pending`);
+              if (native && sid && options.offline) {
+                const published = await publishReferenceBackupFile({
                   source,
                   destination,
                   proof,
@@ -685,6 +716,16 @@ async function createFixture(
                   },
                   authority: policy.verify,
                 });
+                expect(published.sha256).toBe(proof.sha256);
+                expect(published.byteLength).toBe(proof.byteLength);
+                backupPublications.push({
+                  pendingUnits: source.length,
+                  finalUnits: destination.length,
+                  byteLength: published.byteLength,
+                  sha256: published.sha256,
+                });
+                return published;
+              }
               await proof.check();
               proof.close();
               await rename(source, destination);
@@ -1059,6 +1100,16 @@ async function createFixture(
         await offline?.close();
         return observeSyntheticReference(root, project.paths.database);
       }),
+    observeDatabasePreimage: (migrationBackup = false) =>
+      ownCaptureWork(() =>
+        observeSyntheticDatabasePreimage(
+          root,
+          project.paths.database,
+          backupReaders,
+          migrationBackup,
+        ),
+      )(),
+    backupPublications,
     backupOffline: ownCaptureWork(() =>
       measure("backup-archive", () =>
         backupSyntheticOffline(root, project.paths.database, scope.signal),
@@ -2008,6 +2059,7 @@ it(`publishes realistic offline reference within one physical budget${nativeReta
     nodeBytes: 2400000,
     frameSize: 460,
     durabilityReads: true,
+    ...(nativeRetainedMode ? { longDatabase: true } : {}),
   });
   await legacyReferenceFailure(f);
   const approved = await f.diagnosticApprove();
@@ -2039,6 +2091,9 @@ it(`publishes realistic offline reference within one physical budget${nativeReta
     operation: "reference-recovery-apply-plan",
   });
   expect(plan.status, JSON.stringify(plan)).toBe("complete");
+  const databasePreimage = nativeRetainedMode
+    ? await f.observeDatabasePreimage()
+    : undefined;
   f.image.mockClear();
   f.api.mockClear();
   f.vault.mockClear();
@@ -2091,6 +2146,24 @@ it(`publishes realistic offline reference within one physical budget${nativeReta
   expect(f.ledger.reduce((sum, r) => sum + r.bytes, 0)).toBe(charged);
   console.log(`offline-apply-ledger: ${JSON.stringify(phaseLedger())}`);
   if (nativeRetainedMode) {
+    expect(f.project.paths.database.length).toBe(240);
+    expect(databasePreimage?.snapshot).toMatchObject({
+      schema: 4,
+      applicationId: 0x44535431,
+      integrity: "ok",
+    });
+    const backup = await f.observeDatabasePreimage(true);
+    expect(backup.snapshot).toEqual(databasePreimage?.snapshot);
+    expect(f.backupPublications).toEqual([
+      {
+        pendingUnits: 305,
+        finalUnits: 297,
+        byteLength: backup.backup?.byteLength,
+        sha256: backup.backup?.sha256,
+      },
+    ]);
+    expect(backup.backup?.pathUnits).toBe(297);
+    expect((await f.observeOffline()).events).toHaveLength(8);
     const conversionStarted = Date.now();
     const converted = await f.runOffline({
       ...command,
@@ -2117,6 +2190,10 @@ it(`publishes realistic offline reference within one physical budget${nativeReta
       `offline-reference-conversion: private=${converted.inputAccounting?.privateBytes}; network=0; pins=${f.readPins}; convertMs=${convertElapsed}; eof=${convertEof}`,
     );
     console.log(`offline-convert-ledger: ${JSON.stringify(phaseLedger())}`);
+    expect((await f.observeOffline()).events).toHaveLength(10);
+    console.log(
+      "offline-backup-paths: source=240; pending=305; final=297; raw-preimage=equal; native-callbacks=ordinary",
+    );
   }
 });
 

@@ -6,7 +6,10 @@ import { ProjectFileSystem } from "@design-studio/host";
 import Database from "better-sqlite3";
 import { immutableDatabaseUri } from "../dist/immutable-sqlite.js";
 import { LocalStore } from "../dist/index.js";
-import { referenceRecoveryState } from "../dist/reference-recovery.js";
+import {
+  readReferenceRows,
+  referenceRecoveryState,
+} from "../dist/reference-recovery.js";
 import { closeSettledStores } from "./lifetime.js";
 import { revision } from "./support.js";
 
@@ -378,7 +381,7 @@ export async function backupSyntheticOffline(
 }
 
 /** Only the generated synthetic application fixture may use this raw test observer. */
-export async function observeSyntheticReference(
+async function assertSyntheticReferenceDatabase(
   root: string,
   database: string,
 ) {
@@ -388,6 +391,95 @@ export async function observeSyntheticReference(
     (await lstat(root)).isSymbolicLink()
   )
     throw new Error("Expected synthetic reference fixture.");
+}
+
+export async function observeSyntheticDatabasePreimage(
+  root: string,
+  database: string,
+  readers: Set<{ close(): void }>,
+  migrationBackup = false,
+) {
+  await assertSyntheticReferenceDatabase(root, database);
+  let filename = database;
+  if (migrationBackup) {
+    const names = (await readdir(path.dirname(database))).filter(
+      (name) =>
+        name.startsWith(`${path.basename(database)}.migration-v4-`) &&
+        /^[0-9a-f-]{36}\.sqlite$/.test(
+          name.slice(`${path.basename(database)}.migration-v4-`.length),
+        ),
+    );
+    if (names.length !== 1 || !names[0])
+      throw new Error("Expected one generated migration backup.");
+    filename = path.join(path.dirname(database), names[0]);
+  }
+  const binding = path.resolve(
+    ".tools\\sqlite-prebuild\\build\\Release\\better_sqlite3.node",
+  );
+  const before = migrationBackup ? await readFile(filename) : undefined;
+  let db: Database.Database | undefined;
+  const read = async () => {
+    db = new Database(
+      migrationBackup
+        ? path.toNamespacedPath(filename)
+        : immutableDatabaseUri(filename, binding),
+      { nativeBinding: binding, readonly: true, fileMustExist: true },
+    );
+    readers.add(db);
+    const snapshot = {
+      schema: db.pragma("user_version", { simple: true }),
+      applicationId: db.pragma("application_id", { simple: true }),
+      integrity: db.pragma("integrity_check", { simple: true }),
+      rows: readReferenceRows(db),
+    };
+    if (before && !before.equals(await readFile(filename)))
+      throw new Error("Readonly backup verification changed primary bytes.");
+    return {
+      snapshot,
+      ...(before
+        ? {
+            backup: {
+              pathUnits: filename.length,
+              byteLength: before.length,
+              sha256: (await import("node:crypto"))
+                .createHash("sha256")
+                .update(before)
+                .digest("hex"),
+            },
+          }
+        : {}),
+    };
+  };
+  const errors: unknown[] = [];
+  let result: Awaited<ReturnType<typeof read>> | undefined;
+  try {
+    result = await read();
+  } catch (error) {
+    errors.push(error);
+  }
+  try {
+    if (db) {
+      db.close();
+      readers.delete(db);
+    }
+  } catch (error) {
+    errors.push(error);
+  }
+  before?.fill(0);
+  if (errors.length)
+    throw new AggregateError(
+      errors,
+      "Synthetic backup verification or close failed.",
+    );
+  if (!result) throw new Error("Synthetic backup observation is missing.");
+  return result;
+}
+
+export async function observeSyntheticReference(
+  root: string,
+  database: string,
+) {
+  await assertSyntheticReferenceDatabase(root, database);
   const binding = path.resolve(
     ".tools\\sqlite-prebuild\\build\\Release\\better_sqlite3.node",
   );

@@ -9,6 +9,12 @@ state after the immutable connection/pins close. A verified durable schema-4
 backup precedes atomic schema creation plus reservation. Ordinary open does
 not migrate schema 4 to 5. The legacy v6 immutable reader remains schema-4-only.
 
+Recovery backup names may exceed the Windows legacy path limit even when the
+source database meets the registry's 240-unit bound. Only the SQLite backup
+and pending/final verification-open arguments use internal extended-path
+encoding. Native preparation, pins, publication and recorded identities retain
+their original checked paths; no caller namespace or path policy is expanded.
+
 Typed reserve/stage/commit methods authorize inside serialized storage work,
 CAS the event head, bind exact bytes and append intent before effects. The
 receipt and its normal artifact reference edges share the final event's SQL

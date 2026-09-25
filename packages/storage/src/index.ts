@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { toNamespacedPath } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import {
   type ApprovalContext,
@@ -950,7 +951,7 @@ export class LocalStore implements ArtifactStore {
               const backup = `${this.options.databasePath}.migration-v4-${randomUUID()}.sqlite`;
               const pending = `${backup}.pending`;
               await config.prepareBackup(pending);
-              await this.db.backup(pending);
+              await this.db.backup(toNamespacedPath(pending));
               backupProof = await config.pinBackup(pending);
               const schema = this.db
                 .prepare(
@@ -958,7 +959,7 @@ export class LocalStore implements ArtifactStore {
                 )
                 .all();
               const verifyCopy = (filename: string) => {
-                const copy = new Database(filename, {
+                const copy = new Database(toNamespacedPath(filename), {
                   nativeBinding: this.options.nativeBinding,
                   readonly: true,
                   fileMustExist: true,
