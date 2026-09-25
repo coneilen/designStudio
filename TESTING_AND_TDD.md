@@ -79,7 +79,7 @@ parallelism. Both phases are failure-gated; the workflow shows them as separate
 steps and does not run the combined command again. This intentionally changes
 native test scheduling, not product authorization, lease or time-budget rules.
 
-The overall Workspace CI job watchdog is **35 minutes**. The earlier increase
+The overall Workspace CI job watchdog is **45 minutes**. The earlier increase
 from 15 to 25 minutes covered two local phases measured at 851.19 seconds.
 With expanded coverage, hosted run `35952509962` passed all 146 portable files
 in 1181.45 seconds and all 27 native files in 234.14 seconds, plus roughly
@@ -91,6 +91,20 @@ budget increase. Existing 5-second tests and the explicit 60-second cold native
 driver keep their limits. All assertions and sequential phases remain failure-
 gated; no retries, `continue-on-error`, worker, partition, skip or cache changes
 are introduced.
+
+The subsequent 35-to-45-minute increase adds ten minutes of bounded **overall
+job** headroom. Hosted run `36187615159` at `edaba07` passed all 150 portable
+files (2,286 tests, four skips) in 1352.74 seconds; the portable workflow step
+took 22 minutes 35 seconds. Native testing then ran for 11 minutes 31 seconds
+before the 35-minute job watchdog cancelled the job. Only seven of 27 native
+file summaries were present, with no reported test failure or timeout; native
+completion was **not established**, and smoke was **skipped**. The full hosted
+native cost remains unknown. Forty-five minutes is bounded headroom, not a
+completion guarantee: all remaining native and smoke tests must actually pass.
+Test/hook allowances, native 30-second/25-MiB limits, workers, partition,
+step order and failure gates are unchanged. The portable pass does not prove
+the earlier six timeout causes fixed, and observer timestamps must be used
+rather than buffered reporter delivery times when comparing phases.
 
 Two non-timing reference-fixture groups explicitly use a fixed synthetic policy
 clock: the realistic diagnostic input-budget case, and the retained predecessor
