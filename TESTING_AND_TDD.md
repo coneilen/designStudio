@@ -126,6 +126,30 @@ Local successful captures do not explain the earlier hosted native deadline.
 Large-report and realistic byte-budget cases retain their original data and
 validators; no padding reduction, clock workaround or automatic retry is used.
 
+Six specifically named scheduler, persistence, stage-refresh and closed-diagnostic
+cases additionally emit **test-only closed resource observations**. The observer
+is disabled for every other name. Each selected case emits at most 128 JSON
+records / 64 KiB total, at most 2 KiB per record, and at most 90 one-second
+pending samples. Four records / 8 KiB are reserved for once-only abort, cap,
+unresolved-owner and closure summaries; exhaustion is explicit. Real unref
+observer timers never advance the synthetic clock or change a test/native limit.
+Existing setup/body/stop/queue/delete boundaries and spies supply only numeric
+counts. Missing or unexpected internals are `null`/unavailable, not zero.
+No paths, SQL, IDs, test names, callback contents or error strings are emitted.
+
+Observations include monotonic and wall timestamps because reporter output can
+be buffered. CPU and memory are whole **own-process** measurements, not
+thread-exclusive or per-phase usage; filesystem counters are operations, not
+bytes or queue depth. Event-loop sample count zero is not proof of zero delay.
+Queue sequence counts distinct promise identities seen at observation points,
+not every enqueue or queue length. Reported observer time is cumulative
+measurement/output overhead before that record, not a correction to test time.
+Sampling/counter/sink/resource faults are closed flags/counts and cannot mask
+the original failure. Timer/monitor/listener closure is not claimed until
+actual observed work and owners settle; pending work is never joined or
+cancelled by the observer. The existing ownership risks and the hosted
+six-failure cause remain unproven; this instrumentation is not a timing fix.
+
 The storage cancellation-control tests separate queued-context snapshotting from
 capacity admission. The snapshot case still mutates the caller's request after
 queueing a real cancellation and checks the original identity. The capacity case

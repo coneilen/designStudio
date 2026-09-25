@@ -59,6 +59,10 @@ import {
   portableRetainedPin,
 } from "../../host/tests/portable-retained-pin.js";
 import { Execution } from "../../jobs/dist/execution.js";
+import {
+  observeSelectedTest,
+  type TestObservation,
+} from "../../jobs/tests/test-observation.js";
 import { nativeCapturePolicy } from "../../project-host/dist/capture-authority.js";
 import { CAPTURE_DIAGNOSTIC_POLICY_SHA256 } from "../../project-host/src/capture-diagnostic-profile.js";
 import { CAPTURE_POLICY_SHA256 } from "../../project-host/src/capture-profile.js";
@@ -165,6 +169,7 @@ vi.mock("../../project-host/dist/capture-work.js", () => ({
 }));
 const cleanups: (() => Promise<void>)[] = [];
 const runnerSignals = new WeakMap<AsyncTestScope, AbortSignal>();
+const observations = new WeakMap<AsyncTestScope, TestObservation>();
 const diagnosticTelemetry = new WeakMap<
   AsyncTestScope,
   ReturnType<typeof referenceTelemetry>
@@ -175,6 +180,10 @@ aroundEach((run, context) => {
   if (cleanups.length)
     throw new Error("Previous reference fixture has not quiesced.");
   const scope = new AsyncTestScope(context.signal);
+  observations.set(
+    scope,
+    observeSelectedTest(context.task.name, context.signal),
+  );
   runnerSignals.set(scope, context.signal);
   if (
     context.task.name.startsWith(
@@ -188,27 +197,37 @@ aroundEach((run, context) => {
   return inCaptureTest(scope, run);
 });
 afterEach(async () => {
-  await captureTestScope().close();
-  const errors: unknown[] = [];
-  for (const cleanup of [...cleanups].reverse()) {
-    try {
-      await cleanup();
-      cleanups.splice(cleanups.indexOf(cleanup), 1);
-    } catch (error) {
-      errors.push(error);
+  const observed = observations.get(captureTestScope());
+  let settled = false;
+  try {
+    observed?.phase("scope-join");
+    await captureTestScope().close();
+    const errors: unknown[] = [];
+    for (const cleanup of [...cleanups].reverse()) {
+      try {
+        await cleanup();
+        cleanups.splice(cleanups.indexOf(cleanup), 1);
+      } catch (error) {
+        errors.push(error);
+      }
     }
+    if (errors.length)
+      throw new AggregateError(
+        errors,
+        "Reference fixture cleanup did not settle.",
+      );
+    observed?.phase("mock-reset");
+    vi.restoreAllMocks();
+    seam.work = undefined;
+    seam.measureReads = false;
+    seam.physicalReads = 0;
+    seam.afterRead = undefined;
+    diagnosticTelemetry.get(captureTestScope())?.close();
+    settled = true;
+  } finally {
+    if (settled) observed?.closed();
+    else observed?.unresolved();
   }
-  if (errors.length)
-    throw new AggregateError(
-      errors,
-      "Reference fixture cleanup did not settle.",
-    );
-  vi.restoreAllMocks();
-  seam.work = undefined;
-  seam.measureReads = false;
-  seam.physicalReads = 0;
-  seam.afterRead = undefined;
-  diagnosticTelemetry.get(captureTestScope())?.close();
 });
 const origin = "https://figma-alpha-api.s3.us-west-2.amazonaws.com";
 const nativeRetainedMode =
@@ -242,10 +261,46 @@ async function createFixture(
   const telemetry =
     diagnosticTelemetry.get(scope) ??
     referenceTelemetry(options.telemetry, runnerSignals.get(scope));
-  const { measure } = telemetry;
+  const observed = observations.get(scope);
+  const measure = <T>(phase: string, action: () => Promise<T>) => {
+    observed?.phase(
+      phase === "fixture-open"
+        ? "fixture-open"
+        : phase === "capture"
+          ? "capture"
+          : phase === "cleanup"
+            ? "cleanup"
+            : "reference-operation",
+    );
+    return telemetry.measure(phase, action);
+  };
   const stores: LocalStore[] = [];
   const backupReaders = new Set<{ close(): void }>();
   const fileSystems: ProjectFileSystem[] = [];
+  let queueSequence = 0;
+  const observedQueues = new WeakSet<Promise<unknown>>();
+  observed?.counters(() => {
+    const pending: unknown = Reflect.get(scope, "pending");
+    let activeValid = true,
+      queueValid = true;
+    const activeStoreOperations = stores.reduce((sum, store) => {
+      const queue: unknown = Reflect.get(store, "queue");
+      if (queue instanceof Promise && !observedQueues.has(queue)) {
+        observedQueues.add(queue);
+        queueSequence++;
+      }
+      if (!(queue instanceof Promise)) queueValid = false;
+      const active: unknown = Reflect.get(store, "active");
+      if (typeof active !== "number") activeValid = false;
+      return sum + (typeof active === "number" ? active : 0);
+    }, 0);
+    return {
+      pendingBodies: pending instanceof Set ? pending.size : null,
+      stores: stores.length,
+      queueSequence: queueValid ? queueSequence : null,
+      activeStoreOperations: activeValid ? activeStoreOperations : null,
+    };
+  });
   const runtimes: NativeCaptureRuntime[] = [];
   const validations: Awaited<
     ReturnType<typeof openNativeReferenceValidation>
@@ -272,14 +327,18 @@ async function createFixture(
       throw new Error("Synthetic temp root exceeds the admitted DB bound.");
     rootPrefix += "d".repeat(padding);
   }
+  observed?.phase("root-open");
   const root = await mkdtemp(path.join(tmpdir(), rootPrefix));
   let ownerFixture:
     | Awaited<ReturnType<typeof createRetainedOwnerFixture>>
     | undefined;
   cleanups.push(() =>
     measure("cleanup", async () => {
+      observed?.phase("scope-join");
       await scope.close();
+      observed?.phase("queue-join");
       await joinSettledStores(stores);
+      observed?.phase("runtime-close");
       const errors: unknown[] = [];
       for (const current of [
         ...offlines,
@@ -297,6 +356,7 @@ async function createFixture(
           errors,
           "Reference runtime ownership did not close.",
         );
+      observed?.phase("store-close");
       await closeSettledStores(stores);
       for (const reader of backupReaders) {
         try {
@@ -306,6 +366,7 @@ async function createFixture(
           errors.push(error);
         }
       }
+      observed?.phase("filesystem-close");
       for (const files of fileSystems) {
         try {
           await files.closePreservingStages();
@@ -323,6 +384,7 @@ async function createFixture(
       closePortablePins(portablePins);
       expect(portablePins.size).toBe(0);
       ownerFixture?.close();
+      observed?.phase("root-delete");
       await rm(root, { recursive: true, force: true });
       telemetry.close();
     }),
@@ -458,6 +520,7 @@ async function createFixture(
   const openStore = LocalStore.open.bind(LocalStore);
   let currentStore: LocalStore | undefined;
   vi.spyOn(LocalStore, "open").mockImplementation(async (o) => {
+    observed?.phase("store-open");
     currentStore = await openStore({
       ...o,
       fault: (point) => {
@@ -492,6 +555,7 @@ async function createFixture(
       },
     });
     stores.push(currentStore);
+    observed?.phase("fixture-open");
     return currentStore;
   });
   const originalProject = project;

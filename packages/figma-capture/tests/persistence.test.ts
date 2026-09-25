@@ -18,7 +18,8 @@ import {
 } from "@design-studio/host";
 import { createJobService, type JobService } from "@design-studio/jobs";
 import { LocalStore, type StorageOptions } from "@design-studio/storage";
-import { expect, it, vi } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
+import { observeSelectedTest } from "../../jobs/tests/test-observation.js";
 import { diskFixture } from "../../storage/tests/support.js";
 import { CAPTURE_LIMITS, ownPolicy } from "../src/boundary.js";
 import { createFigmaCaptureJobs } from "../src/service.js";
@@ -32,9 +33,16 @@ const value = <T>(outcome: Outcome<T>): T => {
 };
 it.skipIf(process.platform !== "win32")(
   "commits immutable rate-limit evidence through real jobs/SQLite and enforces cooldown after restart",
-  async () => {
+  async ({ signal, task }) => {
+    const observed = observeSelectedTest(task.name, signal);
+    let closed = false;
+    onTestFinished(() => {
+      if (!closed) observed.unresolved();
+    });
+    observed.phase("root-open");
     const root = await mkdtemp(path.join(os.tmpdir(), "ds-capture-store-"));
     const originalRoot = await realpath(root);
+    observed.phase("fixture-open");
     const disk = await diskFixture(root);
     const clock = createFakeClock(Date.now());
     const sessions = new LocalSessionAuthenticator({
@@ -190,16 +198,39 @@ it.skipIf(process.platform !== "win32")(
     };
     let store: LocalStore | undefined;
     let service: JobService | undefined;
+    const queues = new WeakSet<Promise<unknown>>();
+    let queueSequence = 0;
+    observed.counters(() => {
+      const queue: unknown = store && Reflect.get(store, "queue");
+      if (queue instanceof Promise && !queues.has(queue)) {
+        queues.add(queue);
+        queueSequence++;
+      }
+      const active: unknown = service && Reflect.get(service, "active");
+      const authorities: unknown =
+        service && Reflect.get(service, "authorities");
+      const running: unknown = store && Reflect.get(store, "active");
+      return {
+        stores: store ? 1 : 0,
+        queueSequence,
+        activeStoreOperations: typeof running === "number" ? running : null,
+        activeJobs: active instanceof Map ? active.size : null,
+        pendingAuthorities:
+          authorities instanceof Set ? authorities.size : null,
+      };
+    });
     const network = vi
       .spyOn(FigmaHttpsTransport.prototype, "api")
       .mockRejectedValue(new CaptureHttpError("RATE_LIMITED", 429, "60"));
     const errors: unknown[] = [];
     const cleanupRoot = async () => {
+      observed.phase("root-delete");
       if ((await realpath(root)) !== originalRoot)
         throw new Error("Synthetic capture root changed");
       await rm(root, { recursive: true });
     };
     try {
+      observed.phase("store-open");
       store = await LocalStore.open(settings);
       const compose = () => {
         if (!store) throw new Error("No synthetic store");
@@ -285,6 +316,7 @@ it.skipIf(process.platform !== "win32")(
           "https://www.figma.com/design/SyntheticFile/selection?node-id=1-2",
         credential: policy.credential,
       });
+      observed.phase("seed");
       const seed = context("seed");
       const resource = value(
         await store.stage(canonicalBytes(resources), seed),
@@ -301,6 +333,7 @@ it.skipIf(process.platform !== "win32")(
         selectedModes: {},
       };
       if (!api) throw new Error("No capture policy");
+      observed.phase("submit");
       const submit = context("capture_one");
       value(
         await api.submit(
@@ -312,7 +345,9 @@ it.skipIf(process.platform !== "win32")(
           submit,
         ),
       );
+      observed.phase("run-once");
       value(await service.runOnce());
+      observed.phase("attempt-wait");
       const done = value(
         await service.waitForAttempt("capture_one", context("capture_one")),
       );
@@ -324,9 +359,12 @@ it.skipIf(process.platform !== "win32")(
         errorCode: "RATE_LIMITED",
         completeness: "unavailable",
       });
+      observed.phase("service-stop");
       value(await service.stop());
       service = undefined;
+      observed.phase("store-close");
       store.close();
+      observed.phase("restart");
       store = await LocalStore.open(settings);
       service = compose();
       const next = value(
@@ -337,6 +375,7 @@ it.skipIf(process.platform !== "win32")(
       );
       value(await store.commit([next], context("seed", "next-input-commit")));
       if (!api) throw new Error("No restarted policy");
+      observed.phase("cooldown");
       await expect(
         api.submit(
           service,
@@ -360,6 +399,7 @@ it.skipIf(process.platform !== "win32")(
           return { status: 200, bytes, mediaType: "application/json" };
         },
       );
+      observed.phase("submit");
       value(
         await api.submit(
           service,
@@ -370,10 +410,13 @@ it.skipIf(process.platform !== "win32")(
           context("capture_two"),
         ),
       );
+      observed.phase("run-once");
       value(await service.runOnce());
+      observed.phase("attempt-wait");
       const interrupted = value(
         await service.waitForAttempt("capture_two", context("capture_two")),
       );
+      observed.phase("assertions");
       expect(interrupted.status).toBe("interrupted");
       const effects = value(
         await store.jobs.get("capture_two", context("capture_two")),
@@ -393,27 +436,38 @@ it.skipIf(process.platform !== "win32")(
         await api.readResult("capture_two", context("capture_two")),
       ).toBeUndefined();
       expect(network).toHaveBeenCalledTimes(3);
+      observed.phase("service-stop");
       value(await service.stop());
       service = undefined;
     } catch (error) {
       errors.push(error);
     } finally {
+      let released = true;
+      observed.phase("service-stop");
       try {
         if (service) value(await service.stop());
       } catch (error) {
+        released = false;
         errors.push(error);
       }
       try {
+        observed.phase("store-close");
         store?.close();
       } catch (error) {
+        released = false;
         errors.push(error);
       }
+      observed.phase("mock-reset");
       network.mockRestore();
       try {
         await cleanupRoot();
       } catch (error) {
+        released = false;
         errors.push(error);
       }
+      closed = released;
+      if (closed) observed.closed();
+      else observed.unresolved();
     }
     if (errors.length)
       throw new AggregateError(
