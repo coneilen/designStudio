@@ -2,10 +2,22 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { onTestFinished, vi } from "vitest";
 import {
+  CAPTURE_DIAGNOSTIC_POLICY_SHA256,
+  captureDiagnosticPolicyBytes,
+} from "../src/capture-diagnostic-profile.js";
+import {
   CAPTURE_POLICY_SHA256,
   CAPTURE_PROFILE,
   capturePolicyBytes,
 } from "../src/capture-profile.js";
+import {
+  CAPTURE_RECOVERY_POLICY_SHA256,
+  captureRecoveryPolicyBytes,
+} from "../src/capture-recovery-profile.js";
+import {
+  CAPTURE_REFERENCE_POLICY_SHA256,
+  captureReferencePolicyBytes,
+} from "../src/capture-reference-profile.js";
 import {
   installCandidate,
   verifyCaptureInstalledRoot,
@@ -16,12 +28,25 @@ import {
   type InventoryFile,
 } from "../src/installation-manifest.js";
 import { type InstallationEntry, loadNative } from "../src/native.js";
+import {
+  REFERENCE_CONVERSION_INSPECTION_POLICY_SHA256,
+  referenceConversionInspectionPolicyBytes,
+} from "../src/reference-conversion-inspection-profile.js";
+import {
+  REFERENCE_OFFLINE_POLICY_SHA256,
+  referenceOfflinePolicyBytes,
+} from "../src/reference-offline-profile.js";
+import {
+  REFERENCE_VALIDATION_POLICY_SHA256,
+  referenceValidationPolicyBytes,
+} from "../src/reference-validation-profile.js";
 import { ownedTest, weakenTestAcl } from "./support.js";
 
 interface CaptureFixtureBytes {
   node?: Buffer;
   helper?: Buffer;
   sqlite?: Buffer;
+  releaseVersion?: 7 | 8;
 }
 let captureFixtureActive = false;
 export async function captureCandidate(
@@ -54,6 +79,21 @@ export async function captureCandidate(
     "node_modules/@design-studio/figma-import/dist/index.js": synthetic,
     "native/better_sqlite3.node": fixture.sqlite ?? synthetic,
     "capture-policy.json": capturePolicyBytes(),
+    ...(fixture.releaseVersion
+      ? {
+          "capture-recovery-policy.json": captureRecoveryPolicyBytes(),
+          "capture-reference-policy.json": captureReferencePolicyBytes(),
+          "capture-diagnostic-policy.json": captureDiagnosticPolicyBytes(),
+          "reference-validation-policy.json": referenceValidationPolicyBytes(),
+          "reference-offline-policy.json": referenceOfflinePolicyBytes(),
+          ...(fixture.releaseVersion === 8
+            ? {
+                "reference-conversion-inspection-policy.json":
+                  referenceConversionInspectionPolicyBytes(),
+              }
+            : {}),
+        }
+      : {}),
   });
   const bootstrap = await write("bootstrap", {
     "runtime/node.exe": fixture.node ?? synthetic,
@@ -62,10 +102,26 @@ export async function captureCandidate(
     "node_modules/@design-studio/project-host/dist/installation.js": synthetic,
     "release-policy.json": Buffer.from(
       JSON.stringify({
-        version: 2,
+        version: fixture.releaseVersion ?? 2,
         kind: CAPTURE_PROFILE,
         manifestSha256: digest(manifest),
         capturePolicySha256: CAPTURE_POLICY_SHA256,
+        ...(fixture.releaseVersion
+          ? {
+              captureRecoveryPolicySha256: CAPTURE_RECOVERY_POLICY_SHA256,
+              captureReferencePolicySha256: CAPTURE_REFERENCE_POLICY_SHA256,
+              captureDiagnosticPolicySha256: CAPTURE_DIAGNOSTIC_POLICY_SHA256,
+              referenceValidationPolicySha256:
+                REFERENCE_VALIDATION_POLICY_SHA256,
+              referenceOfflinePolicySha256: REFERENCE_OFFLINE_POLICY_SHA256,
+              ...(fixture.releaseVersion === 8
+                ? {
+                    referenceConversionInspectionPolicySha256:
+                      REFERENCE_CONVERSION_INSPECTION_POLICY_SHA256,
+                  }
+                : {}),
+            }
+          : {}),
       }),
     ),
   });

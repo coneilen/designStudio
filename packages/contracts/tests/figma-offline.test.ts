@@ -17,6 +17,85 @@ const identity = {
     actorId: "actor_test",
   },
 };
+it("keeps readonly conversion inspection states closed and readiness non-renderable", () => {
+  const proof = {
+    inspectionPolicySha256: "a".repeat(64),
+    recoveryPolicySha256: "b".repeat(64),
+    recoveryId: "recovery",
+    recoveryReceiptSha256: "c".repeat(64),
+    originalJobSha256: "d".repeat(64),
+    originalStateSha256: "e".repeat(64),
+    identitySha256: "f".repeat(64),
+    controlSha256: "0".repeat(64),
+    proofSha256: "1".repeat(64),
+  };
+  const conversion = {
+    operationId: "conversion",
+    receiptSha256: "2".repeat(64),
+    evidence: { id: "evidence", sha256: "3".repeat(64) },
+    readiness: "needs-review",
+  };
+  for (const value of [
+    {
+      verification: "conversion-readonly-v1",
+      state: "blocked",
+      detail: "verification-incomplete",
+    },
+    {
+      verification: "conversion-readonly-v1",
+      state: "incomplete",
+      detail: "no-conversion-intent-observed",
+      proof,
+    },
+    {
+      verification: "conversion-readonly-v1",
+      state: "incomplete",
+      detail: "conversion-intent-without-committed-receipt",
+      proof,
+    },
+    {
+      verification: "conversion-readonly-v1",
+      state: "committed",
+      proof,
+      conversion,
+    },
+  ])
+    expect(
+      validateContract("ReferenceConversionInspection", value).success,
+    ).toBe(true);
+  for (const value of [
+    {
+      verification: "conversion-readonly-v1",
+      state: "blocked",
+      detail: "verification-incomplete",
+      proof,
+    },
+    {
+      verification: "conversion-readonly-v1",
+      state: "incomplete",
+      detail: "no-conversion-intent-observed",
+      proof,
+      conversion,
+    },
+    { verification: "conversion-readonly-v1", state: "committed", proof },
+    {
+      verification: "conversion-readonly-v1",
+      state: "committed",
+      proof,
+      conversion: { ...conversion, readiness: "ready" },
+    },
+    {
+      verification: "conversion-readonly-v1",
+      state: "committed",
+      proof,
+      conversion,
+      privateText: "forbidden",
+    },
+  ])
+    expect(
+      validateContract("ReferenceConversionInspection", value).success,
+    ).toBe(false);
+});
 
 it.each([
   "figma-offline-fixed-v1",

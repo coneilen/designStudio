@@ -31,6 +31,7 @@ import {
   assertCaptureDiagnosticInstallation,
   assertCaptureRecoveryInstallation,
   assertCaptureReferenceInstallation,
+  assertReferenceConversionInspectionInstallation,
   assertReferenceOfflineInstallation,
   assertReferenceValidationInstallation,
 } from "./installation.js";
@@ -41,6 +42,7 @@ import {
   publishReferenceBackupFile,
   type ReferenceBackupPin,
 } from "./reference-backup.js";
+import { REFERENCE_CONVERSION_INSPECTION_POLICY_SHA256 } from "./reference-conversion-inspection-profile.js";
 import { REFERENCE_OFFLINE_POLICY_SHA256 } from "./reference-offline-profile.js";
 import { pinImmutableReferenceDatabase } from "./reference-validation-database.js";
 import { pinRetainedReferenceEntry } from "./reference-validation-entry.js";
@@ -66,6 +68,8 @@ export interface CaptureWork {
   diagnosticAuthority?(): Promise<string>;
   referenceValidationAuthority?(): Promise<string>;
   referenceOfflineAuthority?(): Promise<string>;
+  referenceConversionInspectionAuthority?(): Promise<string>;
+  pinReferenceConversionInspectionDatabase?: CaptureWork["pinReferenceOfflineDatabase"];
   pinReferenceOfflineDatabase?(): Promise<{
     identitySha256: string;
     check(): Promise<void>;
@@ -224,6 +228,36 @@ export function acquireCaptureWork(project: CaptureProject): CaptureWork {
       await current();
       assertReferenceOfflineInstallation(owner.installation);
       return REFERENCE_OFFLINE_POLICY_SHA256;
+    },
+    async referenceConversionInspectionAuthority() {
+      await current();
+      assertReferenceConversionInspectionInstallation(owner.installation);
+      return REFERENCE_CONVERSION_INSPECTION_POLICY_SHA256;
+    },
+    async pinReferenceConversionInspectionDatabase() {
+      await current();
+      assertReferenceConversionInspectionInstallation(owner.installation);
+      return pinImmutableReferenceDatabase({
+        filename: project.paths.database,
+        sid: owner.sid,
+        retainedPins,
+        authoritySha256: digest(
+          Buffer.from(
+            JSON.stringify({
+              installation: owner.installation.identity,
+              projectId: project.projectId,
+              actorId: work.actorId,
+              artifactRootId: project.artifactRootId,
+              permissionScope: work.permissionScope,
+              policySha256: REFERENCE_CONVERSION_INSPECTION_POLICY_SHA256,
+            }),
+          ),
+        ),
+        authorize: async () => {
+          await current();
+          assertReferenceConversionInspectionInstallation(owner.installation);
+        },
+      });
     },
     async pinReferenceOfflineDatabase() {
       await current();

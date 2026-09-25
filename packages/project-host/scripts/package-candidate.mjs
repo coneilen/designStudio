@@ -38,6 +38,10 @@ import {
   relativeName,
 } from "../dist/installation-manifest.js";
 import {
+  REFERENCE_CONVERSION_INSPECTION_POLICY_SHA256,
+  referenceConversionInspectionPolicyBytes,
+} from "../dist/reference-conversion-inspection-profile.js";
+import {
   REFERENCE_OFFLINE_POLICY_SHA256,
   referenceOfflinePolicyBytes,
 } from "../dist/reference-offline-profile.js";
@@ -585,6 +589,11 @@ export async function packageCandidate({
       referenceOfflinePolicyBytes(),
       { flag: "wx" },
     );
+    await writeFile(
+      path.join(payload, "reference-conversion-inspection-policy.json"),
+      referenceConversionInspectionPolicyBytes(),
+      { flag: "wx" },
+    );
   } else {
     await mkdir(path.join(payload, "fixtures"));
     await copyPhysical(
@@ -642,7 +651,7 @@ export async function packageCandidate({
     JSON.stringify(
       capture
         ? {
-            version: 7,
+            version: 8,
             kind: CAPTURE_PROFILE,
             manifestSha256: digest(manifest),
             capturePolicySha256: CAPTURE_POLICY_SHA256,
@@ -651,6 +660,8 @@ export async function packageCandidate({
             captureDiagnosticPolicySha256: CAPTURE_DIAGNOSTIC_POLICY_SHA256,
             referenceValidationPolicySha256: REFERENCE_VALIDATION_POLICY_SHA256,
             referenceOfflinePolicySha256: REFERENCE_OFFLINE_POLICY_SHA256,
+            referenceConversionInspectionPolicySha256:
+              REFERENCE_CONVERSION_INSPECTION_POLICY_SHA256,
           }
         : {
             version: 1,

@@ -15,6 +15,7 @@ export {
 } from "./capture-runtime-internal.js";
 export {
   type NativeReferenceOfflineInput,
+  openNativeReferenceConversionInspection,
   openNativeReferenceOffline,
   REFERENCE_CONVERSION_CONFIRMATION,
   REFERENCE_RECOVERY_CONFIRMATION,

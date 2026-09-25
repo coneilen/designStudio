@@ -4,6 +4,7 @@ import type {
   NativeReferenceOfflineEnvelope,
   OfflineReferencePlan,
   OperationContext,
+  ReferenceConversionInspection,
   ReferenceRecoveryBinding,
   StagedArtifact,
 } from "@design-studio/contracts";
@@ -38,6 +39,7 @@ import {
   type StorageOptions,
 } from "@design-studio/storage";
 import { REFERENCE_LIMITS } from "../../figma-capture/dist/reference.js";
+import { REFERENCE_OFFLINE_POLICY_SHA256 } from "../../project-host/dist/reference-offline-profile.js";
 import { initializeImmutableSqlite } from "../../storage/dist/immutable-sqlite.js";
 import {
   NativeCaptureCleanupRequired,
@@ -84,6 +86,19 @@ const deny = async (): Promise<never> => {
 
 /** Native-only composition; no writable store, transport or credential object is shared with v6. */
 export async function openNativeReferenceOffline(project: CaptureProject) {
+  return openOffline(project, false);
+}
+
+export async function openNativeReferenceConversionInspection(
+  project: CaptureProject,
+) {
+  return openOffline(project, true);
+}
+
+async function openOffline(
+  project: CaptureProject,
+  conversionInspection: boolean,
+) {
   const work = acquireCaptureWork(project);
   let store: LocalStore | undefined;
   let files: ProjectFileSystem | undefined;
@@ -108,11 +123,17 @@ export async function openNativeReferenceOffline(project: CaptureProject) {
   let publicationAdditions: Parameters<
     RetainedReferenceInspection["checkOriginals"]
   >[0];
+  const inspectionAuthority = async () => {
+    if (!work.referenceConversionInspectionAuthority)
+      throw new ApplicationError("FORBIDDEN");
+    return work.referenceConversionInspectionAuthority();
+  };
   const check = async () => {
     await work.current();
     if (!active || !signal || !work.referenceOfflineAuthority)
       throw new ApplicationError("FORBIDDEN");
     await work.referenceOfflineAuthority();
+    if (conversionInspection) await inspectionAuthority();
     if (signal.aborted) throw new ApplicationError("CANCELLED");
     if (work.policy.clock.now() >= Date.parse(deadline))
       throw new ApplicationError("DEADLINE_EXCEEDED");
@@ -221,8 +242,9 @@ export async function openNativeReferenceOffline(project: CaptureProject) {
       throw result;
     }
   };
-  const makeFiles = async (write: boolean) =>
-    ProjectFileSystem.create({
+  const makeFiles = async (write: boolean) => {
+    if (conversionInspection && write) throw new ApplicationError("FORBIDDEN");
+    return ProjectFileSystem.create({
       projectId: project.projectId,
       authority: work.policy.verify,
       reserveRead: (bytes) => input.reserveRead(bytes),
@@ -259,6 +281,7 @@ export async function openNativeReferenceOffline(project: CaptureProject) {
         },
       },
     });
+  };
   const options = (fs: ProjectFileSystem): StorageOptions => ({
     projectId: project.projectId,
     artifactRootId: project.artifactRootId,
@@ -369,14 +392,17 @@ export async function openNativeReferenceOffline(project: CaptureProject) {
   const issue = async (jobId: string, jobReads: string[], write = false) => {
     await check();
     if (!signal) throw new ApplicationError("FORBIDDEN");
-    const context = await work.policy.issueReferenceOffline({
+    if (conversionInspection && write) throw new ApplicationError("FORBIDDEN");
+    const input = {
       jobId,
       jobReads,
       requestId: write ? jobId : currentRequest,
       deadline,
       signal,
-      write,
-    });
+    };
+    const context = conversionInspection
+      ? await work.policy.issueReferenceConversionInspection(input)
+      : await work.policy.issueReferenceOffline({ ...input, write });
     issued.add(context.authorization);
     return context;
   };
@@ -496,6 +522,7 @@ export async function openNativeReferenceOffline(project: CaptureProject) {
     if (!work.referenceOfflineAuthority || !work.pinReferenceOfflineDatabase)
       throw new ApplicationError("FORBIDDEN");
     await work.referenceOfflineAuthority();
+    if (conversionInspection) await inspectionAuthority();
     initializeImmutableSqlite(work.sqliteBinding);
   } catch (error) {
     try {
@@ -536,13 +563,18 @@ export async function openNativeReferenceOffline(project: CaptureProject) {
             ? ["expectedProof", "confirmation"]
             : owned.operation === "convert-reference"
               ? ["expectedRecovery", "confirmation"]
-              : [];
+              : owned.operation === "reference-conversion-inspect"
+                ? ["expectedRecovery"]
+                : [];
         if (
+          conversionInspection !==
+            (owned.operation === "reference-conversion-inspect") ||
           ![
             "reference-recovery-apply-plan",
             "reference-recovery-apply",
             "reference-recovery-inspect",
             "convert-reference",
+            "reference-conversion-inspect",
           ].includes(owned.operation) ||
           Object.keys(owned).sort().join(",") !==
             ["operation", "requestId", "expectedJob", ...extras]
@@ -555,7 +587,9 @@ export async function openNativeReferenceOffline(project: CaptureProject) {
               owned.confirmation !== REFERENCE_RECOVERY_CONFIRMATION)) ||
           (owned.operation === "convert-reference" &&
             (!validateContract("Sha256", owned.expectedRecovery).success ||
-              owned.confirmation !== REFERENCE_CONVERSION_CONFIRMATION))
+              owned.confirmation !== REFERENCE_CONVERSION_CONFIRMATION)) ||
+          (conversionInspection &&
+            !validateContract("Sha256", owned.expectedRecovery).success)
         )
           throw new ApplicationError("INVALID_INPUT");
         reason = "authority-denied";
@@ -566,7 +600,11 @@ export async function openNativeReferenceOffline(project: CaptureProject) {
           !work.referenceOfflineAuthority
         )
           throw new ApplicationError("FORBIDDEN");
-        pin = await work.pinReferenceOfflineDatabase();
+        if (conversionInspection) {
+          if (!work.pinReferenceConversionInspectionDatabase)
+            throw new ApplicationError("FORBIDDEN");
+          pin = await work.pinReferenceConversionInspectionDatabase();
+        } else pin = await work.pinReferenceOfflineDatabase();
         files = await makeFiles(false);
         store = await LocalStore.open({
           ...options(files),
@@ -586,6 +624,14 @@ export async function openNativeReferenceOffline(project: CaptureProject) {
         if (matching.length > 1)
           throw new ApplicationError("ARTIFACT_INTEGRITY");
         let record = matching[0] ?? null;
+        if (
+          conversionInspection &&
+          (initial.schema !== 5 ||
+            !record ||
+            record.reservation.binding.policySha256 !==
+              REFERENCE_OFFLINE_POLICY_SHA256)
+        )
+          throw new ApplicationError("ACTION_REQUIRED");
         if (initial.records.length && !record) {
           reason = "recovery-blocked";
           throw new ApplicationError("ACTION_REQUIRED");
@@ -637,6 +683,84 @@ export async function openNativeReferenceOffline(project: CaptureProject) {
           record?.events[7]?.kind === "committed"
             ? await effective(record, proof)
             : undefined;
+        let inspectedConversion: ReferenceConversionInspection | undefined;
+        if (conversionInspection) {
+          if (
+            !record ||
+            !resolved ||
+            resolved.receiptSha256 !== owned.expectedRecovery ||
+            ![8, 9, 10].includes(record.events.length)
+          )
+            throw new ApplicationError("CONFLICT");
+          let conversion: ReferenceConversionInspection["conversion"];
+          if (record.events.length === 10) {
+            const receipt = record.events[9]?.receipt;
+            if (!receipt || record.events[9]?.kind !== "conversion-committed")
+              throw new ApplicationError("ARTIFACT_INTEGRITY");
+            const prepared = await prepareReferenceConversion(
+              proof.proof,
+              record,
+              resolved,
+              proof.verifiedCapture,
+              proof.proposal,
+            );
+            copies.push(...prepared.outputs);
+            assertReferenceConversionReceipt(prepared, receipt);
+            input.phase = "inspection";
+            for (const artifact of receipt.outputs) {
+              const loaded = unwrap(
+                await store.readVerified(ref(artifact), proof.proof.context),
+              );
+              loaded.bytes.fill(0);
+            }
+            conversion = {
+              operationId: prepared.operationId,
+              receiptSha256: canonicalDigest(receipt),
+              evidence: prepared.evidence,
+              readiness: prepared.readiness,
+            };
+          }
+          await proof.inspection.check();
+          await proof.proof.check();
+          await pin.check();
+          const final = unwrap(
+            await store.referenceRecoverySnapshot(proof.proof.context),
+          );
+          if (!same(initial, final)) throw new ApplicationError("CONFLICT");
+          const facts = {
+            inspectionPolicySha256: await inspectionAuthority(),
+            recoveryPolicySha256: record.reservation.binding.policySha256,
+            recoveryId,
+            recoveryReceiptSha256: resolved.receiptSha256,
+            originalJobSha256: canonicalDigest(proof.record.job),
+            originalStateSha256: canonicalDigest(proof.state),
+            identitySha256: canonicalDigest([
+              proof.inspection.identitySha256,
+              pin.identitySha256,
+            ]),
+            controlSha256: canonicalDigest(final.records),
+          };
+          const state = conversion
+            ? ("committed" as const)
+            : ("incomplete" as const);
+          const detail =
+            record.events.length === 8
+              ? ("no-conversion-intent-observed" as const)
+              : ("conversion-intent-without-committed-receipt" as const);
+          inspectedConversion = {
+            verification: "conversion-readonly-v1",
+            state,
+            proof: {
+              ...facts,
+              proofSha256: canonicalDigest({
+                ...facts,
+                state,
+                ...(conversion ? { conversion } : { detail }),
+              }),
+            },
+            ...(conversion ? { conversion } : { detail }),
+          };
+        }
         if (owned.operation === "reference-recovery-apply") {
           reason = "proof-changed";
           if (owned.expectedProof !== plan.proofSha256)
@@ -913,13 +1037,14 @@ export async function openNativeReferenceOffline(project: CaptureProject) {
           owned.operation === "reference-recovery-inspect"
             ? { plan }
             : {}),
-          ...(resolved
+          ...(resolved && !conversionInspection
             ? {
                 effectiveReference: resolved,
                 receiptSha256: resolved.receiptSha256,
               }
             : {}),
           ...(conversion ? { conversion } : {}),
+          ...(inspectedConversion ? { inspection: inspectedConversion } : {}),
         };
       } catch (error) {
         const code = safeError(error).code;
@@ -974,6 +1099,12 @@ export async function openNativeReferenceOffline(project: CaptureProject) {
         };
       }
       result.inputAccounting = input.snapshot();
+      if (conversionInspection && result.status !== "complete")
+        result.inspection = {
+          verification: "conversion-readonly-v1",
+          state: "blocked",
+          detail: "verification-incomplete",
+        };
       const validated = validateContract(
         "NativeReferenceOfflineEnvelope",
         result,

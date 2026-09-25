@@ -9,6 +9,30 @@ const base = [
   "--expected-job",
   "a".repeat(64),
 ];
+it("parses only explicit readonly conversion inspection with a recovery receipt", () => {
+  const args = [
+    "figma",
+    "reference-conversion-inspect",
+    ...base,
+    "--expected-recovery",
+    "b".repeat(64),
+  ];
+  expect(parseCaptureArguments(args).capture).toEqual({
+    operation: "reference-conversion-inspect",
+    requestId: "original",
+    expectedJob: "a".repeat(64),
+    expectedRecovery: "b".repeat(64),
+  });
+  expect(() => parseCaptureArguments(args.slice(0, -2))).toThrow();
+  for (const name of [
+    "--confirm",
+    "--expected-proof",
+    "--output",
+    "--url",
+    "--path",
+  ])
+    expect(() => parseCaptureArguments([...args, name, "untrusted"])).toThrow();
+});
 it.each(["reference-recovery-apply-plan", "reference-recovery-inspect"])(
   "accepts only closed offline %s input",
   (operation) => {

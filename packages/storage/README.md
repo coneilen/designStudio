@@ -2,6 +2,13 @@
 
 ## Offline reference recovery records
 
+Release-v8 read-only conversion inspection reuses schema 5 without migration
+or a writer connection. It verifies the existing event/receipt/reference graph,
+raw original preimage and conversion output bodies. It does not reconcile
+unknown stages or ignore WAL/SHM/journal companions. Partial publication,
+unclassified files, archives or failed proof/cleanup remain blocked/unknown;
+absence of a verified conversion is not evidence that no effects occurred.
+
 Schema 5 adds `reference_recoveries` (unique original diagnostic and derived
 recovery ID) and `reference_recovery_events` (append-only sequence/hash chain).
 The opt-in native writer compares schema, raw old rows and complete control

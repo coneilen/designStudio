@@ -57,6 +57,33 @@ export function nativeCapturePolicy(work: CaptureWork) {
     verify,
     actorId: work.actorId,
     outputRoot,
+    async issueReferenceConversionInspection(input: {
+      jobId: string;
+      requestId: string;
+      jobReads: readonly string[];
+      deadline: string;
+      signal: AbortSignal;
+    }): Promise<OperationContext> {
+      if (
+        Object.keys(input).sort().join(",") !==
+        "deadline,jobId,jobReads,requestId,signal"
+      )
+        throw new ApplicationError("INVALID_INPUT");
+      const owned = { ...input, jobReads: [...input.jobReads] };
+      await check();
+      if (!work.referenceConversionInspectionAuthority)
+        throw new ApplicationError("FORBIDDEN");
+      await work.referenceConversionInspectionAuthority();
+      // The dedicated surface cannot forward a caller-supplied write option.
+      return work.policy.issueReferenceOffline({
+        jobId: owned.jobId,
+        requestId: owned.requestId,
+        jobReads: owned.jobReads,
+        deadline: owned.deadline,
+        signal: owned.signal,
+        write: false,
+      });
+    },
     async issueReferenceOffline(input: {
       jobId: string;
       requestId: string;

@@ -15,6 +15,7 @@ import {
   type NativeReferenceOfflineInput,
   type NativeReferenceRecoveryPlanInput,
   openNativeCapture,
+  openNativeReferenceConversionInspection,
   openNativeReferenceOffline,
   openNativeReferenceValidation,
   REFERENCE_APPROVAL_CONFIRMATION,
@@ -35,6 +36,7 @@ import {
   assertCaptureDiagnosticInstallation,
   assertCaptureRecoveryInstallation,
   assertCaptureReferenceInstallation,
+  assertReferenceConversionInspectionInstallation,
   assertReferenceOfflineInstallation,
   assertReferenceValidationInstallation,
   type CaptureInstallationLease,
@@ -83,6 +85,7 @@ const offlineOperations = [
   "reference-recovery-apply",
   "reference-recovery-inspect",
   "convert-reference",
+  "reference-conversion-inspect",
 ] as const;
 function isOffline(
   input: NonNullable<NativeArguments["capture"]>,
@@ -164,6 +167,9 @@ export function parseCaptureArguments(
           ...(verb === "convert-reference"
             ? ["--expected-recovery", "--confirm"]
             : []),
+          ...(verb === "reference-conversion-inspect"
+            ? ["--expected-recovery"]
+            : []),
           ...(verb === "reference-diagnostic-inspect" ? ["--inspection"] : []),
           ...(verb === "reference-approve" ||
           verb === "reference-diagnostic-approve"
@@ -217,7 +223,9 @@ export function parseCaptureArguments(
             confirmation !== REFERENCE_RECOVERY_CONFIRMATION)) ||
         (offlineOperation === "convert-reference" &&
           (!validateContract("Sha256", expectedRecovery).success ||
-            confirmation !== REFERENCE_CONVERSION_CONFIRMATION))
+            confirmation !== REFERENCE_CONVERSION_CONFIRMATION)) ||
+        (offlineOperation === "reference-conversion-inspect" &&
+          !validateContract("Sha256", expectedRecovery).success)
       )
         throw new ApplicationError("INVALID_INPUT");
       return {
@@ -497,6 +505,7 @@ export async function runCaptureCommand(args: readonly string[]) {
         "figma reference-diagnostic-download --project <ID> --request-id <original capture request> --expected-approval <SHA256> --confirm DOWNLOAD-ONE-DIAGNOSTIC-REFERENCE",
         "figma reference-recovery-plan --project <ID> --request-id <original capture request> --expected-job <Job SHA256>",
         "figma reference-recovery-apply-plan|reference-recovery-inspect --project <ID> --request-id <original capture request> --expected-job <Job SHA256>",
+        "figma reference-conversion-inspect --project <ID> --request-id <original capture request> --expected-job <Job SHA256> --expected-recovery <recovery receipt SHA256>",
         "figma reference-recovery-apply --project <ID> --request-id <original capture request> --expected-job <Job SHA256> --expected-proof <current v7 plan SHA256> --confirm RECOVER-VERIFIED-REFERENCE-OFFLINE",
         "figma convert-reference --project <ID> --request-id <original capture request> --expected-job <Job SHA256> --expected-recovery <recovery receipt SHA256> --confirm CONVERT-WITH-RECOVERED-REFERENCE",
       ],
@@ -535,6 +544,8 @@ export async function runCaptureCommand(args: readonly string[]) {
       assertReferenceValidationInstallation(installation);
     if (request.capture && isOffline(request.capture))
       assertReferenceOfflineInstallation(installation);
+    if (request.capture?.operation === "reference-conversion-inspect")
+      assertReferenceConversionInspectionInstallation(installation);
     if (request.capture && isReference(request.capture))
       assertCaptureReferenceInstallation(installation);
     if (
@@ -558,7 +569,10 @@ export async function runCaptureCommand(args: readonly string[]) {
       };
     } else if (request.capture) {
       if (isOffline(request.capture)) {
-        offline = await openNativeReferenceOffline(project);
+        offline =
+          request.capture.operation === "reference-conversion-inspect"
+            ? await openNativeReferenceConversionInspection(project)
+            : await openNativeReferenceOffline(project);
         result = await offline.execute(request.capture, abort.signal);
       } else if (request.capture.operation === "reference-recovery-plan") {
         validation = await openNativeReferenceValidation(project);
@@ -653,6 +667,15 @@ export async function runCaptureCommand(args: readonly string[]) {
           projectId: request.project,
           requestId: request.capture.requestId,
           status: "interrupted",
+          ...(request.capture.operation === "reference-conversion-inspect"
+            ? {
+                inspection: {
+                  verification: "conversion-readonly-v1" as const,
+                  state: "blocked" as const,
+                  detail: "verification-incomplete" as const,
+                },
+              }
+            : {}),
           error: {
             code: "INTERRUPTED",
             message: cleanupMessage(operationCode, cleanupCode),
@@ -723,6 +746,15 @@ export async function runCaptureCommand(args: readonly string[]) {
           : primary === "INTERRUPTED"
             ? "interrupted"
             : "failed",
+      ...(request.capture.operation === "reference-conversion-inspect"
+        ? {
+            inspection: {
+              verification: "conversion-readonly-v1" as const,
+              state: "blocked" as const,
+              detail: "verification-incomplete" as const,
+            },
+          }
+        : {}),
       error: {
         code: primary,
         message:

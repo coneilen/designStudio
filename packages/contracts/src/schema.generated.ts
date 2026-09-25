@@ -437,6 +437,190 @@ export const foundationSchema = {
         }
       }
     },
+    "ReferenceConversionInspectionProof": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "inspectionPolicySha256",
+        "recoveryPolicySha256",
+        "recoveryId",
+        "recoveryReceiptSha256",
+        "originalJobSha256",
+        "originalStateSha256",
+        "identitySha256",
+        "controlSha256",
+        "proofSha256"
+      ],
+      "properties": {
+        "inspectionPolicySha256": {
+          "$ref": "#/definitions/Sha256"
+        },
+        "recoveryPolicySha256": {
+          "$ref": "#/definitions/Sha256"
+        },
+        "recoveryId": {
+          "$ref": "#/definitions/StableId"
+        },
+        "recoveryReceiptSha256": {
+          "$ref": "#/definitions/Sha256"
+        },
+        "originalJobSha256": {
+          "$ref": "#/definitions/Sha256"
+        },
+        "originalStateSha256": {
+          "$ref": "#/definitions/Sha256"
+        },
+        "identitySha256": {
+          "$ref": "#/definitions/Sha256"
+        },
+        "controlSha256": {
+          "$ref": "#/definitions/Sha256"
+        },
+        "proofSha256": {
+          "$ref": "#/definitions/Sha256"
+        }
+      }
+    },
+    "ReferenceConversionInspection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "verification",
+        "state"
+      ],
+      "properties": {
+        "verification": {
+          "const": "conversion-readonly-v1"
+        },
+        "state": {
+          "enum": [
+            "incomplete",
+            "committed",
+            "blocked"
+          ]
+        },
+        "detail": {
+          "enum": [
+            "no-conversion-intent-observed",
+            "conversion-intent-without-committed-receipt",
+            "verification-incomplete"
+          ]
+        },
+        "proof": {
+          "$ref": "#/definitions/ReferenceConversionInspectionProof"
+        },
+        "conversion": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "operationId",
+            "receiptSha256",
+            "evidence",
+            "readiness"
+          ],
+          "properties": {
+            "operationId": {
+              "$ref": "#/definitions/StableId"
+            },
+            "receiptSha256": {
+              "$ref": "#/definitions/Sha256"
+            },
+            "evidence": {
+              "$ref": "#/definitions/ArtifactReference"
+            },
+            "readiness": {
+              "enum": [
+                "blocked",
+                "needs-review"
+              ]
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "committed"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "proof",
+              "conversion"
+            ],
+            "not": {
+              "required": [
+                "detail"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "incomplete"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "proof",
+              "detail"
+            ],
+            "properties": {
+              "detail": {
+                "enum": [
+                  "no-conversion-intent-observed",
+                  "conversion-intent-without-committed-receipt"
+                ]
+              }
+            },
+            "not": {
+              "required": [
+                "conversion"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "blocked"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "detail"
+            ],
+            "properties": {
+              "detail": {
+                "const": "verification-incomplete"
+              }
+            },
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "proof"
+                  ]
+                },
+                {
+                  "required": [
+                    "conversion"
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
     "NativeReferenceOfflineEnvelope": {
       "type": "object",
       "additionalProperties": false,
@@ -456,7 +640,8 @@ export const foundationSchema = {
             "reference-recovery-apply-plan",
             "reference-recovery-apply",
             "reference-recovery-inspect",
-            "convert-reference"
+            "convert-reference",
+            "reference-conversion-inspect"
           ]
         },
         "projectId": {
@@ -481,6 +666,9 @@ export const foundationSchema = {
         },
         "receiptSha256": {
           "$ref": "#/definitions/Sha256"
+        },
+        "inspection": {
+          "$ref": "#/definitions/ReferenceConversionInspection"
         },
         "conversion": {
           "type": "object",
@@ -531,7 +719,92 @@ export const foundationSchema = {
         "error": {
           "$ref": "#/definitions/ContractError"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "operation": {
+                "const": "reference-conversion-inspect"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "inspection"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "plan"
+                  ]
+                },
+                {
+                  "required": [
+                    "effectiveReference"
+                  ]
+                },
+                {
+                  "required": [
+                    "receiptSha256"
+                  ]
+                },
+                {
+                  "required": [
+                    "conversion"
+                  ]
+                }
+              ]
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "status": {
+                      "const": "complete"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "inspection": {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "enum": [
+                            "incomplete",
+                            "committed"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                },
+                "else": {
+                  "properties": {
+                    "inspection": {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "const": "blocked"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "inspection"
+              ]
+            }
+          }
+        }
+      ]
     },
     "SchemaVersion": {
       "type": "string",

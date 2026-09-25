@@ -17,6 +17,7 @@ import { performance } from "node:perf_hooks";
 import { isMainThread } from "node:worker_threads";
 import type {
   NativeReferenceEnvelope,
+  OperationContext,
   StagedArtifact,
 } from "@design-studio/contracts";
 import { parseContract } from "@design-studio/contracts";
@@ -60,6 +61,7 @@ import {
   pinReferenceBackupFile,
   publishReferenceBackupFile,
 } from "../../project-host/src/reference-backup.js";
+import { REFERENCE_CONVERSION_INSPECTION_POLICY_SHA256 } from "../../project-host/src/reference-conversion-inspection-profile.js";
 import { REFERENCE_OFFLINE_POLICY_SHA256 } from "../../project-host/src/reference-offline-profile.js";
 import { pinImmutableReferenceDatabase } from "../../project-host/src/reference-validation-database.js";
 import { pinRetainedReferenceEntry } from "../../project-host/src/reference-validation-entry.js";
@@ -88,7 +90,9 @@ import {
 import { ReferenceInput } from "../src/reference-input.js";
 import {
   type NativeReferenceOfflineInput,
+  openNativeReferenceConversionInspection,
   openNativeReferenceOffline,
+  REFERENCE_CONVERSION_CONFIRMATION,
 } from "../src/reference-offline.js";
 import { ReferenceReader } from "../src/reference-proof.js";
 import {
@@ -227,6 +231,7 @@ function referenceTelemetry(
     "reference-recovery-apply-plan",
     "reference-recovery-apply",
     "reference-recovery-inspect",
+    "reference-conversion-inspect",
     "convert-reference",
     "artifact",
     "verification",
@@ -468,6 +473,7 @@ async function createFixture(
     | undefined;
   let validationMode = false;
   let offlineMode = false;
+  let conversionInspectionMode = false;
   let offline:
     | Awaited<ReturnType<typeof openNativeReferenceOffline>>
     | undefined;
@@ -628,6 +634,20 @@ async function createFixture(
                   "Synthetic offline authority revoked.",
                 );
               return REFERENCE_OFFLINE_POLICY_SHA256;
+            },
+            referenceConversionInspectionAuthority: async () => {
+              await work.current();
+              if (!admitted)
+                throw new HostBoundaryError(
+                  "FORBIDDEN",
+                  "Synthetic readonly authority revoked.",
+                );
+              return REFERENCE_CONVERSION_INSPECTION_POLICY_SHA256;
+            },
+            pinReferenceConversionInspectionDatabase: async () => {
+              if (!work.pinReferenceOfflineDatabase)
+                throw new Error("Missing synthetic pin.");
+              return work.pinReferenceOfflineDatabase();
             },
             pinReferenceOfflineDatabase: async () => {
               if (native && sid && options.offline)
@@ -841,7 +861,9 @@ async function createFixture(
       () => (fixedNow ?? originalNow()) + clockOffset,
     );
     if (offlineMode) {
-      const current = await openNativeReferenceOffline(project);
+      const current = conversionInspectionMode
+        ? await openNativeReferenceConversionInspection(project)
+        : await openNativeReferenceOffline(project);
       offlines.push(current);
       offline = {
         ...current,
@@ -1086,6 +1108,8 @@ async function createFixture(
       await offline?.close();
       if (ownerFixture) await ownerFixture.prepare();
       offlineMode = true;
+      conversionInspectionMode =
+        command.operation === "reference-conversion-inspect";
       firstInventoryRoot = true;
       await open();
       reads.length = 0;
@@ -1118,6 +1142,8 @@ async function createFixture(
     runArchivedOffline: async (command: NativeReferenceOfflineInput) => {
       await offline?.close();
       offlineMode = true;
+      conversionInspectionMode =
+        command.operation === "reference-conversion-inspect";
       await open({
         ...project,
         paths: {
@@ -2387,6 +2413,14 @@ it("preserves the sealed recovery through active and repeated archival backup va
   });
   expect(archived.status, JSON.stringify(archived)).toBe("failed");
   expect(archived.reason).toBe("recovery-blocked");
+  const archivedConversion = await f.runArchivedOffline({
+    ...command,
+    operation: "reference-conversion-inspect",
+    expectedRecovery: required(apply.receiptSha256),
+  });
+  expect(archivedConversion.status).toBe("failed");
+  expect(archivedConversion.inspection?.state).toBe("blocked");
+  expect(archivedConversion.inspection?.conversion).toBeUndefined();
   expect(f.readPins).toBe(0);
 });
 
@@ -2513,6 +2547,380 @@ async function committedOfflineFixture(
   return { f, command, before, apply };
 }
 
+it("read-only conversion inspection reports validated pre-intent and intent-only states without writing", async () => {
+  const { f, command, apply } = await committedOfflineFixture();
+  const inspect = {
+    ...command,
+    operation: "reference-conversion-inspect" as const,
+    expectedRecovery: required(apply.receiptSha256),
+  };
+  const before = await f.observeOffline();
+  const blockedWrites = vi.spyOn(
+    LocalStore.prototype,
+    "beginReferenceConversion",
+  );
+  const result = await f.runOffline(inspect);
+  expect(result.status, JSON.stringify(result)).toBe("complete");
+  expect(result.inspection).toMatchObject({
+    state: "incomplete",
+    detail: "no-conversion-intent-observed",
+    proof: {
+      recoveryPolicySha256: REFERENCE_OFFLINE_POLICY_SHA256,
+      inspectionPolicySha256: REFERENCE_CONVERSION_INSPECTION_POLICY_SHA256,
+    },
+  });
+  expect(result.inspection?.conversion).toBeUndefined();
+  expect(blockedWrites).not.toHaveBeenCalled();
+  expect(await f.observeOffline()).toEqual(before);
+  const stage = vi
+    .spyOn(LocalStore.prototype, "stageReferenceConversion")
+    .mockRejectedValueOnce(
+      new HostBoundaryError("INTERRUPTED", "Synthetic intent-only stop"),
+    );
+  expect(
+    (
+      await f.runOffline({
+        ...command,
+        operation: "convert-reference",
+        expectedRecovery: required(apply.receiptSha256),
+        confirmation: REFERENCE_CONVERSION_CONFIRMATION,
+      })
+    ).status,
+  ).toBe("failed");
+  stage.mockRestore();
+  const afterIntent = await f.observeOffline();
+  expect(afterIntent.events).toHaveLength(9);
+  const incomplete = await f.runOffline(inspect);
+  expect(incomplete.status, JSON.stringify(incomplete)).toBe("complete");
+  expect(incomplete.inspection).toMatchObject({
+    state: "incomplete",
+    detail: "conversion-intent-without-committed-receipt",
+  });
+  expect(await f.observeOffline()).toEqual(afterIntent);
+  const wrong = await f.runOffline({
+    ...inspect,
+    expectedRecovery: "0".repeat(64),
+  });
+  expect(wrong.status).toBe("failed");
+  expect(wrong.inspection).toEqual({
+    verification: "conversion-readonly-v1",
+    state: "blocked",
+    detail: "verification-incomplete",
+  });
+  const cancelled = new AbortController();
+  cancelled.abort();
+  expect(
+    (await f.runOffline(inspect, cancelled.signal)).inspection?.state,
+  ).toBe("blocked");
+  expect(await f.observeOffline()).toEqual(afterIntent);
+  f.failInventoryClose();
+  const failure = await f.runOffline(inspect).catch((error: unknown) => error);
+  expect(failure).toBeInstanceOf(NativeCaptureCleanupRequired);
+  if (!(failure instanceof NativeCaptureCleanupRequired))
+    throw new Error("Expected retained readonly cleanup.");
+  await failure.close();
+  expect(f.readPins).toBe(0);
+  expect(await f.observeOffline()).toEqual(afterIntent);
+});
+
+it("read-only conversion inspection verifies after a committed conversion deadline and rejects output tampering", async () => {
+  const { f, command, apply } = await committedOfflineFixture();
+  const commit = LocalStore.prototype.commitReferenceConversion;
+  const deadline = vi
+    .spyOn(LocalStore.prototype, "commitReferenceConversion")
+    .mockImplementation(async function (this: LocalStore, ...args) {
+      const result = await commit.apply(this, args);
+      if (result.status === "complete") f.advanceClock(30001);
+      return result;
+    });
+
+  const converted = await f.runOffline({
+    ...command,
+    operation: "convert-reference",
+    expectedRecovery: required(apply.receiptSha256),
+    confirmation: REFERENCE_CONVERSION_CONFIRMATION,
+  });
+  expect(converted.status).toBe("failed");
+  expect(converted.error?.code).toBe("DEADLINE_EXCEEDED");
+  deadline.mockRestore();
+  const before = await f.observeOffline();
+  expect(before.events).toHaveLength(10);
+  const inspect = {
+    ...command,
+    operation: "reference-conversion-inspect" as const,
+    expectedRecovery: required(apply.receiptSha256),
+  };
+  const result = await f.runOffline(inspect);
+  expect(result.status, JSON.stringify(result)).toBe("complete");
+  expect(result.inspection?.state).toBe("committed");
+  expect(result.inspection?.conversion?.readiness).not.toBe("ready");
+  expect(result.inspection?.conversion?.receiptSha256).not.toBe(
+    apply.receiptSha256,
+  );
+  expect(await f.observeOffline()).toEqual(before);
+  const artifact = required(result.inspection?.conversion?.evidence);
+  await writeFile(
+    path.join(f.project.paths.artifacts, "blobs", artifact.sha256),
+    "synthetic corrupt conversion",
+  );
+  const denied = await f.runOffline(inspect);
+  expect(denied.status).toBe("failed");
+  expect(denied.inspection?.state).toBe("blocked");
+  expect(denied.inspection?.conversion).toBeUndefined();
+  expect(f.readPins).toBe(0);
+});
+
+it.skipIf(!nativeRetainedMode || !process.env.DESIGN_STUDIO_V7_HANDOFF)(
+  "cold readonly v8 inspects transferred authentic v7 conversion",
+  async () => {
+    const handoffPath = process.env.DESIGN_STUDIO_V7_HANDOFF;
+    expect(
+      Reflect.get(
+        globalThis,
+        Symbol.for("design-studio.synthetic-crossrelease-egress"),
+      ),
+    ).toMatchObject({ denialControlPassed: true });
+    if (!handoffPath) throw new Error("Missing owned crossrelease handoff.");
+    const handoff: unknown = JSON.parse(await readFile(handoffPath, "utf8"));
+    if (
+      !handoff ||
+      typeof handoff !== "object" ||
+      !("root" in handoff) ||
+      typeof handoff.root !== "string" ||
+      !("expectedJob" in handoff) ||
+      typeof handoff.expectedJob !== "string" ||
+      !("expectedRecovery" in handoff) ||
+      typeof handoff.expectedRecovery !== "string"
+    )
+      throw new Error("Invalid synthetic crossrelease handoff.");
+    const root = handoff.root;
+    expect(path.dirname(root)).toBe(path.dirname(handoffPath));
+    expect(path.basename(root)).toMatch(/^ds-ph-reference-/);
+    expect((await lstat(root)).isSymbolicLink()).toBe(false);
+    expect(handoff).toMatchObject({
+      writerCommit: "9bcfbaadca45ac6f4ffb4fcd55e8abd5569fad9a",
+      writerPolicy: REFERENCE_OFFLINE_POLICY_SHA256,
+    });
+    const scope = captureTestScope();
+    const native = await loadNative();
+    const sid = native.principal();
+    const pins = new Set<ReadLease>();
+    initializeImmutableSqlite(
+      path.resolve(
+        ".tools\\sqlite-prebuild\\build\\Release\\better_sqlite3.node",
+      ),
+    );
+    const project = {
+      projectId: "project_synthetic",
+      artifactRootId: "artifacts_synthetic",
+      paths: {
+        database: path.join(root, "db", "state.sqlite"),
+        artifacts: path.join(root, "artifacts"),
+        outputs: path.join(root, "outputs"),
+        inputs: root,
+        temp: root,
+      },
+      principal: { actorId: "actor_synthetic" },
+      reference: {
+        id: "credential_synthetic",
+        providerId: "figma_rest",
+        store: "windows-credential-manager",
+      },
+      recheck: async () => {},
+      close: async () => {},
+    } as CaptureProject;
+    let live = true;
+    let policy: ReturnType<typeof nativeCapturePolicy>;
+    const current = async () => {
+      scope.signal.throwIfAborted();
+      if (!live)
+        throw new HostBoundaryError(
+          "FORBIDDEN",
+          "Synthetic readonly owner closed.",
+        );
+    };
+    const work: CaptureWork = {
+      project,
+      actorId: "actor_synthetic",
+      permissionScope: "synthetic",
+      sqliteBinding: path.resolve(
+        ".tools\\sqlite-prebuild\\build\\Release\\better_sqlite3.node",
+      ),
+      policyId: "figma-capture-v1",
+      policySha256: CAPTURE_POLICY_SHA256,
+      imageOrigins: [],
+      apiOrigins: [],
+      get policy() {
+        return policy;
+      },
+      current,
+      isCurrent: () => live,
+      readyCredential: async () => {
+        throw new Error("No credential admission");
+      },
+      credentials: () => {
+        throw new Error("No vault");
+      },
+      recoveryAuthority: async () => {
+        throw new Error("No recovery authority");
+      },
+      referenceAuthority: async () => {
+        await current();
+        return CAPTURE_REFERENCE_POLICY_SHA256;
+      },
+      diagnosticAuthority: async () => {
+        await current();
+        return CAPTURE_DIAGNOSTIC_POLICY_SHA256;
+      },
+      referenceValidationAuthority: async () => {
+        await current();
+        return REFERENCE_VALIDATION_POLICY_SHA256;
+      },
+      referenceOfflineAuthority: async () => {
+        await current();
+        return REFERENCE_OFFLINE_POLICY_SHA256;
+      },
+      referenceConversionInspectionAuthority: async () => {
+        await current();
+        return REFERENCE_CONVERSION_INSPECTION_POLICY_SHA256;
+      },
+      pinReferenceOfflineDatabase: async () => {
+        throw new Error("Old writer pin must not be admitted");
+      },
+      pinReferenceConversionInspectionDatabase: () =>
+        pinImmutableReferenceDatabase({
+          filename: project.paths.database,
+          sid,
+          retainedPins: pins,
+          authoritySha256: REFERENCE_CONVERSION_INSPECTION_POLICY_SHA256,
+          authorize: current,
+        }),
+      pinReferenceValidationEntry: (rootId, relative, directory) => {
+        const physical =
+          rootId === project.artifactRootId
+            ? project.paths.artifacts
+            : project.paths.outputs;
+        return pinRetainedReferenceEntry({
+          root: physical,
+          relative,
+          directory,
+          sid,
+          retainedPins: pins,
+          authorize: current,
+        });
+      },
+      attestDatabase: async (filename) => {
+        expect(filename).toBe(project.paths.database);
+        await current();
+      },
+      close: () => {
+        expect(pins.size).toBe(0);
+        live = false;
+      },
+    };
+    seam.work = work;
+    policy = nativeCapturePolicy(work);
+    const issue = policy.issueReferenceOffline;
+    const issued: OperationContext[] = [];
+    policy = {
+      ...policy,
+      issueReferenceOffline: async (input) => {
+        expect(input.write).toBe(false);
+        expect(input.signal).toBe(scope.signal);
+        const value = await issue(input);
+        expect(
+          value.authorization.grants.every(
+            (grant) => !grant.operations.includes("write"),
+          ),
+        ).toBe(true);
+        issued.push(value);
+        return value;
+      },
+    };
+    for (const method of [
+      "reserveReferenceRecovery",
+      "beginReferenceConversion",
+      "stageReferenceConversion",
+      "commitReferenceConversion",
+    ] as const)
+      vi.spyOn(LocalStore.prototype, method).mockImplementation(() => {
+        throw new Error("Readonly path attempted write");
+      });
+    const createFile = vi.spyOn(native, "createFile");
+    const open = LocalStore.open.bind(LocalStore);
+    vi.spyOn(LocalStore, "open").mockImplementation((options) => {
+      expect(options.access).toBe("read-only");
+      expect(options.referenceRecovery?.writer).toBeUndefined();
+      return open(options);
+    });
+    const runtime = await openNativeReferenceConversionInspection(project);
+    cleanups.push(async () => {
+      await runtime.close();
+      expect(pins.size).toBe(0);
+    });
+    const result = await runtime.execute(
+      {
+        operation: "reference-conversion-inspect",
+        requestId: "original",
+        expectedJob: handoff.expectedJob,
+        expectedRecovery: handoff.expectedRecovery,
+      },
+      scope.signal,
+    );
+    if (
+      "writerOutcome" in handoff &&
+      handoff.writerOutcome === "abrupt-after-stage"
+    ) {
+      expect(result.status).toBe("failed");
+      expect(result.inspection).toEqual({
+        verification: "conversion-readonly-v1",
+        state: "blocked",
+        detail: "verification-incomplete",
+      });
+      expect(createFile).not.toHaveBeenCalled();
+      expect(pins.size).toBe(0);
+      return;
+    }
+    expect(handoff).toMatchObject({ events: 10 });
+    expect(result.status, JSON.stringify(result)).toBe("complete");
+    expect(result.inspection?.state).toBe("committed");
+    const observed = required(result.inspection);
+    const proof = required(observed.proof);
+    const { proofSha256, ...facts } = proof;
+    expect(proofSha256).toBe(
+      hashBytes(
+        canonicalBytes({
+          ...facts,
+          state: observed.state,
+          conversion: observed.conversion,
+        }),
+      ),
+    );
+    expect(proof.recoveryPolicySha256).toBe(REFERENCE_OFFLINE_POLICY_SHA256);
+    expect(proof.inspectionPolicySha256).toBe(
+      REFERENCE_CONVERSION_INSPECTION_POLICY_SHA256,
+    );
+    expect(proof.recoveryReceiptSha256).toBe(handoff.expectedRecovery);
+    expect(issued.length).toBeGreaterThan(0);
+    expect(createFile).not.toHaveBeenCalled();
+    expect(result.inputAccounting?.networkBytes).toBe(0);
+    expect(result.inputAccounting?.privateBytes).toBeLessThanOrEqual(26214400);
+    expect(canonicalBytes(result).length).toBeLessThanOrEqual(8192);
+    console.log(
+      JSON.stringify({
+        scope: "authentic-v7-to-v8-readonly",
+        status: "complete",
+        writerCommit: "9bcfbaadca45ac6f4ffb4fcd55e8abd5569fad9a",
+        historicalPolicy: proof.recoveryPolicySha256,
+        inspectionPolicy: proof.inspectionPolicySha256,
+        pins: pins.size,
+        privateBytes: result.inputAccounting?.privateBytes,
+        nativePinsAndDatabase: "real",
+        installationAndCurrentAuthority: "synthetic-work-seam",
+      }),
+    );
+  },
+);
 async function offlineStageFixture(
   native = false,
   durabilityReads = false,

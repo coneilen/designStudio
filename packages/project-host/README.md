@@ -1,5 +1,35 @@
 # @design-studio/project-host
 
+## Release-v8 read-only conversion inspection
+
+The exact `reference-conversion-inspection-policy.json` supplement adds only
+`figma-reference-conversion-inspect`. All six earlier policy files and hashes,
+including the v7 offline write policy, remain unchanged. Canonical release
+policy v8 includes the new supplement hash; v7 cannot acquire this capability.
+The current verifier continues accepting releases 2–7 under their original
+contracts. Older verifiers reject the unknown v8 policy rather than silently
+authorizing the new command.
+
+The dedicated issuer has no write option and rejects extra fields. It issues
+only read grants, binds a separate immutable DB pin to current installation
+and inspection authority, and preserves the original recovery policy in
+stored evidence and conversion ID derivation. No history is rewritten.
+The application uses one 30-second deadline and physical 25-MiB/EOF meter,
+with the existing native file/sidecar/current-authority guards. The response
+is bounded to 8192 canonical bytes and the release policy to 1024 bytes.
+Inspection cannot become a writer or export private output bodies.
+
+Cross-release native tests materialize the exact pinned `9bcfbaa` Git objects
+into an owned, bounded source fixture and run its v7 writer before the new
+read-only reader. CI checks out full source history for these objects; tests
+never fetch missing history or install dependencies as a fallback. Workspace
+exports resolve only to that pinned materialization, with loaded-file hashes
+and explicit process-wide synthetic network-denial controls. Native files,
+SQLite and publication are real; installation/current-work seams are labeled.
+The complete and post-commit-deadline fixtures preserve ten genuine events;
+an abruptly terminated partial-stage writer must remain blocked by the
+reader's ordinary sidecar/namespace rules, not be reconciled by the test.
+
 ## Offline reference write supplement
 
 Release policy v7 adds the exact `reference-offline-policy.json` supplement.

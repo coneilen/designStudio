@@ -78,6 +78,7 @@ const publicArtifacts = [
   "EffectiveReference",
   "ReferenceConversionEvidence",
   "NativeReferenceOfflineEnvelope",
+  "ReferenceConversionInspection",
   "FigmaIntakeManifest",
   "FigmaSourceMap",
   "FigmaConversionEvidence",

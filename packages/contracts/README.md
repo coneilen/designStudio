@@ -16,6 +16,16 @@ successful validation, accessors, cycles, depth and non-finite/non-JSON values.
 
 ## Native capture integration (package 1.4.0)
 
+`ReferenceConversionInspection` is the closed result of the release-v8
+native-only `reference-conversion-inspect` command. `committed` includes a
+conversion receipt/evidence/readiness only after the original recovery graph,
+deterministic fixed-v2 outputs and every physical output are verified.
+`incomplete` reports a fully validated no-intent or intent-only control state;
+`blocked` means verification did not finish and carries no proof or conversion.
+Neither result grants permission to retry or mutate. Current inspection-policy
+and historical recovery-policy hashes are distinct proof fields. Readiness
+remains `blocked` or `needs-review`, never render-ready.
+
 `NativeReferenceRecoveryPlanEnvelope` and `ReferenceRecoveryPlan` describe the
 separate read-only retained-byte validator. Successful verification means
 `eligible-for-recovery-review`, while the historical job remains interrupted

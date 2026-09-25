@@ -8,6 +8,11 @@ import {
   decodeReleasePolicy,
 } from "../src/installation.js";
 import {
+  REFERENCE_CONVERSION_INSPECTION_POLICY_SHA256,
+  referenceConversionInspectionPolicyBytes,
+  validateReferenceConversionInspectionPolicy,
+} from "../src/reference-conversion-inspection-profile.js";
+import {
   REFERENCE_OFFLINE_POLICY,
   REFERENCE_OFFLINE_POLICY_SHA256,
   referenceOfflinePolicyBytes,
@@ -54,6 +59,43 @@ it("admits only the exact v7 zero-egress supplement without changing historical 
     referenceOfflinePolicySha256: REFERENCE_OFFLINE_POLICY_SHA256,
   };
   const bytes = Buffer.from(JSON.stringify(policy));
+  expect(REFERENCE_OFFLINE_POLICY_SHA256).toBe(
+    "28b61943d1cb75719fc3d471d5fa711c5105d0dadb93a53b5aade0969c912038",
+  );
+  const v8 = {
+    ...policy,
+    version: 8,
+    referenceConversionInspectionPolicySha256:
+      REFERENCE_CONVERSION_INSPECTION_POLICY_SHA256,
+  };
+  const v8bytes = Buffer.from(JSON.stringify(v8));
+  expect(REFERENCE_CONVERSION_INSPECTION_POLICY_SHA256).toBe(
+    "dcab19262e9fe1af2c20216abaeedfe88081405b9a53caff571ca4b122fd28b3",
+  );
+  expect(v8bytes.length).toBe(816);
+  expect(v8bytes.length).toBeLessThanOrEqual(1024);
+  expect(decodeReleasePolicy(v8bytes)).toEqual(v8);
+  validateReferenceConversionInspectionPolicy(
+    referenceConversionInspectionPolicyBytes(),
+  );
+  for (const changed of [
+    { ...v8, referenceConversionInspectionPolicySha256: "0".repeat(64) },
+    { ...v8, referenceConversionInspectionPolicySha256: undefined },
+    {
+      ...v8,
+      referenceOfflinePolicySha256:
+        REFERENCE_CONVERSION_INSPECTION_POLICY_SHA256,
+    },
+    { ...v8, version: 7 },
+  ])
+    expect(() =>
+      decodeReleasePolicy(Buffer.from(JSON.stringify(changed))),
+    ).toThrow();
+  expect(() =>
+    validateReferenceConversionInspectionPolicy(
+      Buffer.from(`${referenceConversionInspectionPolicyBytes()}\n`),
+    ),
+  ).toThrow();
   expect(bytes.length).toBeLessThanOrEqual(1024);
   expect(decodeReleasePolicy(bytes)).toEqual(policy);
   for (const version of [1, 2, 3, 4, 5, 6])

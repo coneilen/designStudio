@@ -30,6 +30,7 @@ import {
   type ReadLease,
   refuse,
 } from "./native.js";
+import { REFERENCE_CONVERSION_INSPECTION_POLICY_SHA256 } from "./reference-conversion-inspection-profile.js";
 import { REFERENCE_OFFLINE_POLICY_SHA256 } from "./reference-offline-profile.js";
 import { REFERENCE_VALIDATION_POLICY_SHA256 } from "./reference-validation-profile.js";
 
@@ -71,7 +72,7 @@ interface FixtureReleasePolicy {
   catalogSha256: string;
 }
 interface CaptureReleasePolicy {
-  version: 2 | 3 | 4 | 5 | 6 | 7;
+  version: 2 | 3 | 4 | 5 | 6 | 7 | 8;
   kind: typeof CAPTURE_PROFILE;
   manifestSha256: string;
   capturePolicySha256: string;
@@ -80,6 +81,7 @@ interface CaptureReleasePolicy {
   captureDiagnosticPolicySha256?: string;
   referenceValidationPolicySha256?: string;
   referenceOfflinePolicySha256?: string;
+  referenceConversionInspectionPolicySha256?: string;
 }
 type ReleasePolicy = FixtureReleasePolicy | CaptureReleasePolicy;
 interface Metadata {
@@ -115,6 +117,7 @@ const active = new WeakMap<
     diagnostic: boolean;
     referenceValidation: boolean;
     referenceOffline: boolean;
+    referenceConversionInspection: boolean;
   }
 >();
 let bootstrapOrigin: string | undefined;
@@ -173,7 +176,7 @@ export function decodeReleasePolicy(policyBytes: Buffer): ReleasePolicy {
     refuse("Trusted bootstrap policy exceeds its bound.");
   const policy: ReleasePolicy = JSON.parse(policyBytes.toString("utf8"));
   if (
-    ![1, 2, 3, 4, 5, 6, 7].includes(policy?.version) ||
+    ![1, 2, 3, 4, 5, 6, 7, 8].includes(policy?.version) ||
     !/^[a-f0-9]{64}$/.test(policy.manifestSha256) ||
     (policy.version === 1
       ? !/^[a-f0-9]{64}$/.test(policy.catalogSha256)
@@ -194,9 +197,12 @@ export function decodeReleasePolicy(policyBytes: Buffer): ReleasePolicy {
       policy.version >= 6 &&
       policy.referenceValidationPolicySha256 !==
         REFERENCE_VALIDATION_POLICY_SHA256) ||
-    (policy.version === 7 &&
+    ((policy.version === 7 || policy.version === 8) &&
       policy.referenceOfflinePolicySha256 !==
         REFERENCE_OFFLINE_POLICY_SHA256) ||
+    (policy.version === 8 &&
+      policy.referenceConversionInspectionPolicySha256 !==
+        REFERENCE_CONVERSION_INSPECTION_POLICY_SHA256) ||
     !policyBytes.equals(
       Buffer.from(
         JSON.stringify(
@@ -235,10 +241,16 @@ export function decodeReleasePolicy(policyBytes: Buffer): ReleasePolicy {
                         REFERENCE_VALIDATION_POLICY_SHA256,
                     }
                   : {}),
-                ...(policy.version === 7
+                ...(policy.version === 7 || policy.version === 8
                   ? {
                       referenceOfflinePolicySha256:
                         REFERENCE_OFFLINE_POLICY_SHA256,
+                    }
+                  : {}),
+                ...(policy.version === 8
+                  ? {
+                      referenceConversionInspectionPolicySha256:
+                        REFERENCE_CONVERSION_INSPECTION_POLICY_SHA256,
                     }
                   : {}),
               },
@@ -478,12 +490,20 @@ function required(meta: Metadata): void {
       "Release retained validation supplement differs from the closed native profile.",
     );
   if (
-    meta.policy.version === 7 &&
+    (meta.policy.version === 7 || meta.policy.version === 8) &&
     files.get("reference-offline-policy.json")?.sha256 !==
       REFERENCE_OFFLINE_POLICY_SHA256
   )
     refuse(
       "Release offline publication supplement differs from the closed profile.",
+    );
+  if (
+    meta.policy.version === 8 &&
+    files.get("reference-conversion-inspection-policy.json")?.sha256 !==
+      REFERENCE_CONVERSION_INSPECTION_POLICY_SHA256
+  )
+    refuse(
+      "Release conversion inspection supplement differs from the read-only profile.",
     );
   for (const name of [
     "runtime/node.exe",
@@ -801,7 +821,8 @@ async function verifyProfileRoot(
       reference: meta.policy.version >= 4,
       diagnostic: meta.policy.version >= 5,
       referenceValidation: meta.policy.version >= 6,
-      referenceOffline: meta.policy.version === 7,
+      referenceOffline: meta.policy.version === 7 || meta.policy.version === 8,
+      referenceConversionInspection: meta.policy.version === 8,
     };
     const checkpoint = async (hashBytes: boolean): Promise<void> => {
       const trace = traceInstallation(hashBytes);
@@ -975,6 +996,15 @@ export function assertReferenceOfflineInstallation(
   assertReferenceValidationInstallation(lease);
   if (!active.get(lease)?.referenceOffline)
     refuse("This installed release does not authorize offline publication.");
+}
+export function assertReferenceConversionInspectionInstallation(
+  lease: CaptureInstallationLease,
+): void {
+  assertReferenceOfflineInstallation(lease);
+  if (!active.get(lease)?.referenceConversionInspection)
+    refuse(
+      "This installed release does not authorize read-only conversion inspection.",
+    );
 }
 function registerGuards(lease: InstallationLease): { close(): void } {
   const state = active.get(lease);

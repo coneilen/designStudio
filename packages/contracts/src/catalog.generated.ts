@@ -9,6 +9,8 @@ export interface ContractTypes {
   OfflineReferencePlan: Types.OfflineReferencePlan;
   EffectiveReference: Types.EffectiveReference;
   ReferenceConversionEvidence: Types.ReferenceConversionEvidence;
+  ReferenceConversionInspectionProof: Types.ReferenceConversionInspectionProof;
+  ReferenceConversionInspection: Types.ReferenceConversionInspection;
   NativeReferenceOfflineEnvelope: Types.NativeReferenceOfflineEnvelope;
   SchemaVersion: Types.SchemaVersion;
   StableId: Types.StableId;
@@ -190,6 +192,8 @@ export const contractNames: readonly ContractName[] = [
   "OfflineReferencePlan",
   "EffectiveReference",
   "ReferenceConversionEvidence",
+  "ReferenceConversionInspectionProof",
+  "ReferenceConversionInspection",
   "NativeReferenceOfflineEnvelope",
   "SchemaVersion",
   "StableId",

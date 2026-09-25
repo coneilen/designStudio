@@ -48,6 +48,67 @@ export type Operation =
   | "model-egress";
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "ReferenceConversionInspection".
+ */
+export type ReferenceConversionInspection = {
+  [k: string]: unknown;
+} & {
+  verification: "conversion-readonly-v1";
+  state: "incomplete" | "committed" | "blocked";
+  detail?: "no-conversion-intent-observed" | "conversion-intent-without-committed-receipt" | "verification-incomplete";
+  proof?: ReferenceConversionInspectionProof;
+  conversion?: {
+    operationId: StableId;
+    receiptSha256: Sha256;
+    evidence: ArtifactReference;
+    readiness: "blocked" | "needs-review";
+  };
+};
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "NativeReferenceOfflineEnvelope".
+ */
+export type NativeReferenceOfflineEnvelope = {
+  [k: string]: unknown;
+} & {
+  schemaVersion: SchemaVersion;
+  operation:
+    | "reference-recovery-apply-plan"
+    | "reference-recovery-apply"
+    | "reference-recovery-inspect"
+    | "convert-reference"
+    | "reference-conversion-inspect";
+  projectId: StableId;
+  requestId: StableId;
+  status: "complete" | "failed" | "cancelled" | "interrupted";
+  plan?: OfflineReferencePlan;
+  effectiveReference?: EffectiveReference;
+  receiptSha256?: Sha256;
+  inspection?: ReferenceConversionInspection;
+  conversion?: {
+    operationId: StableId;
+    receiptSha256: Sha256;
+    evidence: ArtifactReference;
+    readiness: "blocked" | "needs-review";
+  };
+  reason?:
+    | "invalid-input"
+    | "authority-denied"
+    | "database-state"
+    | "proof-changed"
+    | "ineligible"
+    | "recovery-blocked"
+    | "publication-uncertain"
+    | "integrity"
+    | "input-limit"
+    | "deadline-exceeded"
+    | "cancelled"
+    | "cleanup-required";
+  inputAccounting?: ReferenceInputAccounting;
+  error?: ContractError;
+};
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "ErrorCode".
  */
 export type ErrorCode =
@@ -755,6 +816,8 @@ export interface ContractCatalog {
   OfflineReferencePlan: OfflineReferencePlan;
   EffectiveReference: EffectiveReference;
   ReferenceConversionEvidence: ReferenceConversionEvidence;
+  ReferenceConversionInspectionProof: ReferenceConversionInspectionProof;
+  ReferenceConversionInspection: ReferenceConversionInspection;
   NativeReferenceOfflineEnvelope: NativeReferenceOfflineEnvelope;
   SchemaVersion: SchemaVersion;
   StableId: StableId;
@@ -3075,39 +3138,18 @@ export interface ReferenceConversionEvidence {
 }
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "NativeReferenceOfflineEnvelope".
+ * via the `definition` "ReferenceConversionInspectionProof".
  */
-export interface NativeReferenceOfflineEnvelope {
-  schemaVersion: SchemaVersion;
-  operation:
-    "reference-recovery-apply-plan" | "reference-recovery-apply" | "reference-recovery-inspect" | "convert-reference";
-  projectId: StableId;
-  requestId: StableId;
-  status: "complete" | "failed" | "cancelled" | "interrupted";
-  plan?: OfflineReferencePlan;
-  effectiveReference?: EffectiveReference;
-  receiptSha256?: Sha256;
-  conversion?: {
-    operationId: StableId;
-    receiptSha256: Sha256;
-    evidence: ArtifactReference;
-    readiness: "blocked" | "needs-review";
-  };
-  reason?:
-    | "invalid-input"
-    | "authority-denied"
-    | "database-state"
-    | "proof-changed"
-    | "ineligible"
-    | "recovery-blocked"
-    | "publication-uncertain"
-    | "integrity"
-    | "input-limit"
-    | "deadline-exceeded"
-    | "cancelled"
-    | "cleanup-required";
-  inputAccounting?: ReferenceInputAccounting;
-  error?: ContractError;
+export interface ReferenceConversionInspectionProof {
+  inspectionPolicySha256: Sha256;
+  recoveryPolicySha256: Sha256;
+  recoveryId: StableId;
+  recoveryReceiptSha256: Sha256;
+  originalJobSha256: Sha256;
+  originalStateSha256: Sha256;
+  identitySha256: Sha256;
+  controlSha256: Sha256;
+  proofSha256: Sha256;
 }
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
