@@ -13,7 +13,6 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { performance } from "node:perf_hooks";
 import { isMainThread } from "node:worker_threads";
 import type {
   NativeReferenceEnvelope,
@@ -32,7 +31,15 @@ import {
 import { JobService } from "@design-studio/jobs";
 import type { CaptureProject, CaptureWork } from "@design-studio/project-host";
 import { LocalStore } from "@design-studio/storage";
-import { afterEach, aroundEach, expect, vi, it as vitestIt } from "vitest";
+import {
+  afterEach,
+  aroundEach,
+  beforeEach,
+  describe,
+  expect,
+  vi,
+  it as vitestIt,
+} from "vitest";
 import {
   image as authoredPng,
   chunk,
@@ -108,6 +115,8 @@ import {
   inCaptureTest,
   ownCaptureTests,
   ownCaptureWork,
+  type ReferencePhaseEvent,
+  referenceTelemetry,
 } from "./capture-test-scope.js";
 
 const seam = vi.hoisted(() => ({
@@ -156,6 +165,10 @@ vi.mock("../../project-host/dist/capture-work.js", () => ({
 }));
 const cleanups: (() => Promise<void>)[] = [];
 const runnerSignals = new WeakMap<AsyncTestScope, AbortSignal>();
+const diagnosticTelemetry = new WeakMap<
+  AsyncTestScope,
+  ReturnType<typeof referenceTelemetry>
+>();
 const it = ownCaptureTests(vitestIt);
 vi.setConfig({ testTimeout: 60000 });
 aroundEach((run, context) => {
@@ -163,6 +176,15 @@ aroundEach((run, context) => {
     throw new Error("Previous reference fixture has not quiesced.");
   const scope = new AsyncTestScope(context.signal);
   runnerSignals.set(scope, context.signal);
+  if (
+    context.task.name.startsWith(
+      "read-only conversion diagnostics preserve denial and read ownership:",
+    )
+  ) {
+    const telemetry = referenceTelemetry("closed-diagnostic", context.signal);
+    telemetry.arm();
+    diagnosticTelemetry.set(scope, telemetry);
+  }
   return inCaptureTest(scope, run);
 });
 afterEach(async () => {
@@ -186,6 +208,7 @@ afterEach(async () => {
   seam.measureReads = false;
   seam.physicalReads = 0;
   seam.afterRead = undefined;
+  diagnosticTelemetry.get(captureTestScope())?.close();
 });
 const origin = "https://figma-alpha-api.s3.us-west-2.amazonaws.com";
 const nativeRetainedMode =
@@ -196,124 +219,6 @@ function required<T>(value: T | undefined): T {
 }
 function fixture(...args: Parameters<typeof createFixture>) {
   return ownCaptureWork(createFixture)(...args);
-}
-type ReferencePhaseEvent = {
-  scope: "synthetic-reference-phase";
-  scenario: "conversion-provenance" | "converted-archive";
-  event: "start" | "settled" | "rejected" | "runner-abort";
-  phase: string | null;
-  elapsedMs: number;
-  durationMs?: number;
-  outcome?: string;
-  runnerAborted: boolean;
-};
-function referenceTelemetry(
-  scenario: ReferencePhaseEvent["scenario"] | undefined,
-  originalSignal: AbortSignal | undefined,
-  sink: (event: ReferencePhaseEvent) => void = (event) =>
-    console.log(JSON.stringify(event)),
-) {
-  const started = performance.now();
-  let pending: string | null = null;
-  let armed = false;
-  let closed = false;
-  let abortReported = false;
-  const allowedPhases = new Set([
-    "fixture-open",
-    "capture",
-    "reference-plan",
-    "reference-approve",
-    "reference-download",
-    "reference-diagnostic-plan",
-    "reference-diagnostic-approve",
-    "reference-diagnostic-download",
-    "reference-diagnostic-inspect",
-    "reference-recovery-apply-plan",
-    "reference-recovery-apply",
-    "reference-recovery-inspect",
-    "reference-conversion-inspect",
-    "convert-reference",
-    "artifact",
-    "verification",
-    "backup-archive",
-    "cleanup",
-  ]);
-  const emit = (
-    event: "start" | "settled" | "rejected" | "runner-abort",
-    phase: string | null,
-    durationMs?: number,
-    outcome?: string,
-  ) => {
-    if (!scenario) return;
-    sink({
-      scope: "synthetic-reference-phase",
-      scenario,
-      event,
-      phase,
-      elapsedMs: Math.round(performance.now() - started),
-      ...(durationMs === undefined ? {} : { durationMs }),
-      ...(outcome === undefined ? {} : { outcome }),
-      runnerAborted: originalSignal?.aborted ?? false,
-    });
-  };
-  const measure = async <T>(
-    phase: string,
-    action: () => Promise<T>,
-  ): Promise<T> => {
-    if (!scenario) return action();
-    if (!originalSignal || !armed || closed || !allowedPhases.has(phase))
-      throw new Error("Invalid synthetic phase telemetry.");
-    const before = performance.now();
-    const previous = pending;
-    pending = phase;
-    emit("start", phase);
-    try {
-      const result = await action();
-      const outcome =
-        result &&
-        typeof result === "object" &&
-        "status" in result &&
-        typeof result.status === "string" &&
-        [
-          "complete",
-          "partial",
-          "failed",
-          "cancelled",
-          "interrupted",
-          "unavailable",
-        ].includes(result.status)
-          ? result.status
-          : undefined;
-      emit("settled", phase, Math.round(performance.now() - before), outcome);
-      return result;
-    } catch (error) {
-      emit("rejected", phase, Math.round(performance.now() - before));
-      throw error;
-    } finally {
-      pending = previous;
-    }
-  };
-  const reportAbort = () => {
-    if (!abortReported) {
-      abortReported = true;
-      emit("runner-abort", pending);
-    }
-  };
-  return {
-    measure,
-    arm() {
-      if (!scenario || armed) return;
-      if (!originalSignal || closed)
-        throw new Error("Invalid synthetic telemetry owner.");
-      armed = true;
-      originalSignal.addEventListener("abort", reportAbort, { once: true });
-      if (originalSignal.aborted) reportAbort();
-    },
-    close() {
-      originalSignal?.removeEventListener("abort", reportAbort);
-      closed = true;
-    },
-  };
 }
 async function createFixture(
   options: {
@@ -334,10 +239,9 @@ async function createFixture(
 ) {
   const scope = captureTestScope();
   scope.signal.throwIfAborted();
-  const telemetry = referenceTelemetry(
-    options.telemetry,
-    runnerSignals.get(scope),
-  );
+  const telemetry =
+    diagnosticTelemetry.get(scope) ??
+    referenceTelemetry(options.telemetry, runnerSignals.get(scope));
   const { measure } = telemetry;
   const stores: LocalStore[] = [];
   const backupReaders = new Set<{ close(): void }>();
@@ -1487,6 +1391,109 @@ it("detaches telemetry on confirmed cleanup and handles pre-aborted owners once"
   expect(events.filter((e) => e.event === "runner-abort")).toMatchObject([
     { phase: null, runnerAborted: true },
   ]);
+});
+
+it("retains handed-off fixture reads until original body abort joins before cleanup", async () => {
+  const runner = new AbortController();
+  const scope = new AsyncTestScope(runner.signal);
+  const f = await inCaptureTest(scope, () => fixture({ diagnostic: true }));
+  const cleanup = required(cleanups.at(-1));
+  const gate = deferred<void>();
+  const entered = deferred<void>();
+  captureTestScope().releaseOnEnd(() => gate.resolve());
+  let settled = false;
+  let cleaned = false;
+  seam.afterRead = async () => {
+    seam.afterRead = undefined;
+    entered.resolve();
+    await gate.promise;
+  };
+  const work = inCaptureTest(scope, () =>
+    f.run({ operation: "reference-plan", requestId: "original" }, scope.signal),
+  ).then(
+    () => {
+      settled = true;
+    },
+    () => {
+      settled = true;
+    },
+  );
+  const close = LocalStore.prototype.close;
+  const closeOrder: boolean[] = [];
+  const closed = vi
+    .spyOn(LocalStore.prototype, "close")
+    .mockImplementation(function (this: LocalStore) {
+      closeOrder.push(settled);
+      return close.call(this);
+    });
+  let closing: Promise<void> | undefined;
+  try {
+    await Promise.race([
+      entered.promise,
+      work.then(() => {
+        throw new Error("Body did not enter gated read");
+      }),
+    ]);
+    runner.abort();
+    closing = cleanup().then(() => {
+      cleaned = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    expect(cleaned).toBe(false);
+    expect(closeOrder).toEqual([]);
+    expect((await lstat(f.project.paths.temp)).isDirectory()).toBe(true);
+    await expect(
+      inCaptureTest(scope, () =>
+        f.run(
+          { operation: "reference-plan", requestId: "original" },
+          scope.signal,
+        ),
+      ),
+    ).rejects.toThrow();
+  } finally {
+    runner.abort();
+    gate.resolve();
+    await work;
+    await (closing ?? cleanup());
+    closed.mockRestore();
+    cleanups.splice(cleanups.indexOf(cleanup), 1);
+  }
+  expect(closeOrder.length).toBeGreaterThan(0);
+  expect(closeOrder.every(Boolean)).toBe(true);
+  expect(f.readPins).toBe(0);
+  await expect(lstat(f.project.paths.temp)).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+});
+
+it("reports a native capture deadline as a closed setup failure without exposing error text", async () => {
+  const runner = new AbortController();
+  const events: ReferencePhaseEvent[] = [];
+  const telemetry = referenceTelemetry(
+    "closed-diagnostic",
+    runner.signal,
+    (event) => events.push(event),
+  );
+  telemetry.arm();
+  const result = await telemetry.measure("setup", () =>
+    telemetry.measure("capture", async () => ({
+      status: "interrupted",
+      error: { code: "DEADLINE_EXCEEDED", message: "synthetic-private-path" },
+    })),
+  );
+  expect(result.status).toBe("interrupted");
+  expect(events).toContainEqual(
+    expect.objectContaining({
+      event: "settled",
+      phase: "capture",
+      outcome: "interrupted",
+      errorCode: "DEADLINE_EXCEEDED",
+    }),
+  );
+  expect(JSON.stringify(events)).not.toContain("synthetic-private-path");
+  expect(events.some((event) => event.phase === "body")).toBe(false);
+  telemetry.close();
 });
 
 it("requires exact explicit offline approval and attaches once without modifying a large committed capture", async () => {
@@ -2715,7 +2722,7 @@ it("read-only conversion inspection verifies after a committed conversion deadli
   expect(f.readPins).toBe(0);
 });
 
-it.each([
+describe.each([
   "tagged",
   "untagged",
   "invalid-tag",
@@ -2725,148 +2732,189 @@ it.each([
   "authority-throws",
   "revoked",
   "cleanup",
-] as const)(
-  "read-only conversion diagnostics preserve denial and read ownership: %s",
-  async (kind) => {
-    const { f, command, apply } = await committedOfflineFixture();
-    const input = {
-      ...command,
-      operation: "reference-conversion-inspect" as const,
-      expectedRecovery: required(apply.receiptSha256),
-    };
-    const before = await f.observeOffline();
-    const signal = new AbortController();
-    const write = vi.spyOn(LocalStore.prototype, "beginReferenceConversion");
-    const inspected = vi
-      .spyOn(ProjectFileSystem.prototype, "inspectRetainedReference")
-      .mockImplementation(async (_input, context) => {
-        if (kind === "cancelled") signal.abort();
-        if (kind === "deadline") f.advanceClock(30001);
-        if (kind === "revoked")
-          vi.spyOn(required(seam.work), "isCurrent").mockReturnValue(false);
-        if (kind === "authority-throws")
-          vi.spyOn(required(seam.work), "isCurrent").mockImplementation(() => {
-            throw new HostBoundaryError(
-              "FORBIDDEN",
-              "Synthetic current authority failure",
-            );
-          });
-        const outcome = {
-          schemaVersion: "1.0" as const,
-          projectId: context.projectId,
-          requestId: context.requestId,
-          status: "failed" as const,
-          error: {
-            code:
-              kind === "authority"
-                ? ("FORBIDDEN" as const)
-                : ("ARTIFACT_INTEGRITY" as const),
-            message: "Synthetic private path must not escape.",
-            retryable: false,
-            diagnosticIds: [],
-          },
-          diagnosticIds: [],
+] as const)("independent closed diagnostic fixture: %s", (kind) => {
+  let prepared:
+    | {
+        value: Awaited<ReturnType<typeof committedOfflineFixture>>;
+        before: Awaited<
+          ReturnType<
+            Awaited<
+              ReturnType<typeof committedOfflineFixture>
+            >["f"]["observeOffline"]
+          >
+        >;
+        signal: AbortSignal;
+      }
+    | undefined;
+  beforeEach(async ({ signal }) => {
+    prepared = undefined;
+    await ownCaptureWork(async () => {
+      const telemetry = required(diagnosticTelemetry.get(captureTestScope()));
+      await telemetry.measure("setup", async () => {
+        const value = await committedOfflineFixture();
+        const before = await value.f.observeOffline();
+        captureTestScope().signal.throwIfAborted();
+        prepared = { value, before, signal };
+      });
+    })();
+  }, 60000);
+  it(`read-only conversion diagnostics preserve denial and read ownership: ${kind}`, async ({
+    signal: runnerSignal,
+  }) => {
+    const owned = required(prepared);
+    expect(owned.signal).toBe(runnerSignal);
+    captureTestScope().signal.throwIfAborted();
+    const { f, command, apply } = owned.value;
+    const before = owned.before;
+    await required(diagnosticTelemetry.get(captureTestScope())).measure(
+      "body",
+      async () => {
+        const input = {
+          ...command,
+          operation: "reference-conversion-inspect" as const,
+          expectedRecovery: required(apply.receiptSha256),
         };
-        if (kind !== "untagged")
-          Reflect.set(outcome, "inventoryFailure", {
-            check: "publication-shape",
-            category: "history-stage",
-            detail: "unproven-history-coexistence",
-            ...(kind === "invalid-tag" ? { path: "synthetic-private" } : {}),
-          });
-        return outcome;
-      });
-    // Close failure is injected at the actual store boundary, even if inventory never acquired a pin.
-    const close = LocalStore.prototype.close;
-    let rejectClose = kind === "cleanup";
-    const closeSpy = vi
-      .spyOn(LocalStore.prototype, "close")
-      .mockImplementation(function (this: LocalStore) {
-        if (rejectClose) {
-          rejectClose = false;
-          throw new HostBoundaryError(
-            "INTERRUPTED",
-            "Synthetic actual close failure",
-          );
-        }
-        return close.call(this);
-      });
-    const observed = await f
-      .runOffline(input, signal.signal)
-      .catch((error: unknown) => error);
-    if (kind === "authority-throws") {
-      expect(observed).toMatchObject({ code: "FORBIDDEN" });
-      expect(observed).not.toHaveProperty("inspection");
-    } else if (kind === "cleanup") {
-      expect(observed).toBeInstanceOf(NativeCaptureCleanupRequired);
-      if (!(observed instanceof NativeCaptureCleanupRequired))
-        throw new Error("Missing retained cleanup owner.");
-      expect(Reflect.get(observed, "inspection")).toBeUndefined();
-      await observed.close();
-    } else {
-      if (
-        !observed ||
-        typeof observed !== "object" ||
-        !("inspection" in observed)
-      )
-        throw new Error("Missing blocked inspection.");
-      const value = parseContract(
-        "NativeReferenceOfflineEnvelope",
-        JSON.stringify(observed),
-        "json",
-      );
-      expect(value.status).toBe("failed");
-      expect(value.inspection?.state).toBe("blocked");
-      expect(value.inspection?.proof).toBeUndefined();
-      expect(value.inspection?.conversion).toBeUndefined();
-      expect(value.inspection?.diagnostic).toEqual(
-        kind === "tagged"
-          ? {
-              stage: "inventory-invalid",
-              inventoryFailure: {
+        const signal = new AbortController();
+        const write = vi.spyOn(
+          LocalStore.prototype,
+          "beginReferenceConversion",
+        );
+        const inspected = vi
+          .spyOn(ProjectFileSystem.prototype, "inspectRetainedReference")
+          .mockImplementation(async (_input, context) => {
+            if (kind === "cancelled") signal.abort();
+            if (kind === "deadline") f.advanceClock(30001);
+            if (kind === "revoked")
+              vi.spyOn(required(seam.work), "isCurrent").mockReturnValue(false);
+            if (kind === "authority-throws")
+              vi.spyOn(required(seam.work), "isCurrent").mockImplementation(
+                () => {
+                  throw new HostBoundaryError(
+                    "FORBIDDEN",
+                    "Synthetic current authority failure",
+                  );
+                },
+              );
+            const outcome = {
+              schemaVersion: "1.0" as const,
+              projectId: context.projectId,
+              requestId: context.requestId,
+              status: "failed" as const,
+              error: {
+                code:
+                  kind === "authority"
+                    ? ("FORBIDDEN" as const)
+                    : ("ARTIFACT_INTEGRITY" as const),
+                message: "Synthetic private path must not escape.",
+                retryable: false,
+                diagnosticIds: [],
+              },
+              diagnosticIds: [],
+            };
+            if (kind !== "untagged")
+              Reflect.set(outcome, "inventoryFailure", {
                 check: "publication-shape",
                 category: "history-stage",
                 detail: "unproven-history-coexistence",
-              },
+                ...(kind === "invalid-tag"
+                  ? { path: "synthetic-private" }
+                  : {}),
+              });
+            return outcome;
+          });
+        // Close failure is injected at the actual store boundary, even if inventory never acquired a pin.
+        const close = LocalStore.prototype.close;
+        let rejectClose = kind === "cleanup";
+        const closeSpy = vi
+          .spyOn(LocalStore.prototype, "close")
+          .mockImplementation(function (this: LocalStore) {
+            if (rejectClose) {
+              rejectClose = false;
+              throw new HostBoundaryError(
+                "INTERRUPTED",
+                "Synthetic actual close failure",
+              );
             }
-          : kind === "untagged" || kind === "invalid-tag"
-            ? { stage: "inventory-invalid" }
-            : undefined,
-      );
-      expect(JSON.stringify(value)).not.toMatch(
-        /synthetic-private|private path/,
-      );
-      expect(value.inputAccounting?.networkBytes).toBe(0);
-      if (kind === "tagged") {
-        const reads = structuredClone(f.reads);
-        const accounting = value.inputAccounting;
-        inspected.mockImplementation(async (_input, context) => ({
-          schemaVersion: "1.0",
-          projectId: context.projectId,
-          requestId: context.requestId,
-          status: "failed",
-          error: {
-            code: "ARTIFACT_INTEGRITY",
-            message: "Untagged",
-            retryable: false,
-            diagnosticIds: [],
-          },
-          diagnosticIds: [],
-        }));
-        const untagged = await f.runOffline(input);
-        expect(untagged.inspection?.diagnostic).toEqual({
-          stage: "inventory-invalid",
-        });
-        expect(untagged.inputAccounting).toEqual(accounting);
-        expect(f.reads).toEqual(reads);
-      }
-    }
-    closeSpy.mockRestore();
-    expect(write).not.toHaveBeenCalled();
-    expect(f.readPins).toBe(0);
-    expect(await f.observeOffline()).toEqual(before);
-  },
-);
+            return close.call(this);
+          });
+        const observed = await f
+          .runOffline(input, signal.signal)
+          .catch((error: unknown) => error);
+        if (kind === "authority-throws") {
+          expect(observed).toMatchObject({ code: "FORBIDDEN" });
+          expect(observed).not.toHaveProperty("inspection");
+        } else if (kind === "cleanup") {
+          expect(observed).toBeInstanceOf(NativeCaptureCleanupRequired);
+          if (!(observed instanceof NativeCaptureCleanupRequired))
+            throw new Error("Missing retained cleanup owner.");
+          expect(Reflect.get(observed, "inspection")).toBeUndefined();
+          await observed.close();
+        } else {
+          if (
+            !observed ||
+            typeof observed !== "object" ||
+            !("inspection" in observed)
+          )
+            throw new Error("Missing blocked inspection.");
+          const value = parseContract(
+            "NativeReferenceOfflineEnvelope",
+            JSON.stringify(observed),
+            "json",
+          );
+          expect(value.status).toBe("failed");
+          expect(value.inspection?.state).toBe("blocked");
+          expect(value.inspection?.proof).toBeUndefined();
+          expect(value.inspection?.conversion).toBeUndefined();
+          expect(value.inspection?.diagnostic).toEqual(
+            kind === "tagged"
+              ? {
+                  stage: "inventory-invalid",
+                  inventoryFailure: {
+                    check: "publication-shape",
+                    category: "history-stage",
+                    detail: "unproven-history-coexistence",
+                  },
+                }
+              : kind === "untagged" || kind === "invalid-tag"
+                ? { stage: "inventory-invalid" }
+                : undefined,
+          );
+          expect(JSON.stringify(value)).not.toMatch(
+            /synthetic-private|private path/,
+          );
+          expect(value.inputAccounting?.networkBytes).toBe(0);
+          if (kind === "tagged") {
+            const reads = structuredClone(f.reads);
+            const accounting = value.inputAccounting;
+            inspected.mockImplementation(async (_input, context) => ({
+              schemaVersion: "1.0",
+              projectId: context.projectId,
+              requestId: context.requestId,
+              status: "failed",
+              error: {
+                code: "ARTIFACT_INTEGRITY",
+                message: "Untagged",
+                retryable: false,
+                diagnosticIds: [],
+              },
+              diagnosticIds: [],
+            }));
+            const untagged = await f.runOffline(input);
+            expect(untagged.inspection?.diagnostic).toEqual({
+              stage: "inventory-invalid",
+            });
+            expect(untagged.inputAccounting).toEqual(accounting);
+            expect(f.reads).toEqual(reads);
+          }
+        }
+        closeSpy.mockRestore();
+        expect(write).not.toHaveBeenCalled();
+        expect(f.readPins).toBe(0);
+        expect(await f.observeOffline()).toEqual(before);
+      },
+    );
+  }, 60000);
+});
 
 it.skipIf(!nativeRetainedMode || !process.env.DESIGN_STUDIO_V7_HANDOFF)(
   "cold readonly v8 inspects transferred authentic v7 conversion",

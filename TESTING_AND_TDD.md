@@ -108,6 +108,24 @@ differ; these synthetic controls establish the mechanism, not the exact timing
 or translated cause of an earlier CI run. Physical byte-budget and history
 integrity assertions remain unchanged.
 
+Nine closed read-only conversion diagnostic cases and the two retained
+predecessor negatives `diagnostic-missing-protection` and
+`diagnostic-receipt-mutation` prepare fresh genuine authenticated history in a
+**60-second setup hook**, separately from their existing **60-second assertion
+body**. Cleanup keeps the default **10-second hook**. This increases aggregate
+fixture wall-time opportunity; it is not an unchanged total duration or a
+native deadline fix. Fault injection, actual inspection/diagnostic planning,
+negative metadata/receipt/protection assertions and before/after/read-ledger
+checks remain in the body. Original setup/body promises and SQLite/pin owners
+are joined before deletion or mock reset; no fixtures or receipts are shared.
+Closed phase telemetry is armed on the original runner signal before allocation
+and reports full initial capture settlement, a validated error code, body and
+cleanup timing without private content. A native initial capture deadline
+still fails setup: its 30-second budget and real clock sleep/watch are unchanged.
+Local successful captures do not explain the earlier hosted native deadline.
+Large-report and realistic byte-budget cases retain their original data and
+validators; no padding reduction, clock workaround or automatic retry is used.
+
 The storage cancellation-control tests separate queued-context snapshotting from
 capacity admission. The snapshot case still mutates the caller's request after
 queueing a real cancellation and checks the original identity. The capacity case
