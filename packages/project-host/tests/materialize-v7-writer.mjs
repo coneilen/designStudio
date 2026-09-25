@@ -299,7 +299,7 @@ it("authentic pinned v7 crossrelease writer", async () => {
   await writeFile(process.env.DESIGN_STUDIO_V7_HANDOFF!, JSON.stringify({
     root: crossReleaseRetainedRoot, expectedJob: command.expectedJob, expectedRecovery: recovered.receiptSha256,
     writerCommit: "${commit}", writerPolicy: REFERENCE_OFFLINE_POLICY_SHA256,
-    writerOutcome: converted.status, events: 10,
+    writerOutcome: converted.status, events: 10, conversionEvidence: converted.conversion?.evidence,
   }), { flag: "wx" });
 });
 `;

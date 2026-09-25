@@ -29,6 +29,26 @@ SQLite and publication are real; installation/current-work seams are labeled.
 The complete and post-commit-deadline fixtures preserve ten genuine events;
 an abruptly terminated partial-stage writer must remain blocked by the
 reader's ordinary sidecar/namespace rules, not be reconciled by the test.
+Synthetic negative readers also exercise retained-job eligibility, untagged
+staging, history coexistence and output-size guards. Existing closed diagnostics
+identify only the reached proof stage and, where available, the inventory
+guard category/detail. A stage-only denial cannot identify a private orphan
+or establish absence. Fixture faults and synthetic authority seams are not
+evidence of any particular live failure.
+
+Each cross-release mode now has a fresh owned fixture with a 60-second setup
+hook, a separate 60-second reader/assertion body, and a 60-second cleanup
+hook. Setup owns the genuine old writer, both source inventories, loaded-module
+and writer-egress checks, and the initial project snapshot. The body retains
+the actual new reader, all result/diagnostic/no-write checks, reader-egress
+verification and final snapshot equality. This separation increases the
+possible aggregate fixture wall time; it is not an unchanged total test
+duration or a production deadline increase. Native operations remain bounded
+to 30 seconds/25 MiB, child probes to 60 seconds, and workers and CI watchdog
+are unchanged. One original test-context signal covers hook and body; original
+work and child closure remain owned across the handoff and are joined before
+root deletion. Closed phase telemetry is armed before root allocation, and
+deterministic setup/reader-abort tests gate real SQLite children and cleanup.
 
 ## Offline reference write supplement
 

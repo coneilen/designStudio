@@ -57,6 +57,10 @@ export type ReferenceConversionInspection = {
   state: "incomplete" | "committed" | "blocked";
   detail?: "no-conversion-intent-observed" | "conversion-intent-without-committed-receipt" | "verification-incomplete";
   proof?: ReferenceConversionInspectionProof;
+  diagnostic?: {
+    stage: ReferenceRecoveryPlanReason;
+    inventoryFailure?: RetainedInventoryFailure;
+  };
   conversion?: {
     operationId: StableId;
     receiptSha256: Sha256;
@@ -64,6 +68,26 @@ export type ReferenceConversionInspection = {
     readiness: "blocked" | "needs-review";
   };
 };
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "ReferenceRecoveryPlanReason".
+ */
+export type ReferenceRecoveryPlanReason =
+  | "invalid-input"
+  | "authority-denied"
+  | "ineligible-job"
+  | "job-changed"
+  | "source-metadata-invalid"
+  | "source-proof-invalid"
+  | "inventory-invalid"
+  | "evidence-invalid"
+  | "png-invalid"
+  | "known-pair-native-read-blocked"
+  | "state-changed"
+  | "input-limit"
+  | "cancelled"
+  | "deadline-exceeded"
+  | "cleanup-incomplete";
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "NativeReferenceOfflineEnvelope".
@@ -914,6 +938,7 @@ export interface ContractCatalog {
   ReferenceJobMetadata: ReferenceJobMetadata;
   ReferenceRecoveryPlan: ReferenceRecoveryPlan;
   RetainedInventoryFailure: RetainedInventoryFailure;
+  ReferenceRecoveryPlanReason: ReferenceRecoveryPlanReason;
   NativeReferenceRecoveryPlanEnvelope: NativeReferenceRecoveryPlanEnvelope;
   NativeReferenceEnvelope: NativeReferenceEnvelope;
   Operation: Operation;
@@ -3153,6 +3178,34 @@ export interface ReferenceConversionInspectionProof {
 }
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "RetainedInventoryFailure".
+ */
+export interface RetainedInventoryFailure {
+  check:
+    | "descriptor"
+    | "missing-recorded-entry"
+    | "publication-shape"
+    | "committed-size"
+    | "proof-native-identity"
+    | "proof-stat"
+    | "proof-membership"
+    | "native-read-admission"
+    | "body-read"
+    | "body-hash"
+    | "inventory-recheck"
+    | "native-identity-recheck";
+  category: "original-proof" | "history-stage" | "retained-target" | "committed-inventory" | "namespace";
+  detail?:
+    | "missing-stage-or-entry"
+    | "unproven-history-coexistence"
+    | "distinct-target-copies"
+    | "link-count-or-shared-identity"
+    | "recorded-length-mismatch"
+    | "native-identity-unavailable"
+    | "native-identity-not-distinct";
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "ReferenceInputAccounting".
  */
 export interface ReferenceInputAccounting {
@@ -4781,34 +4834,6 @@ export interface ReferenceJobMetadata {
 }
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "RetainedInventoryFailure".
- */
-export interface RetainedInventoryFailure {
-  check:
-    | "descriptor"
-    | "missing-recorded-entry"
-    | "publication-shape"
-    | "committed-size"
-    | "proof-native-identity"
-    | "proof-stat"
-    | "proof-membership"
-    | "native-read-admission"
-    | "body-read"
-    | "body-hash"
-    | "inventory-recheck"
-    | "native-identity-recheck";
-  category: "original-proof" | "history-stage" | "retained-target" | "committed-inventory" | "namespace";
-  detail?:
-    | "missing-stage-or-entry"
-    | "unproven-history-coexistence"
-    | "distinct-target-copies"
-    | "link-count-or-shared-identity"
-    | "recorded-length-mismatch"
-    | "native-identity-unavailable"
-    | "native-identity-not-distinct";
-}
-/**
- * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "NativeReferenceRecoveryPlanEnvelope".
  */
 export interface NativeReferenceRecoveryPlanEnvelope {
@@ -4818,22 +4843,7 @@ export interface NativeReferenceRecoveryPlanEnvelope {
   requestId: StableId;
   status: "complete" | "failed" | "interrupted" | "cancelled";
   value?: ReferenceRecoveryPlan;
-  reason?:
-    | "invalid-input"
-    | "authority-denied"
-    | "ineligible-job"
-    | "job-changed"
-    | "source-metadata-invalid"
-    | "source-proof-invalid"
-    | "inventory-invalid"
-    | "evidence-invalid"
-    | "png-invalid"
-    | "known-pair-native-read-blocked"
-    | "state-changed"
-    | "input-limit"
-    | "cancelled"
-    | "deadline-exceeded"
-    | "cleanup-incomplete";
+  reason?: ReferenceRecoveryPlanReason;
   inputAccounting?: ReferenceInputAccounting;
   error?: ContractError;
   inventoryFailure?: RetainedInventoryFailure;

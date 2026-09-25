@@ -26,6 +26,15 @@ Neither result grants permission to retry or mutate. Current inspection-policy
 and historical recovery-policy hashes are distinct proof fields. Readiness
 remains `blocked` or `needs-review`, never render-ready.
 
+Failed blocked inspection may include an enum-only `diagnostic.stage` from the
+existing retained-proof reasons, plus a validated `RetainedInventoryFailure`
+when the inventory guard supplied one. This does not change the outer status
+or reason. Untagged namespace failures report only `inventory-invalid`, not
+an orphan identification. Diagnostics carry no paths, IDs, messages or data;
+they are omitted after a successful retained proof and on cancellation,
+deadline, authority or cleanup uncertainty. No additional reads or grants are
+used, and the v8 inspection supplement and six historical policies are unchanged.
+
 `NativeReferenceRecoveryPlanEnvelope` and `ReferenceRecoveryPlan` describe the
 separate read-only retained-byte validator. Successful verification means
 `eligible-for-recovery-review`, while the historical job remains interrupted

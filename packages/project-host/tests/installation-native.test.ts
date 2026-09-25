@@ -19,12 +19,25 @@ import {
   ProjectFileSystem,
   WINDOWS_PUBLICATION_PROFILE,
 } from "@design-studio/host";
-import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  test,
+  vi,
+} from "vitest";
 import { loadNative, type ReadLease } from "../src/native.js";
 import { pinReferenceBackupFile } from "../src/reference-backup.js";
 import { pinImmutableReferenceDatabase } from "../src/reference-validation-database.js";
 import { pinRetainedReferenceEntry } from "../src/reference-validation-entry.js";
-import { startProbe, withOwnedProbe } from "./owned-probe.js";
+import {
+  prepareOwnedProbeFixture,
+  startProbe,
+  withOwnedProbe,
+} from "./owned-probe.js";
 import { createRetainedOwnerFixture } from "./retained-owner-fixture.js";
 import { retainedSecurityFixture } from "./retained-security-fixture.js";
 import { ownedTest, weakenTestAcl } from "./support.js";
@@ -80,210 +93,313 @@ describe("pinned v7 conversion compatibility", () => {
     "complete",
     "postcommit-deadline",
     "partial-stage",
+    "ineligible-job",
+    "unknown-stage",
+    "history-coexistence",
+    "output-tamper",
   ] as const)
-    test(`authentic v7 writer is readable without mutation by v8 conversion inspection: ${mode}`, async ({
-      signal,
-    }) => {
-      await withOwnedProbe(signal, async (root, run) => {
-        const { inventory } = materialized;
-        expect(inventory.sourceFiles).toBeLessThanOrEqual(1200);
-        expect(inventory.physicalFiles).toBeLessThanOrEqual(6500);
-        expect(inventory.physicalBytes).toBeLessThanOrEqual(256 * 1024 * 1024);
-        const oldSource = path.join(materialized.root, "v7-source");
-        const verifySource = async () => {
-          const manifestBytes = await readFile(
-            path.join(materialized.root, "v7-source-inventory.json"),
+    describe(mode, () => {
+      const makeFixture = (signal: AbortSignal) =>
+        prepareOwnedProbeFixture(mode, signal, async (root, run, phase) => {
+          const { inventory } = materialized;
+          expect(inventory.sourceFiles).toBeLessThanOrEqual(1200);
+          expect(inventory.physicalFiles).toBeLessThanOrEqual(6500);
+          expect(inventory.physicalBytes).toBeLessThanOrEqual(
+            256 * 1024 * 1024,
           );
-          expect(createHash("sha256").update(manifestBytes).digest("hex")).toBe(
-            inventory.inventorySha256,
-          );
-          const manifest = JSON.parse(manifestBytes.toString("utf8"));
-          expect(manifest.commit).toBe(
-            "9bcfbaadca45ac6f4ffb4fcd55e8abd5569fad9a",
-          );
-          for (const entry of manifest.physical) {
-            expect(
-              entry.path
-                .split("/")
-                .some((part: string) => part === ".." || !part),
-            ).toBe(false);
-            const filename = path.join(oldSource, ...entry.path.split("/"));
-            const stat = await lstat(filename);
-            expect(stat.isSymbolicLink()).toBe(false);
-            expect(stat.nlink).toBe(1);
-            const bytes = await readFile(filename);
-            expect(bytes.length).toBe(entry.byteLength);
-            expect(createHash("sha256").update(bytes).digest("hex")).toBe(
-              entry.sha256,
+          const oldSource = path.join(materialized.root, "v7-source");
+          const verifySource = async () => {
+            const manifestBytes = await readFile(
+              path.join(materialized.root, "v7-source-inventory.json"),
             );
-          }
-        };
-        await verifySource();
-        const handoff = path.join(root, "v7-generated-handoff.json");
-        const environment = {
-          SystemRoot: process.env.SystemRoot,
-          WINDIR: process.env.WINDIR,
-          PATH: path.dirname(process.execPath),
-          TEMP: root,
-          TMP: root,
-          DESIGN_STUDIO_SYNTHETIC_RETAINED_NATIVE: "1",
-          DESIGN_STUDIO_V7_HANDOFF: handoff,
-          DESIGN_STUDIO_V7_DEADLINE:
-            mode === "postcommit-deadline"
-              ? "1"
-              : mode === "partial-stage"
-                ? "partial-stage"
-                : "0",
-          DESIGN_STUDIO_V7_LOADED: path.join(root, "loaded-v7-modules.json"),
-          DESIGN_STUDIO_EGRESS_LEDGER: path.join(root, "writer-egress.json"),
-        };
-        const writing = run(
-          [
-            "--import",
-            pathToFileURL(
-              path.resolve(
-                "packages\\project-host\\tests\\crossrelease-egress-deny.mjs",
-              ),
-            ).href,
-            path.resolve("node_modules\\vitest\\vitest.mjs"),
-            "run",
-            "--config",
-            path.join(oldSource, "crossrelease.config.mjs"),
-            "--configLoader",
-            "native",
-            "-t",
-            "^authentic pinned v7 crossrelease writer$",
-            "--reporter=dot",
-          ],
-          { cwd: oldSource, timeout: 60000, env: environment },
-        );
-        if (mode === "partial-stage") await expect(writing).rejects.toThrow();
-        else {
-          const writer = await writing;
-          expect(writer.stderr).toBe("");
-          expect(writer.stdout).toContain("1 passed");
-        }
-        await verifySource();
-        const checkEgress = async (prefix: string) => {
-          const names = (await readdir(root)).filter((name) =>
-            name.startsWith(prefix),
-          );
-          expect(names.length).toBeGreaterThan(0);
-          for (const name of names)
             expect(
-              JSON.parse(await readFile(path.join(root, name), "utf8")),
-            ).toMatchObject({ denialControlPassed: true, unmockedAttempts: 0 });
-        };
-        await checkEgress("writer-egress.json.");
-        const loaded: string[] = JSON.parse(
-          await readFile(path.join(root, "loaded-v7-modules.json"), "utf8"),
-        );
-        expect(loaded.length).toBeGreaterThan(20);
-        expect(
-          loaded.every((file) =>
-            file
-              .replaceAll("\\", "/")
-              .startsWith(oldSource.replaceAll("\\", "/")),
-          ),
-        ).toBe(true);
-        const transfer = JSON.parse(await readFile(handoff, "utf8"));
-        expect(transfer.writerCommit).toBe(
-          "9bcfbaadca45ac6f4ffb4fcd55e8abd5569fad9a",
-        );
-        expect(transfer.writerOutcome).toBe(
-          mode === "complete"
-            ? "complete"
-            : mode === "partial-stage"
-              ? "abrupt-after-stage"
-              : "failed",
-        );
-        if (mode === "partial-stage") expect(transfer.stageObserved).toBe(true);
-        expect(path.dirname(transfer.root)).toBe(root);
-        expect(path.basename(transfer.root)).toMatch(/^ds-ph-reference-/);
-        const snapshot = async () => {
-          const rows: object[] = [];
-          let bytes = 0;
-          const walk = async (directory: string) => {
-            for (const name of (await readdir(directory)).sort()) {
-              const filename = path.join(directory, name);
-              const stat = await lstat(filename, { bigint: true });
+              createHash("sha256").update(manifestBytes).digest("hex"),
+            ).toBe(inventory.inventorySha256);
+            const manifest = JSON.parse(manifestBytes.toString("utf8"));
+            expect(manifest.commit).toBe(
+              "9bcfbaadca45ac6f4ffb4fcd55e8abd5569fad9a",
+            );
+            for (const entry of manifest.physical) {
+              expect(
+                entry.path
+                  .split("/")
+                  .some((part: string) => part === ".." || !part),
+              ).toBe(false);
+              const filename = path.join(oldSource, ...entry.path.split("/"));
+              const stat = await lstat(filename);
               expect(stat.isSymbolicLink()).toBe(false);
-              if (stat.isDirectory()) await walk(filename);
-              else {
-                expect(stat.isFile()).toBe(true);
-                expect(stat.nlink).toBe(1n);
-                bytes += Number(stat.size);
-                expect(bytes).toBeLessThanOrEqual(40 * 1024 * 1024);
-                rows.push({
-                  name: path.relative(transfer.root, filename),
-                  dev: String(stat.dev),
-                  ino: String(stat.ino),
-                  size: String(stat.size),
-                  mtime: String(stat.mtimeNs),
-                  links: String(stat.nlink),
-                  sha256: createHash("sha256")
-                    .update(await readFile(filename))
-                    .digest("hex"),
-                });
-                expect(rows.length).toBeLessThanOrEqual(20000);
-              }
+              expect(stat.nlink).toBe(1);
+              const bytes = await readFile(filename);
+              expect(bytes.length).toBe(entry.byteLength);
+              expect(createHash("sha256").update(bytes).digest("hex")).toBe(
+                entry.sha256,
+              );
             }
           };
-          await walk(transfer.root);
-          return rows;
-        };
-        const before = await snapshot();
-        const reader = await run(
-          [
-            "--import",
-            pathToFileURL(
-              path.resolve(
-                "packages\\project-host\\tests\\crossrelease-egress-deny.mjs",
-              ),
-            ).href,
-            path.resolve("node_modules\\vitest\\vitest.mjs"),
-            "run",
-            "--project",
-            "unit",
-            "--config",
-            path.join(materialized.root, "reader.config.mjs"),
-            "packages\\application\\tests\\reference-acquisition.test.ts",
-            "-t",
-            "^cold readonly v8 inspects transferred authentic v7 conversion$",
-            "--reporter=dot",
-          ],
-          {
-            timeout: 60000,
-            env: {
-              ...environment,
-              DESIGN_STUDIO_EGRESS_LEDGER: path.join(
-                root,
-                "reader-egress.json",
-              ),
+          await phase("sourceverify-before", verifySource);
+          const handoff = path.join(root, "v7-generated-handoff.json");
+          const environment = {
+            SystemRoot: process.env.SystemRoot,
+            WINDIR: process.env.WINDIR,
+            PATH: path.dirname(process.execPath),
+            TEMP: root,
+            TMP: root,
+            DESIGN_STUDIO_SYNTHETIC_RETAINED_NATIVE: "1",
+            DESIGN_STUDIO_V7_HANDOFF: handoff,
+            DESIGN_STUDIO_V7_DEADLINE:
+              mode === "postcommit-deadline"
+                ? "1"
+                : mode === "partial-stage"
+                  ? "partial-stage"
+                  : "0",
+            DESIGN_STUDIO_V7_LOADED: path.join(root, "loaded-v7-modules.json"),
+            DESIGN_STUDIO_EGRESS_LEDGER: path.join(root, "writer-egress.json"),
+          };
+          await phase("oldwriter", async () => {
+            const writing = run(
+              [
+                "--import",
+                pathToFileURL(
+                  path.resolve(
+                    "packages\\project-host\\tests\\crossrelease-egress-deny.mjs",
+                  ),
+                ).href,
+                path.resolve("node_modules\\vitest\\vitest.mjs"),
+                "run",
+                "--config",
+                path.join(oldSource, "crossrelease.config.mjs"),
+                "--configLoader",
+                "native",
+                "-t",
+                "^authentic pinned v7 crossrelease writer$",
+                "--reporter=dot",
+              ],
+              { cwd: oldSource, timeout: 60000, env: environment },
+            );
+            if (mode === "partial-stage")
+              await expect(writing).rejects.toThrow();
+            else {
+              const writer = await writing;
+              expect(writer.stderr).toBe("");
+              expect(writer.stdout).toContain("1 passed");
+            }
+          });
+          const { checkEgress, loaded, transfer } = await phase(
+            "sourceverify-after",
+            async () => {
+              await verifySource();
+              const checkEgress = async (prefix: string) => {
+                const names = (await readdir(root)).filter((name) =>
+                  name.startsWith(prefix),
+                );
+                expect(names.length).toBeGreaterThan(0);
+                for (const name of names)
+                  expect(
+                    JSON.parse(await readFile(path.join(root, name), "utf8")),
+                  ).toMatchObject({
+                    denialControlPassed: true,
+                    unmockedAttempts: 0,
+                  });
+              };
+              await checkEgress("writer-egress.json.");
+              const loaded: string[] = JSON.parse(
+                await readFile(
+                  path.join(root, "loaded-v7-modules.json"),
+                  "utf8",
+                ),
+              );
+              expect(loaded.length).toBeGreaterThan(20);
+              expect(
+                loaded.every((file) =>
+                  file
+                    .replaceAll("\\", "/")
+                    .startsWith(oldSource.replaceAll("\\", "/")),
+                ),
+              ).toBe(true);
+              const transfer = JSON.parse(await readFile(handoff, "utf8"));
+              expect(transfer.writerCommit).toBe(
+                "9bcfbaadca45ac6f4ffb4fcd55e8abd5569fad9a",
+              );
+              expect(transfer.writerOutcome).toBe(
+                mode === "postcommit-deadline"
+                  ? "failed"
+                  : mode === "partial-stage"
+                    ? "abrupt-after-stage"
+                    : "complete",
+              );
+              if (mode === "partial-stage")
+                expect(transfer.stageObserved).toBe(true);
+              expect(path.dirname(transfer.root)).toBe(root);
+              expect(path.basename(transfer.root)).toMatch(/^ds-ph-reference-/);
+              if (
+                [
+                  "unknown-stage",
+                  "history-coexistence",
+                  "output-tamper",
+                ].includes(mode)
+              ) {
+                expect(transfer.conversionEvidence.sha256).toMatch(
+                  /^[a-f0-9]{64}$/,
+                );
+                const blob = path.join(
+                  transfer.root,
+                  "artifacts",
+                  "blobs",
+                  transfer.conversionEvidence.sha256,
+                );
+                if (mode === "output-tamper")
+                  await writeFile(blob, "synthetic changed conversion output");
+                else {
+                  const directory = (
+                    await readdir(path.join(transfer.root, "artifacts"))
+                  ).find((name) => /^\.host-[0-9a-f-]{36}$/.test(name));
+                  expect(directory).toBeDefined();
+                  await writeFile(
+                    path.join(
+                      transfer.root,
+                      "artifacts",
+                      directory ?? "",
+                      "00000000-0000-0000-0000-000000000001",
+                    ),
+                    await readFile(blob),
+                    { flag: "wx" },
+                  );
+                }
+              }
+              return { checkEgress, loaded, transfer };
             },
+          );
+          const snapshot = async () => {
+            const rows: object[] = [];
+            let bytes = 0;
+            const walk = async (directory: string) => {
+              for (const name of (await readdir(directory)).sort()) {
+                const filename = path.join(directory, name);
+                const stat = await lstat(filename, { bigint: true });
+                expect(stat.isSymbolicLink()).toBe(false);
+                if (stat.isDirectory()) await walk(filename);
+                else {
+                  expect(stat.isFile()).toBe(true);
+                  expect(stat.nlink).toBe(1n);
+                  bytes += Number(stat.size);
+                  expect(bytes).toBeLessThanOrEqual(40 * 1024 * 1024);
+                  rows.push({
+                    name: path.relative(transfer.root, filename),
+                    dev: String(stat.dev),
+                    ino: String(stat.ino),
+                    size: String(stat.size),
+                    mtime: String(stat.mtimeNs),
+                    links: String(stat.nlink),
+                    sha256: createHash("sha256")
+                      .update(await readFile(filename))
+                      .digest("hex"),
+                  });
+                  expect(rows.length).toBeLessThanOrEqual(20000);
+                }
+              }
+            };
+            await walk(transfer.root);
+            return rows;
+          };
+          const before = await phase("snapshot-before", snapshot);
+          return {
+            root,
+            inventory,
+            environment,
+            checkEgress,
+            loaded,
+            transfer,
+            snapshot,
+            before,
+          };
+        });
+      let prepared: ReturnType<typeof makeFixture> | undefined;
+      beforeEach(async ({ signal }) => {
+        prepared = makeFixture(signal);
+        await prepared.ready;
+      }, 60000);
+      afterEach(async () => {
+        await prepared?.close();
+        prepared = undefined;
+      }, 60000);
+      test(`authentic v7 writer is readable without mutation by v8 conversion inspection: ${mode}`, async ({
+        signal,
+      }) => {
+        if (!prepared) throw new Error("Missing owned crossrelease fixture");
+        await prepared.use(
+          signal,
+          async (
+            {
+              root,
+              inventory,
+              environment,
+              checkEgress,
+              loaded,
+              transfer,
+              snapshot,
+              before,
+            },
+            run,
+            phase,
+          ) => {
+            const reader = await phase("newreader", () =>
+              run(
+                [
+                  "--import",
+                  pathToFileURL(
+                    path.resolve(
+                      "packages\\project-host\\tests\\crossrelease-egress-deny.mjs",
+                    ),
+                  ).href,
+                  path.resolve("node_modules\\vitest\\vitest.mjs"),
+                  "run",
+                  "--project",
+                  "unit",
+                  "--config",
+                  path.join(materialized.root, "reader.config.mjs"),
+                  "packages\\application\\tests\\reference-acquisition.test.ts",
+                  "-t",
+                  "^cold readonly v8 inspects transferred authentic v7 conversion$",
+                  "--reporter=dot",
+                ],
+                {
+                  timeout: 60000,
+                  env: {
+                    ...environment,
+                    DESIGN_STUDIO_INSPECTION_FAULT: mode,
+                    DESIGN_STUDIO_EGRESS_LEDGER: path.join(
+                      root,
+                      "reader-egress.json",
+                    ),
+                  },
+                },
+              ),
+            );
+            await phase("snapshot-after", async () => {
+              expect(reader.stderr).toBe("");
+              expect(reader.stdout).toContain("1 passed");
+              await checkEgress("reader-egress.json.");
+              expect(await snapshot()).toEqual(before);
+              console.log(
+                JSON.stringify({
+                  scope: "authentic-crossrelease",
+                  mode,
+                  writer: transfer.writerCommit,
+                  sourceFiles: inventory.sourceFiles,
+                  sourceBytes: inventory.sourceBytes,
+                  materializedFiles: inventory.physicalFiles,
+                  materializedBytes: inventory.physicalBytes,
+                  loadedOldModules: loaded.length,
+                  unchangedProjectFiles: before.length,
+                  currentAuthority: "explicit-synthetic-seam",
+                  realPinsDatabaseAndOutputs: true,
+                }),
+              );
+            });
           },
         );
-        expect(reader.stderr).toBe("");
-        expect(reader.stdout).toContain("1 passed");
-        await checkEgress("reader-egress.json.");
-        expect(await snapshot()).toEqual(before);
-        console.log(
-          JSON.stringify({
-            scope: "authentic-crossrelease",
-            mode,
-            writer: transfer.writerCommit,
-            sourceFiles: inventory.sourceFiles,
-            sourceBytes: inventory.sourceBytes,
-            materializedFiles: inventory.physicalFiles,
-            materializedBytes: inventory.physicalBytes,
-            loadedOldModules: loaded.length,
-            unchangedProjectFiles: before.length,
-            currentAuthority: "explicit-synthetic-seam",
-            realPinsDatabaseAndOutputs: true,
-          }),
-        );
-      });
-    }, 60000);
+      }, 60000);
+    });
 });
 
 const historyReads = vi.hoisted(() => ({ active: false, physical: 0 }));

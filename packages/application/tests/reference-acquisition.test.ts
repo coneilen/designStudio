@@ -2572,6 +2572,25 @@ it("read-only conversion inspection reports validated pre-intent and intent-only
   expect(result.inspection?.conversion).toBeUndefined();
   expect(blockedWrites).not.toHaveBeenCalled();
   expect(await f.observeOffline()).toEqual(before);
+  const snapshot = LocalStore.prototype.referenceRecoverySnapshot;
+  let snapshots = 0;
+  const changedSnapshot = vi
+    .spyOn(LocalStore.prototype, "referenceRecoverySnapshot")
+    .mockImplementation(async function (this: LocalStore, context) {
+      const value = await snapshot.call(this, context);
+      if (++snapshots === 3 && value.status === "complete")
+        value.value.metadataSha256 = "f".repeat(64);
+      return value;
+    });
+  const changed = await f.runOffline(inspect);
+  expect(snapshots).toBe(3);
+  expect(changed.error?.code).toBe("CONFLICT");
+  expect(changed.inspection).toEqual({
+    verification: "conversion-readonly-v1",
+    state: "blocked",
+    detail: "verification-incomplete",
+  });
+  changedSnapshot.mockRestore();
   const stage = vi
     .spyOn(LocalStore.prototype, "stageReferenceConversion")
     .mockRejectedValueOnce(
@@ -2659,6 +2678,25 @@ it("read-only conversion inspection verifies after a committed conversion deadli
   );
   expect(await f.observeOffline()).toEqual(before);
   const artifact = required(result.inspection?.conversion?.evidence);
+  const readVerified = LocalStore.prototype.readVerified;
+  const finalRead = vi
+    .spyOn(LocalStore.prototype, "readVerified")
+    .mockImplementation(async function (this: LocalStore, value, context) {
+      if (value.sha256 === artifact.sha256)
+        throw new HostBoundaryError(
+          "ARTIFACT_INTEGRITY",
+          "Synthetic final output read failure",
+        );
+      return readVerified.call(this, value, context);
+    });
+  const laterFailure = await f.runOffline(inspect);
+  expect(laterFailure.inspection).toEqual({
+    verification: "conversion-readonly-v1",
+    state: "blocked",
+    detail: "verification-incomplete",
+  });
+  expect(laterFailure.error?.code).toBe("ARTIFACT_INTEGRITY");
+  finalRead.mockRestore();
   await writeFile(
     path.join(f.project.paths.artifacts, "blobs", artifact.sha256),
     "synthetic corrupt conversion",
@@ -2667,8 +2705,168 @@ it("read-only conversion inspection verifies after a committed conversion deadli
   expect(denied.status).toBe("failed");
   expect(denied.inspection?.state).toBe("blocked");
   expect(denied.inspection?.conversion).toBeUndefined();
+  expect(denied.inspection?.diagnostic).toEqual({
+    stage: "inventory-invalid",
+    inventoryFailure: {
+      check: "committed-size",
+      category: "committed-inventory",
+    },
+  });
   expect(f.readPins).toBe(0);
 });
+
+it.each([
+  "tagged",
+  "untagged",
+  "invalid-tag",
+  "cancelled",
+  "deadline",
+  "authority",
+  "authority-throws",
+  "revoked",
+  "cleanup",
+] as const)(
+  "read-only conversion diagnostics preserve denial and read ownership: %s",
+  async (kind) => {
+    const { f, command, apply } = await committedOfflineFixture();
+    const input = {
+      ...command,
+      operation: "reference-conversion-inspect" as const,
+      expectedRecovery: required(apply.receiptSha256),
+    };
+    const before = await f.observeOffline();
+    const signal = new AbortController();
+    const write = vi.spyOn(LocalStore.prototype, "beginReferenceConversion");
+    const inspected = vi
+      .spyOn(ProjectFileSystem.prototype, "inspectRetainedReference")
+      .mockImplementation(async (_input, context) => {
+        if (kind === "cancelled") signal.abort();
+        if (kind === "deadline") f.advanceClock(30001);
+        if (kind === "revoked")
+          vi.spyOn(required(seam.work), "isCurrent").mockReturnValue(false);
+        if (kind === "authority-throws")
+          vi.spyOn(required(seam.work), "isCurrent").mockImplementation(() => {
+            throw new HostBoundaryError(
+              "FORBIDDEN",
+              "Synthetic current authority failure",
+            );
+          });
+        const outcome = {
+          schemaVersion: "1.0" as const,
+          projectId: context.projectId,
+          requestId: context.requestId,
+          status: "failed" as const,
+          error: {
+            code:
+              kind === "authority"
+                ? ("FORBIDDEN" as const)
+                : ("ARTIFACT_INTEGRITY" as const),
+            message: "Synthetic private path must not escape.",
+            retryable: false,
+            diagnosticIds: [],
+          },
+          diagnosticIds: [],
+        };
+        if (kind !== "untagged")
+          Reflect.set(outcome, "inventoryFailure", {
+            check: "publication-shape",
+            category: "history-stage",
+            detail: "unproven-history-coexistence",
+            ...(kind === "invalid-tag" ? { path: "synthetic-private" } : {}),
+          });
+        return outcome;
+      });
+    // Close failure is injected at the actual store boundary, even if inventory never acquired a pin.
+    const close = LocalStore.prototype.close;
+    let rejectClose = kind === "cleanup";
+    const closeSpy = vi
+      .spyOn(LocalStore.prototype, "close")
+      .mockImplementation(function (this: LocalStore) {
+        if (rejectClose) {
+          rejectClose = false;
+          throw new HostBoundaryError(
+            "INTERRUPTED",
+            "Synthetic actual close failure",
+          );
+        }
+        return close.call(this);
+      });
+    const observed = await f
+      .runOffline(input, signal.signal)
+      .catch((error: unknown) => error);
+    if (kind === "authority-throws") {
+      expect(observed).toMatchObject({ code: "FORBIDDEN" });
+      expect(observed).not.toHaveProperty("inspection");
+    } else if (kind === "cleanup") {
+      expect(observed).toBeInstanceOf(NativeCaptureCleanupRequired);
+      if (!(observed instanceof NativeCaptureCleanupRequired))
+        throw new Error("Missing retained cleanup owner.");
+      expect(Reflect.get(observed, "inspection")).toBeUndefined();
+      await observed.close();
+    } else {
+      if (
+        !observed ||
+        typeof observed !== "object" ||
+        !("inspection" in observed)
+      )
+        throw new Error("Missing blocked inspection.");
+      const value = parseContract(
+        "NativeReferenceOfflineEnvelope",
+        JSON.stringify(observed),
+        "json",
+      );
+      expect(value.status).toBe("failed");
+      expect(value.inspection?.state).toBe("blocked");
+      expect(value.inspection?.proof).toBeUndefined();
+      expect(value.inspection?.conversion).toBeUndefined();
+      expect(value.inspection?.diagnostic).toEqual(
+        kind === "tagged"
+          ? {
+              stage: "inventory-invalid",
+              inventoryFailure: {
+                check: "publication-shape",
+                category: "history-stage",
+                detail: "unproven-history-coexistence",
+              },
+            }
+          : kind === "untagged" || kind === "invalid-tag"
+            ? { stage: "inventory-invalid" }
+            : undefined,
+      );
+      expect(JSON.stringify(value)).not.toMatch(
+        /synthetic-private|private path/,
+      );
+      expect(value.inputAccounting?.networkBytes).toBe(0);
+      if (kind === "tagged") {
+        const reads = structuredClone(f.reads);
+        const accounting = value.inputAccounting;
+        inspected.mockImplementation(async (_input, context) => ({
+          schemaVersion: "1.0",
+          projectId: context.projectId,
+          requestId: context.requestId,
+          status: "failed",
+          error: {
+            code: "ARTIFACT_INTEGRITY",
+            message: "Untagged",
+            retryable: false,
+            diagnosticIds: [],
+          },
+          diagnosticIds: [],
+        }));
+        const untagged = await f.runOffline(input);
+        expect(untagged.inspection?.diagnostic).toEqual({
+          stage: "inventory-invalid",
+        });
+        expect(untagged.inputAccounting).toEqual(accounting);
+        expect(f.reads).toEqual(reads);
+      }
+    }
+    closeSpy.mockRestore();
+    expect(write).not.toHaveBeenCalled();
+    expect(f.readPins).toBe(0);
+    expect(await f.observeOffline()).toEqual(before);
+  },
+);
 
 it.skipIf(!nativeRetainedMode || !process.env.DESIGN_STUDIO_V7_HANDOFF)(
   "cold readonly v8 inspects transferred authentic v7 conversion",
@@ -2847,6 +3045,57 @@ it.skipIf(!nativeRetainedMode || !process.env.DESIGN_STUDIO_V7_HANDOFF)(
         throw new Error("Readonly path attempted write");
       });
     const createFile = vi.spyOn(native, "createFile");
+    const fault = process.env.DESIGN_STUDIO_INSPECTION_FAULT;
+    let faultObserved = false;
+    if (fault === "ineligible-job") {
+      const metadata = LocalStore.prototype.referenceJobMetadata;
+      vi.spyOn(LocalStore.prototype, "referenceJobMetadata").mockImplementation(
+        async function (this: LocalStore, ...args) {
+          const value = await metadata.apply(this, args);
+          if (
+            value.status === "complete" &&
+            value.value?.record.job.id.startsWith("diagnostic_")
+          ) {
+            value.value.record.handlerId = "synthetic-ineligible-handler";
+            faultObserved = true;
+          }
+          return value;
+        },
+      );
+    }
+    if (fault === "history-coexistence") {
+      const inspect = ProjectFileSystem.prototype.inspectRetainedReference;
+      vi.spyOn(
+        ProjectFileSystem.prototype,
+        "inspectRetainedReference",
+      ).mockImplementation(async function (
+        this: ProjectFileSystem,
+        input,
+        context,
+      ) {
+        if (!("conversionEvidence" in handoff))
+          throw new Error("Missing synthetic writer output descriptor.");
+        const evidence = parseContract(
+          "ArtifactReference",
+          JSON.stringify(handoff.conversionEvidence),
+          "json",
+        );
+        const artifact = required(
+          input.artifacts.find((a) => a.sha256 === evidence.sha256),
+        );
+        // Only the inventory-input seam is faulted; authentic v7 records stay untouched.
+        input.history = [
+          ...input.history,
+          {
+            ...required(input.targets[0]),
+            stagingId: "00000000-0000-0000-0000-000000000001",
+            artifact,
+          },
+        ];
+        faultObserved = true;
+        return inspect.call(this, input, context);
+      });
+    }
     const open = LocalStore.open.bind(LocalStore);
     vi.spyOn(LocalStore, "open").mockImplementation((options) => {
       expect(options.access).toBe("read-only");
@@ -2867,6 +3116,69 @@ it.skipIf(!nativeRetainedMode || !process.env.DESIGN_STUDIO_V7_HANDOFF)(
       },
       scope.signal,
     );
+    const expectedDiagnostic =
+      fault === "ineligible-job"
+        ? { stage: "ineligible-job" }
+        : fault === "unknown-stage"
+          ? { stage: "inventory-invalid" }
+          : fault === "history-coexistence"
+            ? {
+                stage: "inventory-invalid",
+                inventoryFailure: {
+                  check: "publication-shape",
+                  category: "history-stage",
+                  detail: "unproven-history-coexistence",
+                },
+              }
+            : fault === "output-tamper"
+              ? {
+                  stage: "inventory-invalid",
+                  inventoryFailure: {
+                    check: "committed-size",
+                    category: "committed-inventory",
+                  },
+                }
+              : undefined;
+    if (expectedDiagnostic) {
+      expect(result).toMatchObject({
+        status: "failed",
+        reason: "integrity",
+        inspection: {
+          verification: "conversion-readonly-v1",
+          state: "blocked",
+          detail: "verification-incomplete",
+          diagnostic: expectedDiagnostic,
+        },
+      });
+      expect(result.inspection?.diagnostic).toEqual(expectedDiagnostic);
+      expect(result.error?.code).toBe(
+        fault === "unknown-stage" || fault === "ineligible-job"
+          ? "ACTION_REQUIRED"
+          : "ARTIFACT_INTEGRITY",
+      );
+      expect(result.inspection?.proof).toBeUndefined();
+      expect(result.inspection?.conversion).toBeUndefined();
+      if (fault === "ineligible-job" || fault === "history-coexistence")
+        expect(faultObserved).toBe(true);
+      expect(createFile).not.toHaveBeenCalled();
+      expect(pins.size).toBe(0);
+      expect(result.inputAccounting?.networkBytes).toBe(0);
+      expect(canonicalBytes(result).length).toBeLessThanOrEqual(8192);
+      console.log(
+        JSON.stringify({
+          scope: "authentic-v7-to-v8-blocked-diagnostic",
+          fault,
+          diagnostic: result.inspection?.diagnostic,
+          privateBytes: result.inputAccounting?.privateBytes,
+          nativePinsAndDatabase: "real",
+          faultSeam:
+            fault === "ineligible-job" || fault === "history-coexistence"
+              ? "synthetic-read-result-only"
+              : "owned-synthetic-file-before-readonly-snapshot",
+        }),
+      );
+      return;
+    }
     if (
       "writerOutcome" in handoff &&
       handoff.writerOutcome === "abrupt-after-stage"

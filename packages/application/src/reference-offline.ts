@@ -6,6 +6,7 @@ import type {
   OperationContext,
   ReferenceConversionInspection,
   ReferenceRecoveryBinding,
+  RetainedInventoryFailure,
   StagedArtifact,
 } from "@design-studio/contracts";
 import { validateContract } from "@design-studio/contracts";
@@ -119,6 +120,10 @@ async function openOffline(
   let writer = false;
   let writerContext: OperationContext | undefined;
   let failure: NativeReferenceOfflineEnvelope["error"];
+  let proofStage:
+    | NonNullable<ReferenceConversionInspection["diagnostic"]>["stage"]
+    | undefined;
+  let inventoryFailure: RetainedInventoryFailure | undefined;
   const conversionStages: StagedArtifact[] = [];
   let publicationAdditions: Parameters<
     RetainedReferenceInspection["checkOriginals"]
@@ -412,6 +417,8 @@ async function openOffline(
     record: ReferenceRecoveryRecord | null,
     phase: "proof" | "admission" | "inspection" = "proof",
   ) => {
+    proofStage = undefined;
+    inventoryFailure = undefined;
     input.phase = phase;
     if (!store || !files) throw new ApplicationError("FORBIDDEN");
     const db = store;
@@ -435,7 +442,9 @@ async function openOffline(
         );
         return reader;
       },
-      reason: () => {},
+      reason: (value) => {
+        if (conversionInspection) proofStage = value;
+      },
       ...(record
         ? {
             projectState: (state: Parameters<typeof projectRecoveryState>[0]) =>
@@ -455,12 +464,29 @@ async function openOffline(
             : {}),
         };
         input.phase = phase === "inspection" ? "inspection" : "history";
-        inspection = unwrap(
-          await fs.inspectRetainedReference(expectedInspection, context),
+        const inspected = await fs.inspectRetainedReference(
+          expectedInspection,
+          context,
         );
+        if (
+          conversionInspection &&
+          inspected.status === "failed" &&
+          inspected.inventoryFailure
+        ) {
+          const diagnostic = validateContract(
+            "RetainedInventoryFailure",
+            inspected.inventoryFailure,
+          );
+          if (diagnostic.success)
+            inventoryFailure = structuredClone(diagnostic.value);
+        }
+        inspection = unwrap(inspected);
         return inspection;
       },
     });
+    // A completed retained proof must not label a later graph/output failure.
+    proofStage = undefined;
+    inventoryFailure = undefined;
     if (record) {
       const b = record.reservation.binding;
       const snapshot = unwrap(
@@ -550,6 +576,7 @@ async function openOffline(
       let reason: NativeReferenceOfflineEnvelope["reason"] = "invalid-input";
       let result: NativeReferenceOfflineEnvelope;
       let committedReceiptSha256: string | undefined;
+      let diagnostic: ReferenceConversionInspection["diagnostic"];
       const base = {
         schemaVersion: "1.0" as const,
         operation: owned.operation,
@@ -1048,6 +1075,30 @@ async function openOffline(
         };
       } catch (error) {
         const code = safeError(error).code;
+        if (
+          conversionInspection &&
+          reason === "integrity" &&
+          proofStage &&
+          [
+            "ACTION_REQUIRED",
+            "ARTIFACT_INTEGRITY",
+            "EVIDENCE_MISSING",
+            "CONFLICT",
+            "ASSET_INVALID",
+            "INVALID_SCHEMA",
+          ].includes(code)
+        ) {
+          const checked = validateContract("ReferenceConversionInspection", {
+            verification: "conversion-readonly-v1",
+            state: "blocked",
+            detail: "verification-incomplete",
+            diagnostic: {
+              stage: proofStage,
+              ...(inventoryFailure ? { inventoryFailure } : {}),
+            },
+          });
+          if (checked.success) diagnostic = checked.value.diagnostic;
+        }
         failure = {
           code,
           message: committedReceiptSha256
@@ -1076,7 +1127,11 @@ async function openOffline(
         for (const bytes of copies) bytes.fill(0);
         active = false;
       }
-      await close();
+      try {
+        if (diagnostic && !work.isCurrent()) diagnostic = undefined;
+      } finally {
+        await close();
+      }
       if (
         result.status === "complete" &&
         (suppliedSignal.aborted ||
@@ -1104,6 +1159,12 @@ async function openOffline(
           verification: "conversion-readonly-v1",
           state: "blocked",
           detail: "verification-incomplete",
+          ...(diagnostic &&
+          result.status === "failed" &&
+          !suppliedSignal.aborted &&
+          work.policy.clock.now() < Date.parse(deadline)
+            ? { diagnostic }
+            : {}),
         };
       const validated = validateContract(
         "NativeReferenceOfflineEnvelope",

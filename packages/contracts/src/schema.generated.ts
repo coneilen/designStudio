@@ -509,6 +509,33 @@ export const foundationSchema = {
         "proof": {
           "$ref": "#/definitions/ReferenceConversionInspectionProof"
         },
+        "diagnostic": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "stage"
+          ],
+          "properties": {
+            "stage": {
+              "$ref": "#/definitions/ReferenceRecoveryPlanReason"
+            },
+            "inventoryFailure": {
+              "$ref": "#/definitions/RetainedInventoryFailure"
+            }
+          },
+          "if": {
+            "required": [
+              "inventoryFailure"
+            ]
+          },
+          "then": {
+            "properties": {
+              "stage": {
+                "const": "inventory-invalid"
+              }
+            }
+          }
+        },
         "conversion": {
           "type": "object",
           "additionalProperties": false,
@@ -538,6 +565,20 @@ export const foundationSchema = {
         }
       },
       "allOf": [
+        {
+          "if": {
+            "required": [
+              "diagnostic"
+            ]
+          },
+          "then": {
+            "properties": {
+              "state": {
+                "const": "blocked"
+              }
+            }
+          }
+        },
         {
           "if": {
             "properties": {
@@ -721,6 +762,50 @@ export const foundationSchema = {
         }
       },
       "allOf": [
+        {
+          "if": {
+            "required": [
+              "inspection"
+            ],
+            "properties": {
+              "inspection": {
+                "type": "object",
+                "required": [
+                  "diagnostic"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "reason",
+              "error"
+            ],
+            "properties": {
+              "status": {
+                "const": "failed"
+              },
+              "reason": {
+                "const": "integrity"
+              },
+              "error": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "enum": [
+                      "ACTION_REQUIRED",
+                      "ARTIFACT_INTEGRITY",
+                      "EVIDENCE_MISSING",
+                      "CONFLICT",
+                      "ASSET_INVALID",
+                      "INVALID_SCHEMA"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
         {
           "if": {
             "properties": {
@@ -6017,6 +6102,25 @@ export const foundationSchema = {
         }
       }
     },
+    "ReferenceRecoveryPlanReason": {
+      "enum": [
+        "invalid-input",
+        "authority-denied",
+        "ineligible-job",
+        "job-changed",
+        "source-metadata-invalid",
+        "source-proof-invalid",
+        "inventory-invalid",
+        "evidence-invalid",
+        "png-invalid",
+        "known-pair-native-read-blocked",
+        "state-changed",
+        "input-limit",
+        "cancelled",
+        "deadline-exceeded",
+        "cleanup-incomplete"
+      ]
+    },
     "NativeReferenceRecoveryPlanEnvelope": {
       "type": "object",
       "additionalProperties": false,
@@ -6052,23 +6156,7 @@ export const foundationSchema = {
           "$ref": "#/definitions/ReferenceRecoveryPlan"
         },
         "reason": {
-          "enum": [
-            "invalid-input",
-            "authority-denied",
-            "ineligible-job",
-            "job-changed",
-            "source-metadata-invalid",
-            "source-proof-invalid",
-            "inventory-invalid",
-            "evidence-invalid",
-            "png-invalid",
-            "known-pair-native-read-blocked",
-            "state-changed",
-            "input-limit",
-            "cancelled",
-            "deadline-exceeded",
-            "cleanup-incomplete"
-          ]
+          "$ref": "#/definitions/ReferenceRecoveryPlanReason"
         },
         "inputAccounting": {
           "$ref": "#/definitions/ReferenceInputAccounting"

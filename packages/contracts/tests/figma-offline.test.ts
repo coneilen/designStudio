@@ -97,6 +97,114 @@ it("keeps readonly conversion inspection states closed and readiness non-rendera
     ).toBe(false);
 });
 
+it("limits retained proof diagnostics to failed blocked inspection and existing closed fields", () => {
+  const base = {
+    schemaVersion: "1.0",
+    operation: "reference-conversion-inspect",
+    projectId: "synthetic",
+    requestId: "original",
+    status: "failed",
+    reason: "integrity",
+    error: {
+      code: "ACTION_REQUIRED",
+      message: "Closed failure.",
+      retryable: false,
+      diagnosticIds: [],
+    },
+    inspection: {
+      verification: "conversion-readonly-v1",
+      state: "blocked",
+      detail: "verification-incomplete",
+    },
+  };
+  for (const diagnostic of [
+    { stage: "ineligible-job" },
+    { stage: "inventory-invalid" },
+    {
+      stage: "inventory-invalid",
+      inventoryFailure: {
+        check: "publication-shape",
+        category: "history-stage",
+        detail: "unproven-history-coexistence",
+      },
+    },
+    {
+      stage: "inventory-invalid",
+      inventoryFailure: {
+        check: "committed-size",
+        category: "committed-inventory",
+      },
+    },
+  ]) {
+    const value = {
+      ...base,
+      inspection: { ...base.inspection, diagnostic },
+    };
+    expect(
+      validateContract("NativeReferenceOfflineEnvelope", value).success,
+    ).toBe(true);
+    for (const status of ["complete", "cancelled", "interrupted"])
+      expect(
+        validateContract("NativeReferenceOfflineEnvelope", { ...value, status })
+          .success,
+      ).toBe(false);
+    for (const code of [
+      "CANCELLED",
+      "DEADLINE_EXCEEDED",
+      "FORBIDDEN",
+      "INTERRUPTED",
+    ])
+      expect(
+        validateContract("NativeReferenceOfflineEnvelope", {
+          ...value,
+          error: { ...value.error, code },
+        }).success,
+      ).toBe(false);
+    for (const operation of ["reference-recovery-inspect", "convert-reference"])
+      expect(
+        validateContract("NativeReferenceOfflineEnvelope", {
+          ...value,
+          operation,
+        }).success,
+      ).toBe(false);
+  }
+  for (const diagnostic of [
+    { stage: "private-path" },
+    { stage: "inventory-invalid", path: "private" },
+    { stage: "inventory-invalid", message: "private" },
+    {
+      stage: "ineligible-job",
+      inventoryFailure: { check: "body-hash", category: "retained-target" },
+    },
+    {
+      stage: "inventory-invalid",
+      inventoryFailure: {
+        check: "publication-shape",
+        category: "namespace",
+        detail: "orphan-stage",
+      },
+    },
+  ])
+    expect(
+      validateContract("NativeReferenceOfflineEnvelope", {
+        ...base,
+        inspection: { ...base.inspection, diagnostic },
+      }).success,
+    ).toBe(false);
+  expect(validateContract("NativeReferenceOfflineEnvelope", base).success).toBe(
+    true,
+  );
+  expect(
+    validateContract("NativeReferenceOfflineEnvelope", {
+      schemaVersion: "1.0",
+      operation: "reference-recovery-apply-plan",
+      projectId: "synthetic",
+      requestId: "original",
+      status: "complete",
+    }).success,
+  ).toBe(true);
+});
+
 it.each([
   "figma-offline-fixed-v1",
   "figma-structure-fixed-v1",
