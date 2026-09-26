@@ -28,12 +28,24 @@ remains `blocked` or `needs-review`, never render-ready.
 
 Failed blocked inspection may include an enum-only `diagnostic.stage` from the
 existing retained-proof reasons, plus a validated `RetainedInventoryFailure`
-when the inventory guard supplied one. This does not change the outer status
-or reason. Untagged namespace failures report only `inventory-invalid`, not
-an orphan identification. Diagnostics carry no paths, IDs, messages or data;
+when the inventory guard supplied one. The three namespace-only
+`scan-blob-classification`, `scan-stage-classification` and
+`scan-root-entry-classification` checks identify existing scan refusal branches,
+not which arm of their OR predicates failed or whether an entry is an orphan.
+Alternatively, `publicationCheck` identifies one of two direct application
+refusals: `pending-stages-without-capture-recovery-binding` or
+`pending-stage-provenance-mismatch`. It requires `ACTION_REQUIRED` and
+`inventory-invalid` and cannot coexist with `inventoryFailure`. Application
+markers require the original error and exact current reader identity.
+These annotations do not change the outer status or reason. Propagated
+unclassified failures can still report only `inventory-invalid`.
+Diagnostics carry no paths, IDs, messages or data;
 they are omitted after a successful retained proof and on cancellation,
 deadline, authority or cleanup uncertainty. No additional reads or grants are
 used, and the v8 inspection supplement and six historical policies are unchanged.
+Older strict schemas/drivers reject the new enum values or field fail-closed;
+they must not strip unknown fields or infer a private cause. New executable
+and schema bytes require independently reviewed release and driver bindings.
 
 `NativeReferenceRecoveryPlanEnvelope` and `ReferenceRecoveryPlan` describe the
 separate read-only retained-byte validator. Successful verification means

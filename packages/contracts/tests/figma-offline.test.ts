@@ -205,6 +205,121 @@ it("limits retained proof diagnostics to failed blocked inspection and existing 
   ).toBe(true);
 });
 
+it("closes five direct refusal tags without accepting application/host conflation or stale diagnostics", () => {
+  const envelope = (diagnostic: object) => ({
+    schemaVersion: "1.0",
+    operation: "reference-conversion-inspect",
+    projectId: "synthetic",
+    requestId: "original",
+    status: "failed",
+    reason: "integrity",
+    error: {
+      code: "ACTION_REQUIRED",
+      message: "Closed failure.",
+      retryable: false,
+      diagnosticIds: [],
+    },
+    inspection: {
+      verification: "conversion-readonly-v1",
+      state: "blocked",
+      detail: "verification-incomplete",
+      diagnostic,
+    },
+  });
+  for (const check of [
+    "scan-blob-classification",
+    "scan-stage-classification",
+    "scan-root-entry-classification",
+  ]) {
+    const inventoryFailure = { check, category: "namespace" };
+    expect(
+      validateContract("RetainedInventoryFailure", inventoryFailure).success,
+    ).toBe(true);
+    expect(
+      validateContract(
+        "NativeReferenceOfflineEnvelope",
+        envelope({ stage: "inventory-invalid", inventoryFailure }),
+      ).success,
+    ).toBe(true);
+    for (const extra of [
+      { category: "committed-inventory" },
+      { detail: "missing-stage-or-entry" },
+      { path: "private" },
+    ])
+      expect(
+        validateContract("RetainedInventoryFailure", {
+          ...inventoryFailure,
+          ...extra,
+        }).success,
+      ).toBe(false);
+    expect(
+      validateContract("NativeReferenceRecoveryPlanEnvelope", {
+        schemaVersion: "1.0",
+        operation: "reference-recovery-plan",
+        projectId: "synthetic",
+        requestId: "original",
+        status: "failed",
+        reason: "inventory-invalid",
+        error: envelope({}).error,
+        inventoryFailure,
+      }).success,
+    ).toBe(true);
+  }
+  for (const publicationCheck of [
+    "pending-stages-without-capture-recovery-binding",
+    "pending-stage-provenance-mismatch",
+  ]) {
+    const diagnostic = { stage: "inventory-invalid", publicationCheck };
+    expect(
+      validateContract("RetainedPublicationCheck", publicationCheck).success,
+    ).toBe(true);
+    const value = envelope(diagnostic);
+    expect(
+      validateContract("NativeReferenceOfflineEnvelope", value).success,
+    ).toBe(true);
+    for (const status of ["complete", "cancelled", "interrupted"])
+      expect(
+        validateContract("NativeReferenceOfflineEnvelope", { ...value, status })
+          .success,
+      ).toBe(false);
+    for (const code of [
+      "ARTIFACT_INTEGRITY",
+      "CANCELLED",
+      "DEADLINE_EXCEEDED",
+      "FORBIDDEN",
+      "INTERRUPTED",
+    ])
+      expect(
+        validateContract("NativeReferenceOfflineEnvelope", {
+          ...value,
+          error: { ...value.error, code },
+        }).success,
+      ).toBe(false);
+    for (const invalid of [
+      { ...diagnostic, stage: "source-proof-invalid" },
+      {
+        ...diagnostic,
+        inventoryFailure: {
+          check: "scan-stage-classification",
+          category: "namespace",
+        },
+      },
+      { ...diagnostic, message: "private" },
+      { ...diagnostic, publicationCheck: "specific-private-field" },
+    ])
+      expect(
+        validateContract("NativeReferenceOfflineEnvelope", envelope(invalid))
+          .success,
+      ).toBe(false);
+    expect(
+      validateContract("NativeReferenceOfflineEnvelope", {
+        ...value,
+        reason: "cleanup-required",
+      }).success,
+    ).toBe(false);
+  }
+});
+
 it.each([
   "figma-offline-fixed-v1",
   "figma-structure-fixed-v1",

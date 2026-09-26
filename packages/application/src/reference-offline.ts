@@ -52,6 +52,7 @@ import {
 } from "./reference-conversion.js";
 import { ReferenceInput } from "./reference-input.js";
 import { ReferenceReader, ref, same } from "./reference-proof.js";
+import { retainedPublicationCheck } from "./reference-publications.js";
 import {
   proveRetainedReference,
   retainedPlanFacts,
@@ -1088,13 +1089,21 @@ async function openOffline(
             "INVALID_SCHEMA",
           ].includes(code)
         ) {
+          const publicationCheck =
+            proofStage === "inventory-invalid" && code === "ACTION_REQUIRED"
+              ? retainedPublicationCheck(error, reader)
+              : undefined;
           const checked = validateContract("ReferenceConversionInspection", {
             verification: "conversion-readonly-v1",
             state: "blocked",
             detail: "verification-incomplete",
             diagnostic: {
               stage: proofStage,
-              ...(inventoryFailure ? { inventoryFailure } : {}),
+              ...(publicationCheck
+                ? { publicationCheck }
+                : inventoryFailure
+                  ? { inventoryFailure }
+                  : {}),
             },
           });
           if (checked.success) diagnostic = checked.value.diagnostic;

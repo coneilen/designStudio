@@ -35,6 +35,12 @@ identify only the reached proof stage and, where available, the inventory
 guard category/detail. A stage-only denial cannot identify a private orphan
 or establish absence. Fixture faults and synthetic authority seams are not
 evidence of any particular live failure.
+The retained scan now labels its existing blob, stage and root-entry
+classification refusals with closed namespace checks, without examining the
+rejected entry. Application pending-stage refusals use a separate reader-bound
+`publicationCheck`; neither form changes admission, I/O, error code or policies.
+Unknown propagated errors remain stage-only. Fresh generated native tests
+cover all three scan branches with unchanged project snapshots and no writer.
 
 Each cross-release mode now has a fresh owned fixture with a 60-second setup
 hook, a separate 60-second reader/assertion body, and a 60-second cleanup

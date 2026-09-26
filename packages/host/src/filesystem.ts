@@ -1636,11 +1636,16 @@ export class ProjectFileSystem implements FileSystemBoundary {
                   (!artifacts.has(hash) &&
                     !additions?.artifacts.some((a) => a.sha256 === hash) &&
                     !input.targets.some((s) => s.artifact.sha256 === hash))
-                )
+                ) {
+                  inventoryFailure ??= {
+                    check: "scan-blob-classification",
+                    category: "namespace",
+                  };
                   throw new HostBoundaryError(
                     "ACTION_REQUIRED",
                     "Unclassified retained blob.",
                   );
+                }
                 seenBlobs.add(hash);
                 await add(
                   rootId,
@@ -1657,11 +1662,16 @@ export class ProjectFileSystem implements FileSystemBoundary {
                   (!expected.has(id) &&
                     !additions?.stages.some((s) => s.stagingId === id)) ||
                   seenStages.has(id)
-                )
+                ) {
+                  inventoryFailure ??= {
+                    check: "scan-stage-classification",
+                    category: "namespace",
+                  };
                   throw new HostBoundaryError(
                     "ACTION_REQUIRED",
                     "Unclassified or duplicate retained stage.",
                   );
+                }
                 seenStages.add(id);
                 await add(
                   rootId,
@@ -1676,6 +1686,10 @@ export class ProjectFileSystem implements FileSystemBoundary {
             ) {
               await add(rootId, name, directory, false);
             } else {
+              inventoryFailure ??= {
+                check: "scan-root-entry-classification",
+                category: "namespace",
+              };
               throw new HostBoundaryError(
                 "ACTION_REQUIRED",
                 "Unclassified retained namespace.",

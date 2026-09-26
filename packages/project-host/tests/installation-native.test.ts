@@ -95,6 +95,8 @@ describe("pinned v7 conversion compatibility", () => {
     "partial-stage",
     "ineligible-job",
     "unknown-stage",
+    "unknown-blob",
+    "unknown-root",
     "history-coexistence",
     "output-tamper",
   ] as const)
@@ -234,6 +236,8 @@ describe("pinned v7 conversion compatibility", () => {
               if (
                 [
                   "unknown-stage",
+                  "unknown-blob",
+                  "unknown-root",
                   "history-coexistence",
                   "output-tamper",
                 ].includes(mode)
@@ -247,7 +251,24 @@ describe("pinned v7 conversion compatibility", () => {
                   "blobs",
                   transfer.conversionEvidence.sha256,
                 );
-                if (mode === "output-tamper")
+                if (mode === "unknown-blob")
+                  await writeFile(
+                    path.join(
+                      transfer.root,
+                      "artifacts",
+                      "blobs",
+                      "f".repeat(64),
+                    ),
+                    Buffer.of(99),
+                    { flag: "wx" },
+                  );
+                else if (mode === "unknown-root")
+                  await writeFile(
+                    path.join(transfer.root, "artifacts", "unclassified"),
+                    Buffer.of(99),
+                    { flag: "wx" },
+                  );
+                else if (mode === "output-tamper")
                   await writeFile(blob, "synthetic changed conversion output");
                 else {
                   const directory = (

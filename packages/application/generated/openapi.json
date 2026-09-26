@@ -2175,9 +2175,18 @@
                   },
                   "inventoryFailure": {
                     "$ref": "#/definitions/RetainedInventoryFailure"
+                  },
+                  "publicationCheck": {
+                    "$ref": "#/definitions/RetainedPublicationCheck"
                   }
                 },
-                "if": { "required": ["inventoryFailure"] },
+                "not": { "required": ["inventoryFailure", "publicationCheck"] },
+                "if": {
+                  "anyOf": [
+                    { "required": ["inventoryFailure"] },
+                    { "required": ["publicationCheck"] }
+                  ]
+                },
                 "then": {
                   "properties": { "stage": { "const": "inventory-invalid" } }
                 }
@@ -2315,6 +2324,32 @@
               "error": { "$ref": "#/definitions/ContractError" }
             },
             "allOf": [
+              {
+                "if": {
+                  "required": ["inspection"],
+                  "properties": {
+                    "inspection": {
+                      "type": "object",
+                      "required": ["diagnostic"],
+                      "properties": {
+                        "diagnostic": {
+                          "type": "object",
+                          "required": ["publicationCheck"]
+                        }
+                      }
+                    }
+                  }
+                },
+                "then": {
+                  "required": ["error"],
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": { "code": { "const": "ACTION_REQUIRED" } }
+                    }
+                  }
+                }
+              },
               {
                 "if": {
                   "required": ["inspection"],
@@ -5609,6 +5644,13 @@
               }
             }
           },
+          "RetainedPublicationCheck": {
+            "type": "string",
+            "enum": [
+              "pending-stages-without-capture-recovery-binding",
+              "pending-stage-provenance-mismatch"
+            ]
+          },
           "RetainedInventoryFailure": {
             "type": "object",
             "additionalProperties": false,
@@ -5627,7 +5669,10 @@
                   "body-read",
                   "body-hash",
                   "inventory-recheck",
-                  "native-identity-recheck"
+                  "native-identity-recheck",
+                  "scan-blob-classification",
+                  "scan-stage-classification",
+                  "scan-root-entry-classification"
                 ]
               },
               "category": {
@@ -5651,10 +5696,30 @@
                 ]
               }
             },
-            "if": { "required": ["detail"] },
-            "then": {
-              "properties": { "check": { "const": "publication-shape" } }
-            }
+            "allOf": [
+              {
+                "if": { "required": ["detail"] },
+                "then": {
+                  "properties": { "check": { "const": "publication-shape" } }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "check": {
+                      "enum": [
+                        "scan-blob-classification",
+                        "scan-stage-classification",
+                        "scan-root-entry-classification"
+                      ]
+                    }
+                  }
+                },
+                "then": {
+                  "properties": { "category": { "const": "namespace" } }
+                }
+              }
+            ]
           },
           "ReferenceRecoveryPlanReason": {
             "enum": [

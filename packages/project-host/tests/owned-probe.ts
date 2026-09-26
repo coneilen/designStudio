@@ -65,6 +65,8 @@ type FixtureMode =
   | "partial-stage"
   | "ineligible-job"
   | "unknown-stage"
+  | "unknown-blob"
+  | "unknown-root"
   | "history-coexistence"
   | "output-tamper"
   | "ownership-regression";

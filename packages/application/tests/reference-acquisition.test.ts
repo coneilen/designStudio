@@ -3231,8 +3231,21 @@ it.skipIf(!nativeRetainedMode || !process.env.DESIGN_STUDIO_V7_HANDOFF)(
     const expectedDiagnostic =
       fault === "ineligible-job"
         ? { stage: "ineligible-job" }
-        : fault === "unknown-stage"
-          ? { stage: "inventory-invalid" }
+        : fault === "unknown-stage" ||
+            fault === "unknown-blob" ||
+            fault === "unknown-root"
+          ? {
+              stage: "inventory-invalid",
+              inventoryFailure: {
+                check:
+                  fault === "unknown-stage"
+                    ? "scan-stage-classification"
+                    : fault === "unknown-blob"
+                      ? "scan-blob-classification"
+                      : "scan-root-entry-classification",
+                category: "namespace",
+              },
+            }
           : fault === "history-coexistence"
             ? {
                 stage: "inventory-invalid",
@@ -3264,7 +3277,10 @@ it.skipIf(!nativeRetainedMode || !process.env.DESIGN_STUDIO_V7_HANDOFF)(
       });
       expect(result.inspection?.diagnostic).toEqual(expectedDiagnostic);
       expect(result.error?.code).toBe(
-        fault === "unknown-stage" || fault === "ineligible-job"
+        fault === "unknown-stage" ||
+          fault === "unknown-blob" ||
+          fault === "unknown-root" ||
+          fault === "ineligible-job"
           ? "ACTION_REQUIRED"
           : "ARTIFACT_INTEGRITY",
       );

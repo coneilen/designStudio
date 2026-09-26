@@ -15,10 +15,15 @@ import {
   type FigmaCaptureManifest,
   type FigmaCaptureRequest,
   type Outcome,
+  parseContract,
   validateContract,
 } from "@design-studio/contracts";
 import { fakeComplete } from "@design-studio/contracts/testing";
-import { canonicalBytes, canonicalDigest } from "@design-studio/design-ir";
+import {
+  canonicalBytes,
+  canonicalDigest,
+  hashBytes,
+} from "@design-studio/design-ir";
 import {
   CAPTURE_HANDLER_ID,
   CAPTURE_HANDLER_VERSION,
@@ -59,6 +64,7 @@ import { nativeCapturePolicy } from "../../project-host/dist/capture-authority.j
 import { CAPTURE_DIAGNOSTIC_POLICY_SHA256 } from "../../project-host/src/capture-diagnostic-profile.js";
 import { CAPTURE_RECOVERY_POLICY_SHA256 } from "../../project-host/src/capture-recovery-profile.js";
 import { CAPTURE_REFERENCE_POLICY_SHA256 } from "../../project-host/src/capture-reference-profile.js";
+import { REFERENCE_CONVERSION_INSPECTION_POLICY_SHA256 } from "../../project-host/src/reference-conversion-inspection-profile.js";
 import { REFERENCE_OFFLINE_POLICY_SHA256 } from "../../project-host/src/reference-offline-profile.js";
 import { REFERENCE_VALIDATION_POLICY_SHA256 } from "../../project-host/src/reference-validation-profile.js";
 import { initializeImmutableSqlite } from "../../storage/dist/immutable-sqlite.js";
@@ -84,6 +90,7 @@ import {
 } from "../src/capture-recovery.js";
 import {
   assembleNativeCapture,
+  NativeCaptureCleanupRequired,
   type NativeCaptureRuntime,
   NativeCaptureStartupCleanupRequired,
 } from "../src/capture-runtime-internal.js";
@@ -91,6 +98,7 @@ import { RecoveryDecisions } from "../src/recovery.js";
 import { ReferenceInput } from "../src/reference-input.js";
 import {
   type NativeReferenceOfflineInput,
+  openNativeReferenceConversionInspection,
   openNativeReferenceOffline,
 } from "../src/reference-offline.js";
 import { ReferenceReader } from "../src/reference-proof.js";
@@ -102,6 +110,7 @@ import {
   REFERENCE_DOWNLOAD_CONFIRMATION,
 } from "../src/reference-runtime.js";
 import { openNativeReferenceValidation } from "../src/reference-validation.js";
+import { ApplicationError, safeError } from "../src/response.js";
 import {
   AsyncTestScope,
   captureTestScope,
@@ -331,6 +340,7 @@ async function createFixture(
     | undefined;
   let validationMode = false;
   let offlineMode = false;
+  let conversionInspectionMode = false;
   let offline:
     | Awaited<ReturnType<typeof openNativeReferenceOffline>>
     | undefined;
@@ -404,6 +414,13 @@ async function createFixture(
       referenceValidationAuthority: async () =>
         REFERENCE_VALIDATION_POLICY_SHA256,
       referenceOfflineAuthority: async () => REFERENCE_OFFLINE_POLICY_SHA256,
+      referenceConversionInspectionAuthority: async () =>
+        REFERENCE_CONVERSION_INSPECTION_POLICY_SHA256,
+      pinReferenceConversionInspectionDatabase: async () => {
+        if (!work.pinReferenceOfflineDatabase)
+          throw new Error("Missing immutable fixture pin");
+        return work.pinReferenceOfflineDatabase();
+      },
       pinReferenceOfflineDatabase: async () => {
         const pin = await syntheticImmutableSnapshot(project.paths.database);
         const before = await lstat(project.paths.database);
@@ -487,7 +504,9 @@ async function createFixture(
     );
     try {
       if (offlineMode) {
-        offline = await openNativeReferenceOffline(project);
+        offline = conversionInspectionMode
+          ? await openNativeReferenceConversionInspection(project)
+          : await openNativeReferenceOffline(project);
         offlines.push(offline);
       } else if (validationMode) {
         validation = await openNativeReferenceValidation(project);
@@ -951,13 +970,18 @@ async function createFixture(
         await validation?.close();
       }
     },
-    async runOffline(command: NativeReferenceOfflineInput) {
+    async runOffline(
+      command: NativeReferenceOfflineInput,
+      signal = scope.signal,
+    ) {
       await runtime.close();
       await validation?.close();
       await offline?.close();
       offlineMode = true;
+      conversionInspectionMode =
+        command.operation === "reference-conversion-inspect";
       await open();
-      return required(offline).execute(command, scope.signal);
+      return required(offline).execute(command, signal);
     },
     raceBeforeCommit(nextOnly = false) {
       beforeCommit = () =>
@@ -1905,6 +1929,8 @@ const predecessorFaults = [
   "valid",
   "diagnostic-valid",
   "diagnostic-retained-valid",
+  "diagnostic-retained-publication-unbound",
+  "diagnostic-retained-publication-provenance",
   "diagnostic-retained-coexisting-history",
   "diagnostic-retained-coexisting-current-only",
   "diagnostic-retained-successor-output",
@@ -1933,6 +1959,39 @@ const predecessorFaults = [
   "missing-protection",
   "timestamp-tie-unrelated",
 ] as const;
+function publicationReadFault(
+  state: Parameters<typeof referencePublications.retainedReferenceInventory>[1],
+  proposal: Parameters<
+    typeof referencePublications.retainedReferenceInventory
+  >[2],
+  originalJobId: string,
+  unbound: boolean,
+) {
+  const changed = structuredClone(state);
+  const selected = required(
+    changed.jobs.find(
+      (record) => record.job.id === proposal.binding.originalJobId,
+    ),
+  );
+  let supplied = proposal;
+  if (unbound) {
+    delete selected.submission.captureRecovery;
+    supplied = {
+      ...proposal,
+      binding: {
+        ...proposal.binding,
+        originalRecordSha256: canonicalDigest(selected),
+      },
+    };
+  } else {
+    const pending = required(
+      changed.stages.find((item) => item.jobId === originalJobId),
+    );
+    pending.requestId = "synthetic-wrong-request";
+  }
+  return { changed, supplied };
+}
+
 async function retainedPredecessorScenario(
   fault: (typeof predecessorFaults)[number],
   prepareOnly = false,
@@ -1942,8 +2001,12 @@ async function retainedPredecessorScenario(
   const successorCoexistence = fault.startsWith(
     "diagnostic-retained-successor-",
   );
+  const publicationCheckCase =
+    fault === "diagnostic-retained-publication-unbound" ||
+    fault === "diagnostic-retained-publication-provenance";
   const offlinePublication =
-    fault === "diagnostic-retained-successor-output-offline";
+    fault === "diagnostic-retained-successor-output-offline" ||
+    publicationCheckCase;
   const validSuccessor =
     fault === "diagnostic-retained-successor-output" || offlinePublication;
   const f = await fixture(true, undefined, {
@@ -1951,6 +2014,7 @@ async function retainedPredecessorScenario(
     committedStageBytes: coexistence,
     successorStageBytes: successorCoexistence,
     fixedClock: true,
+    ...(publicationCheckCase ? { stageCount: 2 } : {}),
   });
   const beforeRecord = await f.record();
   const beforeStages = await f.stages();
@@ -2594,6 +2658,37 @@ async function retainedPredecessorScenario(
         : undefined;
       seam.physicalReads = 0;
       seam.measureReads = measured;
+      if (publicationCheckCase) {
+        const inventory = referencePublications.retainedReferenceInventory;
+        const legacy = vi
+          .spyOn(referencePublications, "retainedReferenceInventory")
+          .mockImplementation((reader, state, proposal, verified) => {
+            const { changed, supplied } = publicationReadFault(
+              state,
+              proposal,
+              f.initial.job.id,
+              fault === "diagnostic-retained-publication-unbound",
+            );
+            return inventory(reader, changed, supplied, verified);
+          });
+        try {
+          const denied = await f.validateRetained(
+            required(metadata.value?.metadata?.jobSha256),
+          );
+          expect(denied).toMatchObject({
+            status: "failed",
+            reason: "inventory-invalid",
+            error: { code: "ACTION_REQUIRED" },
+          });
+          expect(denied.value).toBeUndefined();
+          expect(denied.inventoryFailure).toBeUndefined();
+          expect(JSON.stringify(denied)).not.toMatch(
+            /publicationCheck|synthetic-wrong-request/,
+          );
+        } finally {
+          legacy.mockRestore();
+        }
+      }
       const recovered = await f
         .validateRetained(required(metadata.value?.metadata?.jobSha256))
         .finally(() => {
@@ -2683,6 +2778,298 @@ async function retainedPredecessorScenario(
             confirmation: "RECOVER-VERIFIED-REFERENCE-OFFLINE",
           });
           expect(recovered.status, JSON.stringify(recovered)).toBe("complete");
+          if (publicationCheckCase) {
+            const inventory = referencePublications.retainedReferenceInventory;
+            let marked: unknown;
+            let markedReader: ReferenceReader | undefined;
+            let behavior:
+              | "fresh"
+              | "prior-error"
+              | "cancel"
+              | "deadline"
+              | "current"
+              | "cleanup" = "fresh";
+            const cancellation = new AbortController();
+            const snapshot = async () => {
+              const entries: object[] = [];
+              const walk = async (directory: string) => {
+                for (const name of (await readdir(directory)).sort()) {
+                  const filename = path.join(directory, name);
+                  const stat = await lstat(filename, { bigint: true });
+                  if (stat.isDirectory()) await walk(filename);
+                  else
+                    entries.push({
+                      name: path.relative(f.project.paths.temp, filename),
+                      ino: String(stat.ino),
+                      size: String(stat.size),
+                      mtime: String(stat.mtimeNs),
+                      nlink: String(stat.nlink),
+                      sha256: hashBytes(await readFile(filename)),
+                    });
+                }
+              };
+              await walk(f.project.paths.temp);
+              return entries;
+            };
+            const beforeInspection = await snapshot();
+            const noWrites = vi.spyOn(
+              LocalStore.prototype,
+              "beginReferenceConversion",
+            );
+            const inspection = vi
+              .spyOn(referencePublications, "retainedReferenceInventory")
+              .mockImplementation(async (reader, state, proposal, verified) => {
+                if (behavior === "prior-error") {
+                  expect(reader).not.toBe(markedReader);
+                  expect(
+                    referencePublications.retainedPublicationCheck(
+                      marked,
+                      reader,
+                    ),
+                  ).toBeUndefined();
+                  throw marked;
+                }
+                const { changed, supplied } = publicationReadFault(
+                  state,
+                  proposal,
+                  f.initial.job.id,
+                  fault === "diagnostic-retained-publication-unbound",
+                );
+                // These are explicit read-result seams; durable authentic fixture records are unchanged.
+                let error: unknown;
+                try {
+                  await inventory(reader, changed, supplied, verified);
+                } catch (caught) {
+                  error = caught;
+                }
+                const publicationCheck =
+                  fault === "diagnostic-retained-publication-unbound"
+                    ? "pending-stages-without-capture-recovery-binding"
+                    : "pending-stage-provenance-mismatch";
+                expect(error).toMatchObject({
+                  code: "ACTION_REQUIRED",
+                  httpStatus: 400,
+                  message: "ACTION_REQUIRED",
+                });
+                expect(error).toBeInstanceOf(ApplicationError);
+                if (!(error instanceof ApplicationError))
+                  throw new Error("Expected original application refusal");
+                expect(Object.keys(error)).toEqual(
+                  Object.keys(new ApplicationError("ACTION_REQUIRED")),
+                );
+                expect(safeError(error)).toBe(error);
+                marked = error;
+                markedReader = reader;
+                expect(
+                  referencePublications.retainedPublicationCheck(error, reader),
+                ).toBe(publicationCheck);
+                expect(
+                  referencePublications.retainedPublicationCheck(
+                    { code: "ACTION_REQUIRED", publicationCheck },
+                    reader,
+                  ),
+                ).toBeUndefined();
+                expect(
+                  referencePublications.retainedPublicationCheck(
+                    Object.assign(new ApplicationError("ACTION_REQUIRED"), {
+                      publicationCheck,
+                    }),
+                    reader,
+                  ),
+                ).toBeUndefined();
+                expect(
+                  referencePublications.retainedPublicationCheck(
+                    structuredClone(error),
+                    reader,
+                  ),
+                ).toBeUndefined();
+                expect(
+                  referencePublications.retainedPublicationCheck(
+                    new Error("wrapped", { cause: error }),
+                    reader,
+                  ),
+                ).toBeUndefined();
+                expect(
+                  referencePublications.retainedPublicationCheck(
+                    error,
+                    undefined,
+                  ),
+                ).toBeUndefined();
+                const other = new ReferenceReader(
+                  reader.work,
+                  reader.store,
+                  reader.files,
+                  reader.context,
+                  reader.input,
+                  true,
+                  true,
+                );
+                try {
+                  expect(
+                    referencePublications.retainedPublicationCheck(
+                      error,
+                      other,
+                    ),
+                  ).toBeUndefined();
+                } finally {
+                  await other.close();
+                }
+                if (fault === "diagnostic-retained-publication-provenance") {
+                  for (const field of [
+                    "jobId",
+                    "requestId",
+                    "artifactRootId",
+                    "attempt",
+                    "fencingToken",
+                    "disposition",
+                    "leaseId",
+                    "hostInstanceId",
+                  ] as const) {
+                    const altered = structuredClone(state);
+                    const stages = altered.stages.filter(
+                      (item) => item.jobId === f.initial.job.id,
+                    );
+                    expect(stages).toHaveLength(2);
+                    const item = required(
+                      stages[
+                        field === "leaseId" || field === "hostInstanceId"
+                          ? 1
+                          : 0
+                      ],
+                    );
+                    if (field === "attempt" || field === "fencingToken")
+                      item[field] = 7;
+                    else if (field === "disposition")
+                      item.disposition = "retained";
+                    else item[field] = "synthetic-mismatch";
+                    let mismatch: unknown;
+                    try {
+                      await inventory(reader, altered, proposal, verified);
+                    } catch (caught) {
+                      mismatch = caught;
+                    }
+                    expect(mismatch).toMatchObject({
+                      code: "ACTION_REQUIRED",
+                      httpStatus: 400,
+                      message: "ACTION_REQUIRED",
+                    });
+                    expect(
+                      referencePublications.retainedPublicationCheck(
+                        mismatch,
+                        reader,
+                      ),
+                    ).toBe("pending-stage-provenance-mismatch");
+                  }
+                }
+                const charged = reader.bytes;
+                referencePublications.retainedPublicationCheck(error, reader);
+                expect(reader.bytes).toBe(charged);
+                if (behavior === "cancel") cancellation.abort();
+                if (behavior === "deadline") f.advanceClock(30001);
+                if (behavior === "current")
+                  vi.spyOn(reader.work, "isCurrent").mockReturnValue(false);
+                if (behavior === "cleanup")
+                  vi.spyOn(
+                    LocalStore.prototype,
+                    "close",
+                  ).mockImplementationOnce(() => {
+                    throw new HostBoundaryError(
+                      "INTERRUPTED",
+                      "Synthetic original close remains owned",
+                    );
+                  });
+                throw error;
+              });
+            try {
+              const result = await f.runOffline({
+                ...command,
+                operation: "reference-conversion-inspect",
+                expectedRecovery: required(recovered.receiptSha256),
+              });
+              expect(result).toMatchObject({
+                status: "failed",
+                reason: "integrity",
+                error: { code: "ACTION_REQUIRED" },
+                inspection: {
+                  state: "blocked",
+                  detail: "verification-incomplete",
+                  diagnostic: {
+                    stage: "inventory-invalid",
+                    publicationCheck:
+                      fault === "diagnostic-retained-publication-unbound"
+                        ? "pending-stages-without-capture-recovery-binding"
+                        : "pending-stage-provenance-mismatch",
+                  },
+                },
+              });
+              expect(
+                result.inspection?.diagnostic?.inventoryFailure,
+              ).toBeUndefined();
+              expect(result.inspection?.proof).toBeUndefined();
+              expect(result.inspection?.conversion).toBeUndefined();
+              expect(JSON.stringify(result)).not.toContain(
+                "synthetic-wrong-request",
+              );
+              expect(result.inputAccounting?.networkBytes).toBe(0);
+              expect(noWrites).not.toHaveBeenCalled();
+              expect(await snapshot()).toEqual(beforeInspection);
+              behavior = "prior-error";
+              const stale = await f.runOffline({
+                ...command,
+                operation: "reference-conversion-inspect",
+                expectedRecovery: required(recovered.receiptSha256),
+              });
+              expect(stale.inspection?.diagnostic).toEqual({
+                stage: "inventory-invalid",
+              });
+              expect(stale.error?.code).toBe("ACTION_REQUIRED");
+              expect(await snapshot()).toEqual(beforeInspection);
+              if (fault === "diagnostic-retained-publication-unbound") {
+                for (const change of [
+                  "cancel",
+                  "deadline",
+                  "current",
+                  "cleanup",
+                ] as const) {
+                  behavior = change;
+                  const observed = await f
+                    .runOffline(
+                      {
+                        ...command,
+                        operation: "reference-conversion-inspect",
+                        expectedRecovery: required(recovered.receiptSha256),
+                      },
+                      change === "cancel" ? cancellation.signal : undefined,
+                    )
+                    .catch((error: unknown) => error);
+                  if (change === "cleanup") {
+                    expect(observed).toBeInstanceOf(
+                      NativeCaptureCleanupRequired,
+                    );
+                    if (!(observed instanceof NativeCaptureCleanupRequired))
+                      throw new Error("Missing original cleanup owner");
+                    expect(Reflect.get(observed, "inspection")).toBeUndefined();
+                    await observed.close();
+                    expect(await snapshot()).toEqual(beforeInspection);
+                    continue;
+                  }
+                  const suppressed = parseContract(
+                    "NativeReferenceOfflineEnvelope",
+                    JSON.stringify(observed),
+                    "json",
+                  );
+                  expect(suppressed.inspection?.diagnostic).toBeUndefined();
+                  expect(suppressed.inspection?.proof).toBeUndefined();
+                  expect(suppressed.inspection?.conversion).toBeUndefined();
+                  expect(suppressed.status).toBe("failed");
+                  expect(await snapshot()).toEqual(beforeInspection);
+                }
+              }
+            } finally {
+              inspection.mockRestore();
+              noWrites.mockRestore();
+            }
+          }
           const converted = await f.runOffline({
             ...command,
             operation: "convert-reference",

@@ -521,11 +521,29 @@ export const foundationSchema = {
             },
             "inventoryFailure": {
               "$ref": "#/definitions/RetainedInventoryFailure"
+            },
+            "publicationCheck": {
+              "$ref": "#/definitions/RetainedPublicationCheck"
             }
           },
-          "if": {
+          "not": {
             "required": [
-              "inventoryFailure"
+              "inventoryFailure",
+              "publicationCheck"
+            ]
+          },
+          "if": {
+            "anyOf": [
+              {
+                "required": [
+                  "inventoryFailure"
+                ]
+              },
+              {
+                "required": [
+                  "publicationCheck"
+                ]
+              }
             ]
           },
           "then": {
@@ -762,6 +780,44 @@ export const foundationSchema = {
         }
       },
       "allOf": [
+        {
+          "if": {
+            "required": [
+              "inspection"
+            ],
+            "properties": {
+              "inspection": {
+                "type": "object",
+                "required": [
+                  "diagnostic"
+                ],
+                "properties": {
+                  "diagnostic": {
+                    "type": "object",
+                    "required": [
+                      "publicationCheck"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "error"
+            ],
+            "properties": {
+              "error": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "const": "ACTION_REQUIRED"
+                  }
+                }
+              }
+            }
+          }
+        },
         {
           "if": {
             "required": [
@@ -6044,6 +6100,13 @@ export const foundationSchema = {
         }
       }
     },
+    "RetainedPublicationCheck": {
+      "type": "string",
+      "enum": [
+        "pending-stages-without-capture-recovery-binding",
+        "pending-stage-provenance-mismatch"
+      ]
+    },
     "RetainedInventoryFailure": {
       "type": "object",
       "additionalProperties": false,
@@ -6065,7 +6128,10 @@ export const foundationSchema = {
             "body-read",
             "body-hash",
             "inventory-recheck",
-            "native-identity-recheck"
+            "native-identity-recheck",
+            "scan-blob-classification",
+            "scan-stage-classification",
+            "scan-root-entry-classification"
           ]
         },
         "category": {
@@ -6089,18 +6155,42 @@ export const foundationSchema = {
           ]
         }
       },
-      "if": {
-        "required": [
-          "detail"
-        ]
-      },
-      "then": {
-        "properties": {
-          "check": {
-            "const": "publication-shape"
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "detail"
+            ]
+          },
+          "then": {
+            "properties": {
+              "check": {
+                "const": "publication-shape"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "check": {
+                "enum": [
+                  "scan-blob-classification",
+                  "scan-stage-classification",
+                  "scan-root-entry-classification"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "category": {
+                "const": "namespace"
+              }
+            }
           }
         }
-      }
+      ]
     },
     "ReferenceRecoveryPlanReason": {
       "enum": [

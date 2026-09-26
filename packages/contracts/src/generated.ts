@@ -60,6 +60,7 @@ export type ReferenceConversionInspection = {
   diagnostic?: {
     stage: ReferenceRecoveryPlanReason;
     inventoryFailure?: RetainedInventoryFailure;
+    publicationCheck?: RetainedPublicationCheck;
   };
   conversion?: {
     operationId: StableId;
@@ -88,6 +89,45 @@ export type ReferenceRecoveryPlanReason =
   | "cancelled"
   | "deadline-exceeded"
   | "cleanup-incomplete";
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "RetainedInventoryFailure".
+ */
+export type RetainedInventoryFailure = {
+  [k: string]: unknown;
+} & {
+  check:
+    | "descriptor"
+    | "missing-recorded-entry"
+    | "publication-shape"
+    | "committed-size"
+    | "proof-native-identity"
+    | "proof-stat"
+    | "proof-membership"
+    | "native-read-admission"
+    | "body-read"
+    | "body-hash"
+    | "inventory-recheck"
+    | "native-identity-recheck"
+    | "scan-blob-classification"
+    | "scan-stage-classification"
+    | "scan-root-entry-classification";
+  category: "original-proof" | "history-stage" | "retained-target" | "committed-inventory" | "namespace";
+  detail?:
+    | "missing-stage-or-entry"
+    | "unproven-history-coexistence"
+    | "distinct-target-copies"
+    | "link-count-or-shared-identity"
+    | "recorded-length-mismatch"
+    | "native-identity-unavailable"
+    | "native-identity-not-distinct";
+};
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "RetainedPublicationCheck".
+ */
+export type RetainedPublicationCheck =
+  "pending-stages-without-capture-recovery-binding" | "pending-stage-provenance-mismatch";
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "NativeReferenceOfflineEnvelope".
@@ -937,6 +977,7 @@ export interface ContractCatalog {
   ReferenceJobUsage: ReferenceJobUsage;
   ReferenceJobMetadata: ReferenceJobMetadata;
   ReferenceRecoveryPlan: ReferenceRecoveryPlan;
+  RetainedPublicationCheck: RetainedPublicationCheck;
   RetainedInventoryFailure: RetainedInventoryFailure;
   ReferenceRecoveryPlanReason: ReferenceRecoveryPlanReason;
   NativeReferenceRecoveryPlanEnvelope: NativeReferenceRecoveryPlanEnvelope;
@@ -3175,34 +3216,6 @@ export interface ReferenceConversionInspectionProof {
   identitySha256: Sha256;
   controlSha256: Sha256;
   proofSha256: Sha256;
-}
-/**
- * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "RetainedInventoryFailure".
- */
-export interface RetainedInventoryFailure {
-  check:
-    | "descriptor"
-    | "missing-recorded-entry"
-    | "publication-shape"
-    | "committed-size"
-    | "proof-native-identity"
-    | "proof-stat"
-    | "proof-membership"
-    | "native-read-admission"
-    | "body-read"
-    | "body-hash"
-    | "inventory-recheck"
-    | "native-identity-recheck";
-  category: "original-proof" | "history-stage" | "retained-target" | "committed-inventory" | "namespace";
-  detail?:
-    | "missing-stage-or-entry"
-    | "unproven-history-coexistence"
-    | "distinct-target-copies"
-    | "link-count-or-shared-identity"
-    | "recorded-length-mismatch"
-    | "native-identity-unavailable"
-    | "native-identity-not-distinct";
 }
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
