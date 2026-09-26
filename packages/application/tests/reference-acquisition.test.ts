@@ -3000,10 +3000,15 @@ it.skipIf(!nativeRetainedMode || !process.env.DESIGN_STUDIO_V7_HANDOFF)(
       !("expectedJob" in handoff) ||
       typeof handoff.expectedJob !== "string" ||
       !("expectedRecovery" in handoff) ||
-      typeof handoff.expectedRecovery !== "string"
+      typeof handoff.expectedRecovery !== "string" ||
+      !("fixtureClockNowMs" in handoff) ||
+      typeof handoff.fixtureClockNowMs !== "number" ||
+      !Number.isSafeInteger(handoff.fixtureClockNowMs)
     )
       throw new Error("Invalid synthetic crossrelease handoff.");
     const root = handoff.root;
+    const fixtureClockNowMs = handoff.fixtureClockNowMs;
+    expect(fixtureClockNowMs).toBeGreaterThanOrEqual(Date.UTC(2100, 0, 1));
     expect(path.dirname(root)).toBe(path.dirname(handoffPath));
     expect(path.basename(root)).toMatch(/^ds-ph-reference-/);
     expect((await lstat(root)).isSymbolicLink()).toBe(false);
@@ -3219,15 +3224,21 @@ it.skipIf(!nativeRetainedMode || !process.env.DESIGN_STUDIO_V7_HANDOFF)(
       await runtime.close();
       expect(pins.size).toBe(0);
     });
-    const result = await runtime.execute(
-      {
-        operation: "reference-conversion-inspect",
-        requestId: "original",
-        expectedJob: handoff.expectedJob,
-        expectedRecovery: handoff.expectedRecovery,
-      },
-      scope.signal,
+    const input = {
+      operation: "reference-conversion-inspect",
+      requestId: "original",
+      expectedJob: handoff.expectedJob,
+      expectedRecovery: handoff.expectedRecovery,
+    } as const;
+    // The writer's explicit future epoch makes wall-time fallback fail even in slow runs.
+    expect(policy.clock.now()).toBeLessThan(fixtureClockNowMs);
+    // Only synthetic now crosses processes; real sleep/watch/deadline progress stays live.
+    const readerClockStart = performance.now();
+    vi.spyOn(policy.clock, "now").mockImplementation(
+      () =>
+        fixtureClockNowMs + Math.floor(performance.now() - readerClockStart),
     );
+    const result = await runtime.execute(input, scope.signal);
     const expectedDiagnostic =
       fault === "ineligible-job"
         ? { stage: "ineligible-job" }

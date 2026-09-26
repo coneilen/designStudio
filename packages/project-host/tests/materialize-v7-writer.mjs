@@ -236,6 +236,14 @@ const originalTest = path.join(
   "reference-acquisition.test.ts",
 );
 let code = await readFile(originalTest, "utf8");
+const fixedClock =
+  "const fixedNow = options.fixedClock ? Date.now() : undefined;";
+assert.equal(code.split(fixedClock).length, 2);
+// Keep the two processes in an explicit synthetic epoch, never wall-time luck.
+code = code.replace(
+  fixedClock,
+  "const fixedNow = options.fixedClock ? Date.UTC(2100, 0, 1) : undefined;",
+);
 const cleanup = "await rm(root, { recursive: true, force: true });";
 assert.equal(code.split(cleanup).length, 2);
 code =
@@ -274,6 +282,7 @@ it("authentic pinned v7 crossrelease writer", async () => {
       expect(result.status).toBe("complete");
       writeFileSync(process.env.DESIGN_STUDIO_V7_HANDOFF!, JSON.stringify({
         root: f.project.paths.temp, expectedJob: command.expectedJob, expectedRecovery: recovered.receiptSha256,
+        fixtureClockNowMs: required(seam.work).policy.clock.now(),
         writerCommit: "${commit}", writerPolicy: REFERENCE_OFFLINE_POLICY_SHA256,
         writerOutcome: "abrupt-after-stage", stageObserved: true, pid: process.pid,
       }), { flag: "wx" });
@@ -298,6 +307,7 @@ it("authentic pinned v7 crossrelease writer", async () => {
   crossReleaseRetainedRoot = f.project.paths.temp;
   await writeFile(process.env.DESIGN_STUDIO_V7_HANDOFF!, JSON.stringify({
     root: crossReleaseRetainedRoot, expectedJob: command.expectedJob, expectedRecovery: recovered.receiptSha256,
+    fixtureClockNowMs: required(seam.work).policy.clock.now(),
     writerCommit: "${commit}", writerPolicy: REFERENCE_OFFLINE_POLICY_SHA256,
     writerOutcome: converted.status, events: 10, conversionEvidence: converted.conversion?.evidence,
   }), { flag: "wx" });
@@ -397,7 +407,7 @@ await writeFile(
     physical: [...physical.values()],
     dependencies: [...dependencies],
     testOnlyDelta:
-      "append generated writer case and retain exact root after actual cleanup; all production modules from pinned Git blobs",
+      "append generated writer case, transfer explicit fixture clock, and retain exact root after actual cleanup; all production modules from pinned Git blobs",
   }),
   { flag: "wx" },
 );
