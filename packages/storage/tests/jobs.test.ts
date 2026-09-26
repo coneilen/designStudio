@@ -1118,62 +1118,74 @@ test("interrupted workers without resource keys also retain their global slot", 
   ).toMatchObject({ error: { code: "CONFLICT" } });
 });
 
-test("conditional cancellation replays a durable control key after response loss and restart", async () => {
-  const f = await setup();
-  const running = await claim(f, ["resource-a"]);
-  f.fault("after-commit");
-  const accepted = value(
-    await f.store.jobs.cancelWithReceipt(
-      running.job.id,
-      running.rowVersion,
-      f.ctx("cancel-key"),
-    ),
-  );
-  f.fault();
-  expect(accepted.record.job.status).toBe("cancel-requested");
-  expect(accepted.record.rowVersion).toBe(running.rowVersion + 1);
-  expect(accepted.record.job.lease).toEqual(running.job.lease);
-  expect(accepted.record.resources).toEqual(running.resources);
-  expect(accepted.record.job.idempotency).toEqual(running.job.idempotency);
-  expect(accepted.record.requestId).toBe("work");
-  expect(accepted.control).toMatchObject({
-    version: 1,
-    operation: "job-cancel",
-    jobId: running.job.id,
-    actorId: "actor1",
-    projectId: "project1",
-    key: "cancel-key",
-    expectedVersion: running.rowVersion,
-    resultVersion: accepted.record.rowVersion,
-    resultStatus: "cancel-requested",
+describe("cancel-control replay from an independently prepared running job", () => {
+  let prepared:
+    | { f: Awaited<ReturnType<typeof setup>>; running: StoredJob }
+    | undefined;
+  beforeEach(async () => {
+    prepared = undefined;
+    prepared = await ownTestWork(async () => {
+      const f = await setup();
+      const running = await claim(f, ["resource-a"]);
+      return { f, running };
+    })();
   });
-  await f.reopen();
-  expect(
-    value(
+  test("conditional cancellation replays a durable control key after response loss and restart", async () => {
+    const { f, running } = required(prepared);
+    f.fault("after-commit");
+    const accepted = value(
       await f.store.jobs.cancelWithReceipt(
         running.job.id,
         running.rowVersion,
         f.ctx("cancel-key"),
       ),
-    ),
-  ).toEqual(accepted);
-  const settled = value(
-    await f.store.jobs.update(
-      running.job.id,
-      fence(accepted.record),
-      { kind: "acknowledge-cancel" },
-      f.ctx(),
-    ),
-  );
-  const replay = value(
-    await f.store.jobs.cancelWithReceipt(
-      running.job.id,
-      running.rowVersion,
-      f.ctx("cancel-key"),
-    ),
-  );
-  expect(replay.control).toEqual(accepted.control);
-  expect(replay.record).toEqual(settled);
+    );
+    f.fault();
+    expect(accepted.record.job.status).toBe("cancel-requested");
+    expect(accepted.record.rowVersion).toBe(running.rowVersion + 1);
+    expect(accepted.record.job.lease).toEqual(running.job.lease);
+    expect(accepted.record.resources).toEqual(running.resources);
+    expect(accepted.record.job.idempotency).toEqual(running.job.idempotency);
+    expect(accepted.record.requestId).toBe("work");
+    expect(accepted.control).toMatchObject({
+      version: 1,
+      operation: "job-cancel",
+      jobId: running.job.id,
+      actorId: "actor1",
+      projectId: "project1",
+      key: "cancel-key",
+      expectedVersion: running.rowVersion,
+      resultVersion: accepted.record.rowVersion,
+      resultStatus: "cancel-requested",
+    });
+    await f.reopen();
+    expect(
+      value(
+        await f.store.jobs.cancelWithReceipt(
+          running.job.id,
+          running.rowVersion,
+          f.ctx("cancel-key"),
+        ),
+      ),
+    ).toEqual(accepted);
+    const settled = value(
+      await f.store.jobs.update(
+        running.job.id,
+        fence(accepted.record),
+        { kind: "acknowledge-cancel" },
+        f.ctx(),
+      ),
+    );
+    const replay = value(
+      await f.store.jobs.cancelWithReceipt(
+        running.job.id,
+        running.rowVersion,
+        f.ctx("cancel-key"),
+      ),
+    );
+    expect(replay.control).toEqual(accepted.control);
+    expect(replay.record).toEqual(settled);
+  });
 });
 
 test("cancel-control key conflicts on changed precondition or target even when target completed", async () => {
