@@ -46,6 +46,10 @@ import {
   validateRecoverySnapshot,
   validateReferenceRowProjection,
 } from "./reference-archive.js";
+import type {
+  ReferenceForkBinding,
+  ReferenceForkReservation,
+} from "./reference-fork.js";
 import {
   projectRecoveryState,
   type ReferenceRecoveryEvent,
@@ -84,6 +88,7 @@ export {
 } from "./capture-recovery.js";
 export { JOB_LIMITS as JOB_STORAGE_LIMITS } from "./job-codec.js";
 export * from "./job-types.js";
+export * from "./reference-fork.js";
 export * from "./reference-recovery.js";
 export * from "./types.js";
 
@@ -370,7 +375,7 @@ export class LocalStore implements ArtifactStore {
     context: OperationContext,
     operation: "read" | "write",
     action: (context: OperationContext) => Promise<T>,
-    mutation?: "reference" | "restore" | "maintenance",
+    mutation?: "reference" | "restore" | "maintenance" | "fork",
   ): Promise<Outcome<T>> {
     const identity = {
       projectId: context.projectId,
@@ -389,6 +394,17 @@ export class LocalStore implements ArtifactStore {
         this.inputBytes = 0;
         this.startedAt = context.clock.now();
         await this.guard(context, operation);
+        if (
+          operation === "write" &&
+          this.db.pragma("user_version", { simple: true }) === 6
+        ) {
+          if (mutation !== "fork" || !this.options.referenceFork)
+            throw new StorageError(
+              "ACTION_REQUIRED",
+              "Fork destination denies unrelated mutations.",
+            );
+          await this.options.referenceFork.authorize(context);
+        }
         if (
           operation === "write" &&
           this.db.pragma("user_version", { simple: true }) === 5
@@ -1184,6 +1200,284 @@ export class LocalStore implements ArtifactStore {
       { id },
     );
   }
+  reserveReferenceFork(
+    binding: ReferenceForkBinding,
+    outputs: Artifact[],
+    context: OperationContext,
+  ): Promise<Outcome<ReferenceForkReservation>> {
+    const owned = structuredClone({ binding, outputs });
+    return this.run(
+      context,
+      "write",
+      async (context) => {
+        const config = this.options.referenceFork;
+        if (!config || this.db.pragma("user_version", { simple: true }) !== 6)
+          throw new StorageError(
+            "AUTHORIZATION_CHANGED",
+            "Fork is not admitted.",
+          );
+        await config.authorize(context);
+        const b = owned.binding;
+        if (
+          b.version !== 1 ||
+          b.projectId !== this.options.projectId ||
+          b.artifactRootId !== this.options.artifactRootId ||
+          b.actorId !== context.authorization.actorId ||
+          b.sourceProjectId === b.projectId ||
+          b.operationId !== context.jobId ||
+          context.requestId !== context.jobId ||
+          !/^fork_reference_[a-f0-9]{64}$/.test(b.operationId) ||
+          !/^[a-f0-9]{64}$/.test(b.originSha256) ||
+          !/^[a-f0-9]{64}$/.test(b.policySha256) ||
+          !owned.outputs.some((a) => a.sha256 === b.originSha256) ||
+          !owned.outputs.some((a) => a.sha256 === b.resultSha256) ||
+          owned.outputs.length < 1 ||
+          owned.outputs.length > 16 ||
+          new Set(owned.outputs.map((a) => a.id)).size !==
+            owned.outputs.length ||
+          owned.outputs.some(
+            (a) =>
+              !validateContract("Artifact", a).success ||
+              a.id !== `sha256_${a.sha256}` ||
+              a.path !== blobPath(a.sha256) ||
+              a.mediaType !== "application/octet-stream",
+          ) ||
+          owned.outputs.reduce((n, a) => n + a.byteLength, 0) >
+            context.budget.maxOutputBytes
+        )
+          throw new StorageError(
+            "INVALID_INPUT",
+            "Fork reservation binding is invalid.",
+          );
+        const reservation: ReferenceForkReservation = {
+          binding: b,
+          hostId: randomUUID(),
+          stages: owned.outputs.map((artifact) => ({
+            stagingId: randomUUID(),
+            artifact,
+          })),
+          staged: 0,
+        };
+        check("ReferenceForkReservation", reservation);
+        this.checkpoint(context);
+        this.db.transaction(() => {
+          if (
+            this.db.prepare("SELECT singleton FROM reference_fork").get() ||
+            this.db.prepare("SELECT id FROM artifacts LIMIT 1").get() ||
+            this.db.prepare("SELECT scope FROM receipts LIMIT 1").get()
+          )
+            throw new StorageError(
+              "CONFLICT",
+              "Fork destination is not empty.",
+            );
+          this.db
+            .prepare("INSERT INTO reference_fork VALUES (1,?)")
+            .run(JSON.stringify(reservation));
+        })();
+        this.options.fault?.("fork-after-reservation");
+        return reservation;
+      },
+      "fork",
+    );
+  }
+  stageReferenceFork(
+    reservation: ReferenceForkReservation,
+    index: number,
+    bytes: Uint8Array,
+    context: OperationContext,
+  ): Promise<Outcome<StagedArtifact>> {
+    if (bytes.byteLength > context.budget.maxInputBytes)
+      return this.run(
+        context,
+        "write",
+        async () => {
+          throw new StorageError(
+            "LIMIT",
+            "Fork stage exceeds the operation input bound.",
+          );
+        },
+        "fork",
+      );
+    const expected = structuredClone(reservation);
+    const owned = Uint8Array.from(bytes);
+    return this.run(
+      context,
+      "write",
+      async (context) => {
+        const config = this.options.referenceFork;
+        if (!config)
+          throw new StorageError(
+            "AUTHORIZATION_CHANGED",
+            "Fork is not admitted.",
+          );
+        const current = this.forkRecord();
+        const stage = current.stages[index];
+        if (
+          current.receipt ||
+          index !== current.staged ||
+          !this.equal(current.binding, expected.binding) ||
+          current.hostId !== expected.hostId ||
+          !this.equal(current.stages, expected.stages) ||
+          !stage ||
+          stage.artifact.sha256 !== hash(owned) ||
+          stage.artifact.byteLength !== owned.length
+        )
+          throw new StorageError(
+            "CONFLICT",
+            "Fork stage lacks its exact durable reservation.",
+          );
+        await config.authorize(context);
+        this.checkpoint(context);
+        const staged = await config.stage(current, index, owned, context);
+        if (!this.equal(staged, stage))
+          throw new StorageError(
+            "INTEGRITY",
+            "Reserved stage identity changed.",
+          );
+        this.options.fault?.("fork-after-stage");
+        this.checkpoint(context);
+        this.db.transaction(() => {
+          if (!this.equal(this.forkRecord(), current))
+            throw new StorageError("CONFLICT", "Fork journal changed.");
+          this.db
+            .prepare("UPDATE reference_fork SET data=? WHERE singleton=1")
+            .run(JSON.stringify({ ...current, staged: index + 1 }));
+        })();
+        return staged;
+      },
+      "fork",
+    ).finally(() => owned.fill(0));
+  }
+  private forkRecord(): ReferenceForkReservation {
+    const row = this.db
+      .prepare<[], { data: string }>(
+        "SELECT data FROM reference_fork WHERE singleton=1",
+      )
+      .get();
+    if (!row || Buffer.byteLength(row.data) > 65536)
+      throw new StorageError("INTEGRITY", "Fork reservation is unavailable.");
+    const value = parseContract("ReferenceForkReservation", row.data, "json", {
+      maxInputBytes: 65536,
+    });
+    if (
+      value.staged > value.stages.length ||
+      new Set(value.stages.map((s) => s.stagingId)).size !==
+        value.stages.length ||
+      new Set(value.stages.map((s) => s.artifact.id)).size !==
+        value.stages.length ||
+      value.binding.projectId !== this.options.projectId ||
+      value.binding.artifactRootId !== this.options.artifactRootId ||
+      value.binding.sourceProjectId === value.binding.projectId ||
+      value.stages.some(
+        (s) =>
+          s.artifact.id !== `sha256_${s.artifact.sha256}` ||
+          s.artifact.path !== blobPath(s.artifact.sha256),
+      )
+    )
+      throw new StorageError("INTEGRITY", "Fork reservation is inconsistent.");
+    return value;
+  }
+  referenceForkResult(
+    context: OperationContext,
+  ): Promise<Outcome<ReferenceForkReservation>> {
+    return this.run(context, "read", async (context) => {
+      const config = this.options.referenceForkRead;
+      if (!config || this.options.access !== "read-only")
+        throw new StorageError(
+          "AUTHORIZATION_CHANGED",
+          "Completed fork read is not admitted.",
+        );
+      await config.authorize(context);
+      const record = this.forkRecord();
+      const receipt = record.receipt;
+      if (
+        !receipt ||
+        record.staged !== record.stages.length ||
+        this.digest(receipt) !== config.expectedReceiptSha256 ||
+        record.binding.actorId !== context.authorization.actorId ||
+        !this.equal(
+          receipt.outputs,
+          record.stages.map((s) => s.artifact),
+        ) ||
+        receipt.projectId !== this.options.projectId ||
+        receipt.jobId !== record.binding.operationId ||
+        receipt.idempotency.actorId !== record.binding.actorId ||
+        receipt.idempotency.projectId !== this.options.projectId ||
+        receipt.idempotency.operation !== "write" ||
+        receipt.idempotency.key !== record.binding.operationId ||
+        receipt.integrity !== "verified" ||
+        receipt.publication !== "atomic"
+      )
+        throw new StorageError(
+          "INTEGRITY",
+          "Fork is not an exact committed destination.",
+        );
+      const scope = JSON.stringify([
+        this.options.projectId,
+        record.binding.actorId,
+        "write",
+        receipt.jobId,
+      ]);
+      const payload = this.digest({
+        outputs: [...receipt.outputs].sort((a, b) =>
+          a.id < b.id ? -1 : a.id > b.id ? 1 : 0,
+        ),
+        revision: null,
+      });
+      const rows = this.db
+        .prepare<[], { scope: string; data: string }>(
+          "SELECT scope,data FROM receipts",
+        )
+        .all();
+      const refs = this.db
+        .prepare<
+          [],
+          { owner_kind: string; owner_id: string; artifact_id: string }
+        >("SELECT owner_kind,owner_id,artifact_id FROM artifact_refs")
+        .all();
+      if (
+        receipt.id !== `receipt-${this.digest([scope, payload])}` ||
+        receipt.idempotency.payloadSha256 !== payload ||
+        rows.length !== 1 ||
+        rows[0]?.scope !== scope ||
+        !this.equal(JSON.parse(rows[0]?.data ?? "null"), receipt) ||
+        refs.length !== receipt.outputs.length ||
+        refs.some(
+          (r) =>
+            r.owner_kind !== "job" ||
+            r.owner_id !== receipt.id ||
+            !receipt.outputs.some((a) => a.id === r.artifact_id),
+        ) ||
+        this.db
+          .prepare<[], { n: number }>("SELECT count(*) AS n FROM artifacts")
+          .get()?.n !== receipt.outputs.length
+      )
+        throw new StorageError(
+          "INTEGRITY",
+          "Fork receipt protection graph changed.",
+        );
+      for (const output of receipt.outputs) {
+        if (!this.equal(this.artifact(output), output))
+          throw new StorageError("INTEGRITY", "Fork output record changed.");
+      }
+      return record;
+    });
+  }
+  commitReferenceFork(
+    reservation: ReferenceForkReservation,
+    context: OperationContext,
+  ) {
+    return this.commitInternal(
+      structuredClone(reservation.stages),
+      context,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      structuredClone(reservation),
+    );
+  }
   stageReferenceConversion(
     id: string,
     bytes: Uint8Array,
@@ -1714,6 +2008,7 @@ export class LocalStore implements ArtifactStore {
     recovery?: CaptureRecoveryAuthorization,
     offlineRequest?: { id: string; expectedHead: string },
     conversionRequest?: { id: string },
+    forkRequest?: ReferenceForkReservation,
   ): Promise<Outcome<CommitReceipt>> {
     return this.run(
       context,
@@ -1725,6 +2020,28 @@ export class LocalStore implements ArtifactStore {
             "Committing requires a jobId for a durable receipt.",
           );
         await this.guard(context, "write", "job", context.jobId);
+        if (forkRequest) {
+          const config = this.options.referenceFork;
+          if (!config)
+            throw new StorageError(
+              "AUTHORIZATION_CHANGED",
+              "Fork is not admitted.",
+            );
+          await config.authorize(context);
+          const current = this.forkRecord();
+          if (
+            current.receipt ||
+            current.staged !== current.stages.length ||
+            current.binding.operationId !== context.jobId ||
+            !this.equal(current.binding, forkRequest.binding) ||
+            !this.equal(current.stages, forkRequest.stages) ||
+            current.hostId !== forkRequest.hostId
+          )
+            throw new StorageError(
+              "CONFLICT",
+              "Fork is incomplete or already consumed.",
+            );
+        }
         let offline: ReferenceRecoveryRecord | undefined;
         let conversion: ReferenceRecoveryRecord | undefined;
         if (offlineRequest || conversionRequest) {
@@ -2141,6 +2458,21 @@ export class LocalStore implements ArtifactStore {
             .prepare("INSERT INTO receipts VALUES (?,?)")
             .run(receiptScope, JSON.stringify(receipt));
           this.refs("job", receipt.id, published);
+          if (forkRequest) {
+            const current = this.forkRecord();
+            if (
+              current.receipt ||
+              !this.equal(current.stages, forkRequest.stages)
+            )
+              throw new StorageError(
+                "CONFLICT",
+                "Fork commit journal changed.",
+              );
+            this.db
+              .prepare("UPDATE reference_fork SET data=? WHERE singleton=1")
+              .run(JSON.stringify({ ...current, receipt }));
+            this.options.fault?.("fork-before-receipt");
+          }
           if (offline) {
             this.options.fault?.("reference-before-receipt");
             const completed = this.appendOffline(offline, {
@@ -2213,7 +2545,11 @@ export class LocalStore implements ArtifactStore {
         }
         return receipt;
       },
-      offlineRequest || conversionRequest ? "reference" : undefined,
+      forkRequest
+        ? "fork"
+        : offlineRequest || conversionRequest
+          ? "reference"
+          : undefined,
     );
   }
   private hasCommittedPublication(artifact: Artifact): boolean {

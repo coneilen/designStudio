@@ -62,6 +62,11 @@ type FixturePhase =
 type FixtureMode =
   | "complete"
   | "postcommit-deadline"
+  | "fork-stage-deadline"
+  | "fork-source-tamper"
+  | "fork-close"
+  | "fork-close-cancel"
+  | "fork-close-deadline"
   | "partial-stage"
   | "ineligible-job"
   | "unknown-stage"

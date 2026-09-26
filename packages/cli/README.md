@@ -440,3 +440,26 @@ HTTP client reads actual accepted revisions/jobs from the owned native facade.
 The installed functional passes used real F08 entries with only disclosed copied
 KnownFolder/diagnostic instrumentation, not a user-approved release. No live
 installation or performance pass is claimed.
+# Offline reference fork
+
+With an independently approved release-9 fork supplement:
+
+```text
+figma reference-fork --project <SOURCE ID> --request-id <original capture request> --expected-job <Job SHA256> --expected-recovery <recovery receipt SHA256> --confirm FORK-VERIFIED-INPUTS-AND-CONVERT-OFFLINE
+```
+
+The destination is always newly allocated, never caller-selected. This one
+operation verifies selected recorded source inputs, preserves original receipts
+as origin evidence, and commits a fresh destination-bound conversion offline.
+It never retries or repairs the source conversion. A partial destination is
+reported as `blocked-no-replay`; do not reuse the invocation or assume that
+failure means no bytes were written. Schema-6 destinations have no
+legacy read/export or resume command. Output is bounded references and readiness,
+not private design bodies or a render-ready claim.
+
+Completed destinations support `figma reference-fork-result --project <ID>
+--request-id <ID> --expected-receipt <SHA256>` for immutable receipt-bound result
+validation and metadata. Consumers needing actual bytes use
+`openNativeReferenceForkResult` from `@design-studio/application/capture` with
+the documented role/reference consumer callback. This CLI does not export files
+or emit inline private bodies.

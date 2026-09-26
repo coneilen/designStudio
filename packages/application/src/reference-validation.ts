@@ -26,6 +26,9 @@ import {
 import {
   type CaptureRecoveryState,
   LocalStore,
+  projectRecoveryState,
+  type ReferenceRecoveryRecord,
+  recoveryEvidence,
   type StoredJob,
 } from "@design-studio/storage";
 import {
@@ -233,7 +236,7 @@ function retainedDiagnostic(
 }
 
 async function validateBytes(
-  inspection: RetainedReferenceInspection,
+  inspection: Pick<RetainedReferenceInspection, "targets">,
   reader: ReferenceReader,
   record: StoredJob,
   approved: Awaited<ReturnType<typeof approvedRequest>>,
@@ -312,7 +315,7 @@ async function validateBytes(
   return { evidence, decoded, evidenceIndex: index };
 }
 
-export async function proveRetainedReference(input: {
+type RetainedProofInput = {
   work: CaptureWork;
   store: LocalStore;
   files: ProjectFileSystem;
@@ -325,7 +328,8 @@ export async function proveRetainedReference(input: {
   ): Promise<RetainedReferenceInspection>;
   reason(value: NativeReferenceRecoveryPlanEnvelope["reason"]): void;
   projectState?(state: CaptureRecoveryState): CaptureRecoveryState;
-}) {
+};
+async function prepareRetainedReference(input: RetainedProofInput) {
   const { work, store: db, requestId, expectedJob, reason } = input;
   const ids = referenceIds(work, requestId);
   let proof = await input.issue(ids.approval, [ids.original, ids.job]);
@@ -439,6 +443,118 @@ export async function proveRetainedReference(input: {
     record,
     DIAGNOSTIC_APPROVAL_CONFIRMATION,
   );
+  return {
+    proof,
+    state,
+    currentState,
+    record,
+    proposal,
+    approved,
+    source,
+    targets,
+    jobId,
+  };
+}
+
+/** Explicitly selected committed blobs only; never discovers or reads pending stages. */
+export async function proveRecordedRecoveredReference(
+  input: Omit<RetainedProofInput, "inspect" | "projectState">,
+  recovery: ReferenceRecoveryRecord,
+) {
+  if (!input.work.referenceForkAuthority)
+    throw new ApplicationError("FORBIDDEN");
+  await input.work.referenceForkAuthority();
+  const final = recovery.events[7];
+  if (final?.kind !== "committed" || !final.receipt || recovery.archive)
+    throw new ApplicationError("ACTION_REQUIRED");
+  const selected = await prepareRetainedReference({
+    ...input,
+    inspect: async () => {
+      throw new ApplicationError("FORBIDDEN");
+    },
+    projectState: (state) =>
+      projectRecoveryState(state, recovery, canonicalDigest),
+  });
+  const { proof, state, record, targets, approved } = selected;
+  const b = recovery.reservation.binding;
+  if (
+    b.policySha256 !== (await input.work.referenceOfflineAuthority?.()) ||
+    b.jobSha256 !== input.expectedJob ||
+    b.projectId !== input.work.project.projectId ||
+    b.actorId !== input.work.actorId ||
+    b.artifactRootId !== input.work.project.artifactRootId ||
+    b.permissionScope !== input.work.permissionScope ||
+    b.recordSha256 !== canonicalDigest(record) ||
+    b.stateSha256 !== canonicalDigest(state) ||
+    b.stagesSha256 !==
+      canonicalDigest(state.stages.filter((s) => s.jobId === record.job.id)) ||
+    !same(b.source, selected.proposal.binding.source) ||
+    !same(b.approval, approved.approved)
+  )
+    throw new ApplicationError("ARTIFACT_INTEGRITY");
+  const snapshot = unwrap(
+    await input.store.referenceRecoverySnapshot(proof.context),
+  );
+  if (
+    snapshot.preimages.find((p) => p.id === b.recoveryId)?.metadataSha256 !==
+    b.metadataSha256
+  )
+    throw new ApplicationError("ARTIFACT_INTEGRITY");
+  const recovered = await proof.contract(
+    "ReferenceRecoveryEvidence",
+    recovery.reservation.evidence,
+  );
+  if (!same(recovered, recoveryEvidence(b, canonicalDigest)))
+    throw new ApplicationError("ARTIFACT_INTEGRITY");
+  const loaded: RetainedReferenceInspection["targets"] = [];
+  try {
+    for (const target of targets) {
+      if (!final.receipt.outputs.some((a) => same(a, target.artifact)))
+        throw new ApplicationError("ARTIFACT_INTEGRITY");
+      const read = unwrap(
+        await input.store.readVerified(ref(target.artifact), proof.context),
+      );
+      loaded.push({
+        descriptor: target,
+        publication: "published-only",
+        bytes: read.bytes,
+      });
+      if (!same(read.artifact, target.artifact))
+        throw new ApplicationError("ARTIFACT_INTEGRITY");
+    }
+    const validated = await validateBytes(
+      { targets: loaded },
+      proof,
+      record,
+      approved,
+    );
+    if (
+      !same(
+        selected.currentState,
+        unwrap(await input.store.referencePublicationState(proof.context)),
+      )
+    )
+      throw new ApplicationError("CONFLICT");
+    await proof.check();
+    return { ...selected, validated, recovery };
+  } finally {
+    for (const target of loaded) target.bytes?.fill(0);
+  }
+}
+
+export async function proveRetainedReference(input: RetainedProofInput) {
+  const { store: db, reason } = input;
+  const {
+    proof,
+    state,
+    currentState,
+    record,
+    proposal,
+    approved,
+    source,
+    targets,
+    jobId,
+  } = await prepareRetainedReference(input);
   reason("inventory-invalid");
   const history = await retainedReferenceInventory(
     proof,

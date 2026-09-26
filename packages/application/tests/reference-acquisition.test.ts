@@ -122,9 +122,14 @@ import {
   type ReferencePhaseEvent,
   referenceTelemetry,
 } from "./capture-test-scope.js";
+import {
+  consumeTransferredForkFixture,
+  runTransferredForkFixture,
+} from "./reference-fork-fixture.js";
 
 const seam = vi.hoisted(() => ({
   work: undefined as CaptureWork | undefined,
+  forkWorks: new Map<CaptureProject, CaptureWork>(),
   physicalReads: 0,
   measureReads: false,
   afterRead: undefined as ((file: unknown) => Promise<void>) | undefined,
@@ -157,14 +162,17 @@ vi.mock("node:fs/promises", async (original) => {
 });
 vi.mock("@design-studio/project-host", async (original) => ({
   ...(await original<typeof import("@design-studio/project-host")>()),
-  acquireCaptureWork: () => {
+  acquireCaptureWork: (project: CaptureProject) => {
+    const fork = seam.forkWorks.get(project);
+    if (fork) return fork;
     if (!seam.work) throw new Error("No synthetic owner");
     return seam.work;
   },
 }));
 vi.mock("../../project-host/dist/capture-work.js", () => ({
   assertCaptureWork: (work: CaptureWork) => {
-    if (work !== seam.work) throw new Error("Synthetic owner changed");
+    if (work !== seam.work && ![...seam.forkWorks.values()].includes(work))
+      throw new Error("Synthetic owner changed");
   },
 }));
 const cleanups: (() => Promise<void>)[] = [];
@@ -219,6 +227,7 @@ afterEach(async () => {
     observed?.phase("mock-reset");
     vi.restoreAllMocks();
     seam.work = undefined;
+    seam.forkWorks.clear();
     seam.measureReads = false;
     seam.physicalReads = 0;
     seam.afterRead = undefined;
@@ -2980,6 +2989,17 @@ describe.each([
   }, 60000);
 });
 
+it.skipIf(
+  !nativeRetainedMode || !process.env.DESIGN_STUDIO_FORK_RESULT_HANDOFF,
+)("cold readonly application consumes committed fork outputs", async () => {
+  await consumeTransferredForkFixture(
+    captureTestScope().signal,
+    (work) => {
+      seam.forkWorks.set(work.project, work);
+    },
+    (work) => cleanups.push(work),
+  );
+});
 it.skipIf(!nativeRetainedMode || !process.env.DESIGN_STUDIO_V7_HANDOFF)(
   "cold readonly v8 inspects transferred authentic v7 conversion",
   async () => {
@@ -3214,11 +3234,36 @@ it.skipIf(!nativeRetainedMode || !process.env.DESIGN_STUDIO_V7_HANDOFF)(
       });
     }
     const open = LocalStore.open.bind(LocalStore);
-    vi.spyOn(LocalStore, "open").mockImplementation((options) => {
-      expect(options.access).toBe("read-only");
-      expect(options.referenceRecovery?.writer).toBeUndefined();
-      return open(options);
-    });
+    const openSpy = vi
+      .spyOn(LocalStore, "open")
+      .mockImplementation((options) => {
+        expect(options.access).toBe("read-only");
+        expect(options.referenceRecovery?.writer).toBeUndefined();
+        return open(options);
+      });
+    if (
+      fault === "fork-stage-deadline" ||
+      fault === "fork-source-tamper" ||
+      fault === "fork-close" ||
+      fault === "fork-close-cancel" ||
+      fault === "fork-close-deadline"
+    ) {
+      openSpy.mockRestore();
+      await runTransferredForkFixture(
+        work,
+        {
+          expectedJob: handoff.expectedJob,
+          expectedRecovery: handoff.expectedRecovery,
+          fixtureClockNowMs,
+        },
+        scope.signal,
+        (value) => {
+          seam.forkWorks.set(value.project, value);
+        },
+        (work) => cleanups.push(work),
+      );
+      return;
+    }
     const runtime = await openNativeReferenceConversionInspection(project);
     cleanups.push(async () => {
       await runtime.close();

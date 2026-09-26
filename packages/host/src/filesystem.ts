@@ -47,6 +47,24 @@ export interface ProjectRoot {
 }
 export interface ProjectFileSystemOptions {
   reserveRead?(bytes: number, context: OperationContext): void;
+  recordedRead?: {
+    authorize(input: FileRequest, context: OperationContext): Promise<void>;
+    pin(
+      rootId: string,
+      relative: string,
+      directory: boolean,
+    ): Promise<{
+      identity: { path: string; volume: number; file: string };
+      check(): Promise<void>;
+      close(): void;
+    }>;
+  };
+  reservedStaging?: {
+    authorize(
+      reservation: ReservedStage,
+      context: OperationContext,
+    ): Promise<void>;
+  };
   retainedReferenceInspection?: {
     artifactRootId: string;
     outputRootId: string;
@@ -98,6 +116,11 @@ export interface ProjectFileSystemOptions {
     pending: OwnedPendingPublication,
     context: OperationContext,
   ) => Promise<void>;
+}
+export interface ReservedStage {
+  hostId: string;
+  stagingId: string;
+  artifact: Artifact;
 }
 type RetainedReadPin = Awaited<
   ReturnType<
@@ -626,12 +649,11 @@ export class ProjectFileSystem implements FileSystemBoundary {
       );
       return this.serial(async () => {
         guard.check();
+        await this.options.recordedRead?.authorize(request, context);
         const absolute = await this.resolve(root, request.path);
-        const pin = await this.options.retainedReferenceInspection?.pin(
-          request.artifactRootId,
-          request.path,
-          false,
-        );
+        const pin = await (
+          this.options.recordedRead ?? this.options.retainedReferenceInspection
+        )?.pin(request.artifactRootId, request.path, false);
         const closePin = () => {
           pin?.close();
           this.retainedClosures.delete(closePin);
@@ -702,6 +724,120 @@ export class ProjectFileSystem implements FileSystemBoundary {
     bytes: Uint8Array,
     context: OperationContext,
   ): Promise<Outcome<StagedArtifact>> {
+    return this.stageInternal(input, bytes, context);
+  }
+  stageReserved(
+    reservation: ReservedStage,
+    artifactRootId: string,
+    bytes: Uint8Array,
+    context: OperationContext,
+  ): Promise<Outcome<StagedArtifact>> {
+    return this.stageInternal(
+      { artifactRootId, path: reservation.artifact.path },
+      bytes,
+      context,
+      structuredClone(reservation),
+    );
+  }
+  checkReservedNamespace(
+    artifactRootId: string,
+    reservations: readonly ReservedStage[],
+    context: OperationContext,
+  ): Promise<Outcome<null>> {
+    return this.execute(context, async (context) => {
+      const config = this.options.reservedStaging;
+      if (
+        !config ||
+        !reservations.length ||
+        reservations.length > 16 ||
+        new Set(reservations.map((s) => s.hostId)).size !== 1 ||
+        new Set(reservations.map((s) => s.stagingId)).size !==
+          reservations.length ||
+        new Set(reservations.map((s) => s.artifact.sha256)).size !==
+          reservations.length ||
+        reservations.some(
+          (s) =>
+            !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+              s.hostId,
+            ) ||
+            !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+              s.stagingId,
+            ) ||
+            !validateContract("Artifact", s.artifact).success ||
+            !/^[a-f0-9]{64}$/.test(s.artifact.sha256),
+        )
+      )
+        throw new HostBoundaryError("FORBIDDEN", "Invalid reserved namespace.");
+      for (const reservation of reservations)
+        await config.authorize(reservation, context);
+      const { root, guard } = this.guard(artifactRootId, context, "write");
+      await this.checkRoot(root);
+      const hostName = `.host-${reservations[0]?.hostId}`;
+      for (const name of await boundedEntries(root.path, 3, guard)) {
+        if (name !== "blobs" && name !== hostName)
+          throw new HostBoundaryError(
+            "ACTION_REQUIRED",
+            "Unreserved destination entry.",
+          );
+        const directory = path.join(root.path, name);
+        const stat = await io(() => lstat(directory));
+        if (
+          !stat.isDirectory() ||
+          stat.isSymbolicLink() ||
+          (await io(() => realpath(directory))) !== directory
+        )
+          throw new HostBoundaryError(
+            "PATH_FORBIDDEN",
+            "Reserved directory changed.",
+          );
+        for (const entry of await boundedEntries(directory, 17, guard)) {
+          const expected = reservations.find(
+            (s) =>
+              (name === "blobs" ? s.artifact.sha256 : s.stagingId) === entry,
+          );
+          if (!expected)
+            throw new HostBoundaryError(
+              "ACTION_REQUIRED",
+              "Unreserved destination file.",
+            );
+          const file = path.join(directory, entry);
+          const actual = await io(() => lstat(file));
+          if (
+            !actual.isFile() ||
+            actual.isSymbolicLink() ||
+            (await io(() => realpath(file))) !== file ||
+            actual.nlink !== 1 ||
+            actual.size !== expected.artifact.byteLength
+          )
+            throw new HostBoundaryError(
+              "ARTIFACT_INTEGRITY",
+              "Reserved destination file changed.",
+            );
+          if (name === hostName) {
+            const owned = this.pending.get(expected.stagingId);
+            if (
+              !owned ||
+              owned.path !== file ||
+              !sameFile(owned.identity, actual)
+            )
+              throw new HostBoundaryError(
+                "ARTIFACT_INTEGRITY",
+                "Reserved stage is not the created instance.",
+              );
+          }
+        }
+      }
+      await this.checkRoot(root);
+      guard.check();
+      return null;
+    });
+  }
+  private stageInternal(
+    input: FileRequest,
+    bytes: Uint8Array,
+    context: OperationContext,
+    reservation?: ReservedStage,
+  ): Promise<Outcome<StagedArtifact>> {
     return boundary(context, async (context) => {
       if (!validateContract("FileRequest", input).success)
         throw new HostBoundaryError("PATH_FORBIDDEN", "Invalid file request.");
@@ -716,6 +852,24 @@ export class ProjectFileSystem implements FileSystemBoundary {
       const owned = Uint8Array.from(bytes);
       return this.serial(async () => {
         guard.check();
+        if (reservation) {
+          const uuid =
+            /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+          if (
+            !this.options.reservedStaging ||
+            !uuid.test(reservation.hostId) ||
+            !uuid.test(reservation.stagingId) ||
+            !validateContract("Artifact", reservation.artifact).success ||
+            reservation.artifact.sha256 !== sha256(owned) ||
+            reservation.artifact.id !== `sha256_${sha256(owned)}` ||
+            reservation.artifact.byteLength !== owned.length ||
+            reservation.artifact.path !== request.path ||
+            reservation.artifact.mediaType !== "application/octet-stream"
+          )
+            throw new HostBoundaryError("FORBIDDEN", "Unbound reserved stage.");
+          await this.options.reservedStaging.authorize(reservation, context);
+          guard.check();
+        }
         if (root.managedBlobs && request.path !== `blobs/${sha256(owned)}`)
           throw new HostBoundaryError(
             "ARTIFACT_INTEGRITY",
@@ -724,12 +878,23 @@ export class ProjectFileSystem implements FileSystemBoundary {
         await this.resolve(root, request.path, true);
         guard.check();
         if (!root.staging) {
-          const directory = path.join(root.path, `.host-${randomUUID()}`);
+          const directory = path.join(
+            root.path,
+            `.host-${reservation?.hostId ?? randomUUID()}`,
+          );
           await io(() => mkdir(directory, { mode: 0o700 }));
           root.staging = { path: directory, identity: await lstat(directory) };
         }
+        if (
+          reservation &&
+          path.basename(root.staging.path) !== `.host-${reservation.hostId}`
+        )
+          throw new HostBoundaryError(
+            "FORBIDDEN",
+            "Reserved stage belongs to another host.",
+          );
         await this.checkStaging(root);
-        const stagingId = randomUUID();
+        const stagingId = reservation?.stagingId ?? randomUUID();
         const absolute = path.join(root.staging.path, stagingId);
         const artifact: Artifact = {
           id: `sha256_${sha256(owned)}`,
@@ -751,7 +916,7 @@ export class ProjectFileSystem implements FileSystemBoundary {
           identity = await handle.stat();
         } catch (error) {
           await handle.close();
-          await io(() => unlink(absolute));
+          if (!reservation) await io(() => unlink(absolute));
           throw error;
         }
         await handle.close();
@@ -772,8 +937,10 @@ export class ProjectFileSystem implements FileSystemBoundary {
         try {
           guard.check();
         } catch (error) {
-          await io(() => unlink(absolute));
-          this.pending.delete(stagingId);
+          if (!reservation) {
+            await io(() => unlink(absolute));
+            this.pending.delete(stagingId);
+          }
           throw error;
         }
         return staged;

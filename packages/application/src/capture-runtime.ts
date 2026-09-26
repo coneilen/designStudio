@@ -36,3 +36,14 @@ export {
 export function openNativeCapture(project: CaptureProject) {
   return assembleNativeCapture(project);
 }
+export {
+  type NativeReferenceForkInput,
+  openNativeReferenceFork,
+  REFERENCE_FORK_CONFIRMATION,
+} from "./reference-fork.js";
+export {
+  type NativeReferenceForkResultInput,
+  openNativeReferenceForkResult,
+  type ReferenceForkConsumer,
+  type ReferenceForkRole,
+} from "./reference-fork-result.js";

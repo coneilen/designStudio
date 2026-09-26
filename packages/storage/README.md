@@ -739,3 +739,25 @@ authority; F05 permission-aware cache lookup composition.
 Actual Windows power loss, hosted CI, public-registry restore, native
 cross-platform distribution/macOS execution, and large-project performance
 are not established by this lane.
+# Fresh reference-fork destinations
+
+`referenceFork` admission creates schema 6 **only from an empty database**.
+Ordinary opens and existing/partial fork write opens fail closed; schemas 4 and 5 are
+not migrated by this capability. The single reservation records destination,
+actor, origin and policy bindings plus all host/stage identifiers and exact
+output descriptors in a committed SQLite transaction before staging begins.
+Physical creation uses those reserved IDs with exclusive creation, never
+guessed IDs or namespace adoption. The created-instance identity and closed
+reserved namespace are checked through publication. The new receipt and fork
+completion share a SQLite transaction.
+
+An immutable `referenceForkRead` connection additionally requires an exact
+completed receipt hash before opening. `referenceForkResult` validates the full
+closed journal and receipt/artifact-reference graph; partial journals are denied.
+This read admission never enables schema-6 mutations.
+
+All failures preserve stage/journal ownership. There is no cold replay or
+cleanup operation; callers retain original asynchronous work until it settles
+before closing SQLite or the filesystem owner. The targeted fork fixtures
+exercise reservation, partial write, lost stage return, receipt rollback,
+duplicate/replaced stage, cancellation, and forbidden legacy reopening.

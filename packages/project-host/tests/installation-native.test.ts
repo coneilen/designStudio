@@ -92,6 +92,11 @@ describe("pinned v7 conversion compatibility", () => {
   for (const mode of [
     "complete",
     "postcommit-deadline",
+    "fork-stage-deadline",
+    "fork-source-tamper",
+    "fork-close",
+    "fork-close-cancel",
+    "fork-close-deadline",
     "partial-stage",
     "ineligible-job",
     "unknown-stage",
@@ -151,9 +156,15 @@ describe("pinned v7 conversion compatibility", () => {
             DESIGN_STUDIO_V7_DEADLINE:
               mode === "postcommit-deadline"
                 ? "1"
-                : mode === "partial-stage"
-                  ? "partial-stage"
-                  : "0",
+                : mode === "fork-stage-deadline" ||
+                    mode === "fork-source-tamper" ||
+                    mode === "fork-close" ||
+                    mode === "fork-close-cancel" ||
+                    mode === "fork-close-deadline"
+                  ? "stage-deadline"
+                  : mode === "partial-stage"
+                    ? "partial-stage"
+                    : "0",
             DESIGN_STUDIO_V7_LOADED: path.join(root, "loaded-v7-modules.json"),
             DESIGN_STUDIO_EGRESS_LEDGER: path.join(root, "writer-egress.json"),
           };
@@ -223,7 +234,12 @@ describe("pinned v7 conversion compatibility", () => {
                 "9bcfbaadca45ac6f4ffb4fcd55e8abd5569fad9a",
               );
               expect(transfer.writerOutcome).toBe(
-                mode === "postcommit-deadline"
+                mode === "postcommit-deadline" ||
+                  mode === "fork-stage-deadline" ||
+                  mode === "fork-source-tamper" ||
+                  mode === "fork-close" ||
+                  mode === "fork-close-cancel" ||
+                  mode === "fork-close-deadline"
                   ? "failed"
                   : mode === "partial-stage"
                     ? "abrupt-after-stage"
@@ -396,6 +412,46 @@ describe("pinned v7 conversion compatibility", () => {
                 },
               ),
             );
+            if (mode === "fork-stage-deadline") {
+              const consumer = await run(
+                [
+                  "--import",
+                  pathToFileURL(
+                    path.resolve(
+                      "packages\\project-host\\tests\\crossrelease-egress-deny.mjs",
+                    ),
+                  ).href,
+                  path.resolve("node_modules\\vitest\\vitest.mjs"),
+                  "run",
+                  "--project",
+                  "unit",
+                  "--config",
+                  path.join(materialized.root, "reader.config.mjs"),
+                  "packages\\application\\tests\\reference-acquisition.test.ts",
+                  "-t",
+                  "^cold readonly application consumes committed fork outputs$",
+                  "--reporter=dot",
+                ],
+                {
+                  timeout: 60000,
+                  env: {
+                    ...environment,
+                    DESIGN_STUDIO_FORK_RESULT_HANDOFF: path.join(
+                      root,
+                      "fork-result-handoff.json",
+                    ),
+                    DESIGN_STUDIO_EGRESS_LEDGER: path.join(
+                      root,
+                      "consumer-egress.json",
+                    ),
+                  },
+                },
+              );
+              expect(consumer.stderr).toBe("");
+              expect(consumer.stdout).toContain("1 passed");
+              expect(consumer.stdout).toContain('"verifiedBytesConsumed":true');
+              await checkEgress("consumer-egress.json.");
+            }
             await phase("snapshot-after", async () => {
               expect(reader.stderr).toBe("");
               expect(reader.stdout).toContain("1 passed");

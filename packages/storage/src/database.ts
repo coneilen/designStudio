@@ -1,7 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
+import { parseContract } from "@design-studio/contracts";
 import Database from "better-sqlite3";
 import { immutableDatabaseUri } from "./immutable-sqlite.js";
+import { referenceForkSchema } from "./reference-fork.js";
 import {
   readRecoveryRecords,
   referenceMetadataDigest,
@@ -91,7 +93,8 @@ export async function openDatabase(
     if (
       options.access === "read-only" &&
       version !== 4 &&
-      !(version === 5 && options.referenceRecovery)
+      !(version === 5 && options.referenceRecovery) &&
+      !(version === 6 && options.referenceForkRead)
     )
       throw new StorageError(
         "SCHEMA_INCOMPATIBLE",
@@ -110,13 +113,27 @@ export async function openDatabase(
             version !== 2 &&
             version !== 3 &&
             version !== 4 &&
-            version !== 5)))
+            version !== 5 &&
+            version !== 6)))
     ) {
       throw new StorageError(
         "SCHEMA_INCOMPATIBLE",
         "Unsupported or foreign database; restore a compatible backup or migrate explicitly.",
       );
     }
+    if (
+      (version === 6 && !options.referenceFork && !options.referenceForkRead) ||
+      (options.referenceForkRead &&
+        (version !== 6 ||
+          options.access !== "read-only" ||
+          options.referenceFork)) ||
+      (options.referenceFork &&
+        (version !== 0 || options.access === "read-only"))
+    )
+      throw new StorageError(
+        "ACTION_REQUIRED",
+        "Reference fork requires a fresh destination; existing or partial destinations cannot be replayed.",
+      );
     if (version !== 0) {
       const identity = db
         .prepare<[], { project: string; root: string; permission: string }>(
@@ -135,6 +152,43 @@ export async function openDatabase(
     }
     if (db.pragma("integrity_check", { simple: true }) !== "ok")
       throw new StorageError("INTEGRITY", "SQLite integrity check failed.");
+    if (options.referenceForkRead) {
+      const row = db
+        .prepare<[], { data: string }>(
+          "SELECT data FROM reference_fork WHERE singleton=1",
+        )
+        .get();
+      if (!row || Buffer.byteLength(row.data) > 65536)
+        throw new StorageError(
+          "INTEGRITY",
+          "Completed fork journal is absent.",
+        );
+      const record = parseContract(
+        "ReferenceForkReservation",
+        row.data,
+        "json",
+        { maxInputBytes: 65536 },
+      );
+      if (!record.receipt)
+        throw new StorageError(
+          "ACTION_REQUIRED",
+          "Partial fork destinations cannot be read or resumed.",
+        );
+      const digest = createHash("sha256")
+        .update(options.canonicalBytes(record.receipt))
+        .digest("hex");
+      if (
+        !record.receipt ||
+        record.staged !== record.stages.length ||
+        digest !== options.referenceForkRead.expectedReceiptSha256 ||
+        record.binding.projectId !== options.projectId ||
+        record.binding.artifactRootId !== options.artifactRootId
+      )
+        throw new StorageError(
+          "ACTION_REQUIRED",
+          "Only the exact completed fork receipt admits immutable reads.",
+        );
+    }
     if (options.referenceRecovery?.writer) {
       if (version !== 4 && version !== 5)
         throw new StorageError(
@@ -174,8 +228,9 @@ export async function openDatabase(
         connection.exec("CREATE INDEX artifact_hash ON artifacts(hash)");
         connection.exec(jobSchema);
         connection.exec(bindingSchema);
+        if (options.referenceFork) connection.exec(referenceForkSchema);
         connection.pragma(`application_id = ${applicationId}`);
-        connection.pragma("user_version = 4");
+        connection.pragma(`user_version = ${options.referenceFork ? 6 : 4}`);
       })();
     } else if (version === 1 || version === 2 || version === 3) {
       // Every upgrade retains a separate valid database before altering schema.

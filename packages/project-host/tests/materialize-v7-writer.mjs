@@ -296,20 +296,30 @@ it("authentic pinned v7 crossrelease writer", async () => {
       if (result.status === "complete") f.advanceClock(30001);
       return result;
     });
+  if (process.env.DESIGN_STUDIO_V7_DEADLINE === "stage-deadline") {
+    const stage = LocalStore.prototype.stageReferenceConversion;
+    vi.spyOn(LocalStore.prototype, "stageReferenceConversion").mockImplementation(async function(this: LocalStore, ...args) {
+      const result = await stage.apply(this, args);
+      expect(result.status).toBe("complete");
+      f.advanceClock(30001);
+      return result;
+    });
+  }
   const converted = await f.runOffline({ ...command, operation: "convert-reference",
     expectedRecovery: required(recovered.receiptSha256), confirmation: "CONVERT-WITH-RECOVERED-REFERENCE" });
-  expect(converted.status).toBe(process.env.DESIGN_STUDIO_V7_DEADLINE === "1" ? "failed" : "complete");
+  const stageDeadline = process.env.DESIGN_STUDIO_V7_DEADLINE === "stage-deadline";
+  expect(converted.status).toBe(process.env.DESIGN_STUDIO_V7_DEADLINE === "1" || stageDeadline ? "failed" : "complete");
   if (converted.status === "failed") expect(converted.error?.code).toBe("DEADLINE_EXCEEDED");
   const observed = await f.observeOffline();
   expect(observed.schema).toBe(5);
-  expect(observed.events).toHaveLength(10);
+  expect(observed.events).toHaveLength(stageDeadline ? 9 : 10);
   expect(f.readPins).toBe(0);
   crossReleaseRetainedRoot = f.project.paths.temp;
   await writeFile(process.env.DESIGN_STUDIO_V7_HANDOFF!, JSON.stringify({
     root: crossReleaseRetainedRoot, expectedJob: command.expectedJob, expectedRecovery: recovered.receiptSha256,
     fixtureClockNowMs: required(seam.work).policy.clock.now(),
     writerCommit: "${commit}", writerPolicy: REFERENCE_OFFLINE_POLICY_SHA256,
-    writerOutcome: converted.status, events: 10, conversionEvidence: converted.conversion?.evidence,
+    writerOutcome: converted.status, events: stageDeadline ? 9 : 10, conversionEvidence: converted.conversion?.evidence,
   }), { flag: "wx" });
 });
 `;

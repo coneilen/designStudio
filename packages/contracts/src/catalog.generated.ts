@@ -2,6 +2,11 @@
 import type * as Types from "./generated.js";
 
 export interface ContractTypes {
+  ReferenceForkResultManifest: Types.ReferenceForkResultManifest;
+  NativeReferenceForkResultEnvelope: Types.NativeReferenceForkResultEnvelope;
+  ReferenceForkReservation: Types.ReferenceForkReservation;
+  ReferenceForkOrigin: Types.ReferenceForkOrigin;
+  NativeReferenceForkEnvelope: Types.NativeReferenceForkEnvelope;
   ReferenceRecoveryBinding: Types.ReferenceRecoveryBinding;
   ReferenceRecoveryArchive: Types.ReferenceRecoveryArchive;
   ReferenceRecoveryRecord: Types.ReferenceRecoveryRecord;
@@ -187,6 +192,11 @@ export interface ContractTypes {
 export type ContractName = keyof ContractTypes;
 
 export const contractNames: readonly ContractName[] = [
+  "ReferenceForkResultManifest",
+  "NativeReferenceForkResultEnvelope",
+  "ReferenceForkReservation",
+  "ReferenceForkOrigin",
+  "NativeReferenceForkEnvelope",
   "ReferenceRecoveryBinding",
   "ReferenceRecoveryArchive",
   "ReferenceRecoveryRecord",

@@ -22,6 +22,7 @@ import type {
   StoredJobResource,
   StoredJobStage,
 } from "./job-types.js";
+import type { ReferenceForkReservation } from "./reference-fork.js";
 import type {
   ReferenceRawTable,
   ReferenceRecoveryRecord,
@@ -58,6 +59,19 @@ export interface StoredArtifactBinding extends LogicalArtifactBinding {
 }
 
 export interface StorageOptions {
+  referenceForkRead?: {
+    expectedReceiptSha256: string;
+    authorize(context: OperationContext): Promise<void>;
+  };
+  referenceFork?: {
+    authorize(context: OperationContext): Promise<void>;
+    stage(
+      reservation: ReferenceForkReservation,
+      index: number,
+      bytes: Uint8Array,
+      context: OperationContext,
+    ): Promise<StagedArtifact>;
+  };
   access?: "read-only";
   readonlySnapshot?: { check(): Promise<void> };
   referenceRecovery?: {
@@ -160,6 +174,9 @@ export interface StorageOptions {
   ): Promise<boolean>;
   fault?(
     point:
+      | "fork-after-reservation"
+      | "fork-after-stage"
+      | "fork-before-receipt"
       | "before-commit"
       | "after-commit"
       | "migration-before-commit"

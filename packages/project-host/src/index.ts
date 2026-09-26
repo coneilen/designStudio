@@ -14,6 +14,7 @@ export {
   assertCaptureRecoveryInstallation,
   assertCaptureReferenceInstallation,
   assertReferenceConversionInspectionInstallation,
+  assertReferenceForkInstallation,
   assertReferenceOfflineInstallation,
   assertReferenceValidationInstallation,
   type CaptureInstallationLease,

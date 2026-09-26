@@ -1868,6 +1868,280 @@
           { "$ref": "#/definitions/ResponseEnvelope" }
         ],
         "definitions": {
+          "ReferenceForkResultManifest": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "schemaVersion",
+              "operationId",
+              "projectId",
+              "origin",
+              "artifacts",
+              "readiness"
+            ],
+            "properties": {
+              "schemaVersion": { "const": "1.0" },
+              "operationId": { "$ref": "#/definitions/StableId" },
+              "projectId": { "$ref": "#/definitions/StableId" },
+              "origin": { "$ref": "#/definitions/ArtifactReference" },
+              "artifacts": {
+                "$ref": "#/definitions/NativeReferenceForkEnvelope/properties/conversion/properties/artifacts"
+              },
+              "readiness": { "enum": ["blocked", "needs-review"] }
+            }
+          },
+          "NativeReferenceForkResultEnvelope": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "schemaVersion",
+              "operation",
+              "projectId",
+              "requestId",
+              "status",
+              "inputAccounting"
+            ],
+            "properties": {
+              "schemaVersion": { "const": "1.0" },
+              "operation": { "const": "reference-fork-result" },
+              "projectId": { "$ref": "#/definitions/StableId" },
+              "requestId": { "$ref": "#/definitions/StableId" },
+              "status": { "enum": ["complete", "failed"] },
+              "inputAccounting": {
+                "$ref": "#/definitions/ReferenceInputAccounting"
+              },
+              "error": { "$ref": "#/definitions/ContractError" },
+              "conversion": {
+                "$ref": "#/definitions/NativeReferenceForkEnvelope/properties/conversion"
+              }
+            },
+            "allOf": [
+              {
+                "if": { "properties": { "status": { "const": "complete" } } },
+                "then": {
+                  "required": ["conversion"],
+                  "not": { "required": ["error"] }
+                },
+                "else": {
+                  "required": ["error"],
+                  "not": { "required": ["conversion"] }
+                }
+              }
+            ]
+          },
+          "ReferenceForkReservation": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["binding", "hostId", "stages", "staged"],
+            "properties": {
+              "binding": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "version",
+                  "operationId",
+                  "projectId",
+                  "artifactRootId",
+                  "actorId",
+                  "sourceProjectId",
+                  "originSha256",
+                  "resultSha256",
+                  "policySha256"
+                ],
+                "properties": {
+                  "version": { "const": 1 },
+                  "operationId": {
+                    "type": "string",
+                    "pattern": "^fork_reference_[a-f0-9]{64}$"
+                  },
+                  "projectId": { "$ref": "#/definitions/StableId" },
+                  "artifactRootId": { "$ref": "#/definitions/StableId" },
+                  "actorId": { "$ref": "#/definitions/StableId" },
+                  "sourceProjectId": { "$ref": "#/definitions/StableId" },
+                  "originSha256": { "$ref": "#/definitions/Sha256" },
+                  "resultSha256": { "$ref": "#/definitions/Sha256" },
+                  "policySha256": { "$ref": "#/definitions/Sha256" }
+                }
+              },
+              "hostId": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+              },
+              "stages": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 16,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["stagingId", "artifact"],
+                  "properties": {
+                    "stagingId": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+                    },
+                    "artifact": { "$ref": "#/definitions/Artifact" }
+                  }
+                }
+              },
+              "staged": { "type": "integer", "minimum": 0, "maximum": 16 },
+              "receipt": { "$ref": "#/definitions/CommitReceipt" }
+            }
+          },
+          "ReferenceForkOrigin": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "schemaVersion",
+              "operationId",
+              "sourceProjectId",
+              "destinationProjectId",
+              "actorId",
+              "sourceJobSha256",
+              "sourceStateSha256",
+              "sourceControlSha256",
+              "recoveryReceipt",
+              "captureReceipt",
+              "source",
+              "structure",
+              "reference",
+              "recoveryEvidence",
+              "policySha256",
+              "ownership"
+            ],
+            "properties": {
+              "schemaVersion": { "const": "1.0" },
+              "operationId": { "$ref": "#/definitions/StableId" },
+              "sourceProjectId": { "$ref": "#/definitions/StableId" },
+              "destinationProjectId": { "$ref": "#/definitions/StableId" },
+              "actorId": { "$ref": "#/definitions/StableId" },
+              "sourceJobSha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "sourceStateSha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "sourceControlSha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "recoveryReceipt": { "$ref": "#/definitions/CommitReceipt" },
+              "captureReceipt": { "$ref": "#/definitions/CommitReceipt" },
+              "source": { "$ref": "#/definitions/ArtifactReference" },
+              "structure": { "$ref": "#/definitions/ArtifactReference" },
+              "reference": { "$ref": "#/definitions/ArtifactReference" },
+              "recoveryEvidence": { "$ref": "#/definitions/ArtifactReference" },
+              "policySha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+              "ownership": {
+                "const": "origin-evidence-not-destination-authority"
+              }
+            }
+          },
+          "NativeReferenceForkEnvelope": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "schemaVersion",
+              "operation",
+              "projectId",
+              "requestId",
+              "status",
+              "inputAccounting"
+            ],
+            "properties": {
+              "schemaVersion": { "const": "1.0" },
+              "operation": { "const": "reference-fork" },
+              "projectId": { "$ref": "#/definitions/StableId" },
+              "requestId": { "$ref": "#/definitions/StableId" },
+              "destinationProjectId": { "$ref": "#/definitions/StableId" },
+              "status": { "enum": ["complete", "failed"] },
+              "inputAccounting": {
+                "$ref": "#/definitions/ReferenceInputAccounting"
+              },
+              "error": { "$ref": "#/definitions/ContractError" },
+              "partialDestination": { "const": "blocked-no-replay" },
+              "conversion": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "operationId",
+                  "origin",
+                  "receiptSha256",
+                  "outputs",
+                  "artifacts",
+                  "readiness"
+                ],
+                "properties": {
+                  "operationId": { "$ref": "#/definitions/StableId" },
+                  "origin": { "$ref": "#/definitions/ArtifactReference" },
+                  "receiptSha256": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "outputs": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 16,
+                    "items": { "$ref": "#/definitions/Artifact" }
+                  },
+                  "artifacts": {
+                    "type": "array",
+                    "minItems": 5,
+                    "maxItems": 7,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["role", "artifact"],
+                      "properties": {
+                        "role": {
+                          "enum": [
+                            "design",
+                            "resources",
+                            "source-map",
+                            "conversion-evidence",
+                            "provenance",
+                            "report",
+                            "reference"
+                          ]
+                        },
+                        "artifact": {
+                          "$ref": "#/definitions/ArtifactReference"
+                        }
+                      }
+                    }
+                  },
+                  "readiness": { "enum": ["blocked", "needs-review"] }
+                }
+              }
+            },
+            "allOf": [
+              {
+                "if": { "properties": { "status": { "const": "complete" } } },
+                "then": {
+                  "required": ["destinationProjectId", "conversion"],
+                  "not": {
+                    "anyOf": [
+                      { "required": ["error"] },
+                      { "required": ["partialDestination"] }
+                    ]
+                  }
+                },
+                "else": {
+                  "required": ["error"],
+                  "not": { "required": ["conversion"] }
+                }
+              },
+              {
+                "if": {
+                  "required": ["destinationProjectId"],
+                  "properties": { "status": { "const": "failed" } }
+                },
+                "then": { "required": ["partialDestination"] }
+              }
+            ]
+          },
           "ReferenceRecoveryBinding": {
             "type": "object",
             "additionalProperties": false,

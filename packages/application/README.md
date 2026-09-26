@@ -854,3 +854,58 @@ or the root cause/elimination of the historical 26/56-second outliers. No fourth
 run, automatic retry, new optimization, release candidate or production install
 was authorized by these results. Final integrated-code release packaging and
 exact user bootstrap/payload approval remain separate review gates.
+# Offline verified-input fork
+
+The release-9 `reference-fork` capability is a separate, explicitly confirmed
+offline operation. It freshly verifies a schema-5 source's recorded capture,
+approval, recovered reference, and receipt/control bindings using an immutable
+database and native-pinned recorded blob reads. It does not inventory, read,
+adopt, delete, or reconcile unrecorded source stages. The historical global
+retained-inventory checks remain unchanged for their existing commands.
+
+Only after source verification does the composition create a fresh owned
+destination. `ReferenceForkOrigin` preserves original receipts as **origin
+evidence, not destination authority**. Conversion uses destination-specific
+operation/design identifiers and a new destination receipt. Returned artifacts
+identify the design/resources/source-map/evidence/provenance/report; readiness
+remains `blocked` or `needs-review`, never render-ready.
+
+One 30-second deadline and one 25-MiB physical-read ledger span source proof,
+selected input reads, repeated source verification, destination publication,
+durability, final inspection, and EOF probes. No provider, DNS, PAT, or credential
+object is instantiated. Original projects are never opened for writes.
+
+Destination schema 6 durably records the host UUID and every stage UUID and
+descriptor before file creation. Stage progress and the final receipt are
+recorded separately; a fault can leave reserved partial bytes or published
+outputs, never a claim of completed conversion. Existing schema-6 destinations
+are explicitly blocked from writable reopening/replay. Partial destinations
+are also blocked from result reads. There is no resume, automatic adoption,
+generic mutation, or legacy-command read/export path. A failure after
+destination creation returns its logical ID and `blocked-no-replay`; a new
+attempt requires a new explicit authorization, not reuse of the old gate.
+
+### Consuming completed outputs
+
+The supported `@design-studio/application/capture` entrypoint
+`openNativeReferenceForkResult(project)` accepts an authenticated native
+`CaptureProject`. `execute({ operation: "reference-fork-result", requestId,
+expectedReceipt }, signal, consumer?)` opens only an immutable schema-6 database
+whose completed journal matches that exact destination receipt. It validates the
+receipt protection graph, origin/result manifest bindings and every recorded
+output's native-pinned bytes. It never opens the original source project.
+
+An optional consumer `{ role, reference, async consume(bytes, artifact, signal) }`
+selects the exact receipt member for `design`, `report`, `reference`, or another
+reported conversion role. `bytes` is borrowed: complete all processing before
+the callback resolves; the buffer is then zeroed. Do not retain the view or treat
+callback delivery as final success. Final byte/identity/database rechecks and
+actual owner closure must finish and `execute` must resolve `complete` before
+the caller presents a successful result. Cancellation/deadline during callback
+or successful cleanup withholds conversion metadata without undoing committed
+data. Pending callbacks retain the original owner until settlement.
+
+The CLI `figma reference-fork-result --project <DESTINATION> --request-id <ID>
+--expected-receipt <SHA256>` returns bounded verified metadata only. Actual
+design/report/reference byte consumption is through the supported application
+consumer above; CLI file export and inline private bodies are not provided.

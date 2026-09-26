@@ -11,16 +11,21 @@ import {
   type NativeCaptureRecoveryInput,
   type NativeCaptureRuntime,
   NativeCaptureStartupCleanupRequired,
+  type NativeReferenceForkInput,
+  type NativeReferenceForkResultInput,
   type NativeReferenceInput,
   type NativeReferenceOfflineInput,
   type NativeReferenceRecoveryPlanInput,
   openNativeCapture,
   openNativeReferenceConversionInspection,
+  openNativeReferenceFork,
+  openNativeReferenceForkResult,
   openNativeReferenceOffline,
   openNativeReferenceValidation,
   REFERENCE_APPROVAL_CONFIRMATION,
   REFERENCE_CONVERSION_CONFIRMATION,
   REFERENCE_DOWNLOAD_CONFIRMATION,
+  REFERENCE_FORK_CONFIRMATION,
   REFERENCE_RECOVERY_CONFIRMATION,
 } from "@design-studio/application/capture";
 import {
@@ -28,6 +33,8 @@ import {
   type NativeCaptureEnvelope,
   type NativeCaptureRecoveryEnvelope,
   type NativeReferenceEnvelope,
+  type NativeReferenceForkEnvelope,
+  type NativeReferenceForkResultEnvelope,
   type NativeReferenceOfflineEnvelope,
   type NativeReferenceRecoveryPlanEnvelope,
   validateContract,
@@ -37,6 +44,7 @@ import {
   assertCaptureRecoveryInstallation,
   assertCaptureReferenceInstallation,
   assertReferenceConversionInspectionInstallation,
+  assertReferenceForkInstallation,
   assertReferenceOfflineInstallation,
   assertReferenceValidationInstallation,
   type CaptureInstallationLease,
@@ -56,7 +64,9 @@ type NativeEnvelope =
   | NativeCaptureRecoveryEnvelope
   | NativeReferenceEnvelope
   | NativeReferenceRecoveryPlanEnvelope
-  | NativeReferenceOfflineEnvelope;
+  | NativeReferenceOfflineEnvelope
+  | NativeReferenceForkEnvelope
+  | NativeReferenceForkResultEnvelope;
 interface NativeArguments {
   command:
     | "help"
@@ -68,6 +78,8 @@ interface NativeArguments {
     | "figma-artifact"
     | "figma-recover"
     | "figma-reference-recovery-plan"
+    | "figma-reference-fork"
+    | "figma-reference-fork-result"
     | `figma-${NativeReferenceOfflineInput["operation"]}`
     | `figma-${NativeReferenceInput["operation"]}`;
   project?: string;
@@ -78,7 +90,9 @@ interface NativeArguments {
     | NativeCaptureRecoveryInput
     | NativeReferenceInput
     | NativeReferenceRecoveryPlanInput
-    | NativeReferenceOfflineInput;
+    | NativeReferenceOfflineInput
+    | NativeReferenceForkInput
+    | NativeReferenceForkResultInput;
 }
 const offlineOperations = [
   "reference-recovery-apply-plan",
@@ -108,6 +122,10 @@ function isReference(
   return referenceOperations.some((value) => value === input.operation);
 }
 function envelopeKind(input: NonNullable<NativeArguments["capture"]>) {
+  if (input.operation === "reference-fork-result")
+    return "NativeReferenceForkResultEnvelope" as const;
+  if (input.operation === "reference-fork")
+    return "NativeReferenceForkEnvelope" as const;
   return isOffline(input)
     ? ("NativeReferenceOfflineEnvelope" as const)
     : input.operation === "reference-recovery-plan"
@@ -140,6 +158,8 @@ export function parseCaptureArguments(
         "artifact",
         "recover",
         "reference-recovery-plan",
+        "reference-fork",
+        "reference-fork-result",
         ...offlineOperations,
         ...referenceOperations,
       ].includes(verb)
@@ -158,6 +178,10 @@ export function parseCaptureArguments(
           "--project",
           "--request-id",
           ...(verb === "reference-recovery-plan" ? ["--expected-job"] : []),
+          ...(verb === "reference-fork-result" ? ["--expected-receipt"] : []),
+          ...(verb === "reference-fork"
+            ? ["--expected-job", "--expected-recovery", "--confirm"]
+            : []),
           ...(offlineOperations.some((value) => value === verb)
             ? ["--expected-job"]
             : []),
@@ -209,6 +233,46 @@ export function parseCaptureArguments(
     )
       throw new ApplicationError("INVALID_INPUT");
     const role = options.get("--role");
+    if (verb === "reference-fork-result") {
+      const expectedReceipt = options.get("--expected-receipt");
+      if (
+        !expectedReceipt ||
+        !validateContract("Sha256", expectedReceipt).success
+      )
+        throw new ApplicationError("INVALID_INPUT");
+      return {
+        command: "figma-reference-fork-result",
+        project,
+        capture: {
+          operation: "reference-fork-result",
+          requestId,
+          expectedReceipt,
+        },
+      };
+    }
+    if (verb === "reference-fork") {
+      const expectedJob = options.get("--expected-job");
+      const expectedRecovery = options.get("--expected-recovery");
+      if (
+        !expectedJob ||
+        !expectedRecovery ||
+        !validateContract("Sha256", expectedJob).success ||
+        !validateContract("Sha256", expectedRecovery).success ||
+        options.get("--confirm") !== REFERENCE_FORK_CONFIRMATION
+      )
+        throw new ApplicationError("INVALID_INPUT");
+      return {
+        command: "figma-reference-fork",
+        project,
+        capture: {
+          operation: "reference-fork",
+          requestId,
+          expectedJob,
+          expectedRecovery,
+          confirmation: REFERENCE_FORK_CONFIRMATION,
+        },
+      };
+    }
     const offlineOperation = offlineOperations.find((value) => value === verb);
     if (offlineOperation) {
       const expectedJob = options.get("--expected-job");
@@ -508,6 +572,8 @@ export async function runCaptureCommand(args: readonly string[]) {
         "figma reference-conversion-inspect --project <ID> --request-id <original capture request> --expected-job <Job SHA256> --expected-recovery <recovery receipt SHA256>",
         "figma reference-recovery-apply --project <ID> --request-id <original capture request> --expected-job <Job SHA256> --expected-proof <current v7 plan SHA256> --confirm RECOVER-VERIFIED-REFERENCE-OFFLINE",
         "figma convert-reference --project <ID> --request-id <original capture request> --expected-job <Job SHA256> --expected-recovery <recovery receipt SHA256> --confirm CONVERT-WITH-RECOVERED-REFERENCE",
+        "figma reference-fork --project <SOURCE ID> --request-id <original capture request> --expected-job <Job SHA256> --expected-recovery <recovery receipt SHA256> --confirm FORK-VERIFIED-INPUTS-AND-CONVERT-OFFLINE",
+        "figma reference-fork-result --project <DESTINATION ID> --request-id <ID> --expected-receipt <fork receipt SHA256>",
       ],
       limitation:
         "Native entry needs an independently approved capture release. Setup/update display an app-owned masked Figma PAT dialog; status reads one owned vault entry; remove deletes only the explicitly confirmed entry. Capture allows at most four calls in 30 seconds. The default empty download-origin policy yields a partial result before CDN contact. Inspection is private metadata only; explicit artifact output stays in the owned private project. Conversion is an unapproved draft, never render-readiness. Recovery additionally requires the installed recovery supplement: it records one exact next-request authorization offline, not a retry, quota assertion, or capture result. Third requests remain blocked. Offline reference apply migrates to schema 5 and seals the project against unrelated mutations: one recovery slot and its explicit convert-reference operation only; historical reads and backup remain available, but ordinary staging/commits/jobs/revisions/pin changes and maintenance deletion are blocked.",
@@ -527,6 +593,8 @@ export async function runCaptureCommand(args: readonly string[]) {
   let offline:
     | Awaited<ReturnType<typeof openNativeReferenceOffline>>
     | undefined;
+  let fork: ReturnType<typeof openNativeReferenceFork> | undefined;
+  let forkResult: ReturnType<typeof openNativeReferenceForkResult> | undefined;
   let startupCleanup: (() => Promise<void>) | undefined;
   const abort = new AbortController();
   const cancel = () => abort.abort();
@@ -546,6 +614,11 @@ export async function runCaptureCommand(args: readonly string[]) {
       assertReferenceOfflineInstallation(installation);
     if (request.capture?.operation === "reference-conversion-inspect")
       assertReferenceConversionInspectionInstallation(installation);
+    if (
+      request.capture?.operation === "reference-fork" ||
+      request.capture?.operation === "reference-fork-result"
+    )
+      assertReferenceForkInstallation(installation);
     if (request.capture && isReference(request.capture))
       assertCaptureReferenceInstallation(installation);
     if (
@@ -568,7 +641,16 @@ export async function runCaptureCommand(args: readonly string[]) {
         privateRoot: path.dirname(project.paths.database),
       };
     } else if (request.capture) {
-      if (isOffline(request.capture)) {
+      if (request.capture.operation === "reference-fork-result") {
+        forkResult = openNativeReferenceForkResult(project);
+        result = await forkResult.execute(request.capture, abort.signal);
+      } else if (request.capture.operation === "reference-fork") {
+        const installed = installation;
+        fork = openNativeReferenceFork(project, () =>
+          openCaptureProject(installed),
+        );
+        result = await fork.execute(request.capture, abort.signal);
+      } else if (isOffline(request.capture)) {
         offline =
           request.capture.operation === "reference-conversion-inspect"
             ? await openNativeReferenceConversionInspection(project)
@@ -641,6 +723,8 @@ export async function runCaptureCommand(args: readonly string[]) {
         await runtime?.close();
         await validation?.close();
         await offline?.close();
+        await fork?.close();
+        await forkResult?.close();
         await project?.close();
         guard?.close();
         await installation?.close();
@@ -661,28 +745,64 @@ export async function runCaptureCommand(args: readonly string[]) {
           error instanceof NativeCaptureCleanupRequired
             ? error.cleanupCode
             : safeCode(error);
-        const envelope: NativeEnvelope = {
-          schemaVersion: "1.0",
-          operation: request.capture.operation,
+        const envelopeBase = {
+          schemaVersion: "1.0" as const,
           projectId: request.project,
           requestId: request.capture.requestId,
-          status: "interrupted",
-          ...(request.capture.operation === "reference-conversion-inspect"
-            ? {
-                inspection: {
-                  verification: "conversion-readonly-v1" as const,
-                  state: "blocked" as const,
-                  detail: "verification-incomplete" as const,
-                },
-              }
-            : {}),
           error: {
-            code: "INTERRUPTED",
+            code: "INTERRUPTED" as const,
             message: cleanupMessage(operationCode, cleanupCode),
             retryable: false,
             diagnosticIds: [],
           },
         };
+        const envelope: NativeEnvelope =
+          request.capture.operation === "reference-fork-result"
+            ? {
+                ...envelopeBase,
+                operation: "reference-fork-result",
+                status: "failed",
+                inputAccounting: forkResult?.failureResult?.inputAccounting ?? {
+                  limitBytes: 26214400,
+                  privateBytes: 0,
+                  networkBytes: 0,
+                  phase: "proof",
+                },
+              }
+            : request.capture.operation === "reference-fork"
+              ? {
+                  ...envelopeBase,
+                  operation: "reference-fork",
+                  status: "failed",
+                  inputAccounting: fork?.failureResult?.inputAccounting ?? {
+                    limitBytes: 26214400,
+                    privateBytes: 0,
+                    networkBytes: 0,
+                    phase: "proof" as const,
+                  },
+                  ...(fork?.failureResult?.destinationProjectId
+                    ? {
+                        destinationProjectId:
+                          fork.failureResult.destinationProjectId,
+                        partialDestination: "blocked-no-replay" as const,
+                      }
+                    : {}),
+                }
+              : {
+                  ...envelopeBase,
+                  operation: request.capture.operation,
+                  status: "interrupted",
+                  ...(request.capture.operation ===
+                  "reference-conversion-inspect"
+                    ? {
+                        inspection: {
+                          verification: "conversion-readonly-v1" as const,
+                          state: "blocked" as const,
+                          detail: "verification-incomplete" as const,
+                        },
+                      }
+                    : {}),
+                };
         cleanupFailure = new NativeCaptureCommandCleanupRequired(
           envelope,
           operationCode,
@@ -714,6 +834,8 @@ export async function runCaptureCommand(args: readonly string[]) {
           await runtime?.close();
           await validation?.close();
           await offline?.close();
+          await fork?.close();
+          await forkResult?.close();
           credentials?.close();
           await project?.close();
           guard?.close();
@@ -741,11 +863,40 @@ export async function runCaptureCommand(args: readonly string[]) {
       projectId: request.project,
       requestId: request.capture.requestId,
       status:
-        primary === "CANCELLED"
-          ? "cancelled"
-          : primary === "INTERRUPTED"
-            ? "interrupted"
-            : "failed",
+        request.capture.operation === "reference-fork" ||
+        request.capture.operation === "reference-fork-result"
+          ? "failed"
+          : primary === "CANCELLED"
+            ? "cancelled"
+            : primary === "INTERRUPTED"
+              ? "interrupted"
+              : "failed",
+      ...(request.capture.operation === "reference-fork"
+        ? {
+            inputAccounting: fork?.failureResult?.inputAccounting ?? {
+              limitBytes: 26214400,
+              privateBytes: 0,
+              networkBytes: 0,
+              phase: "proof" as const,
+            },
+            ...(fork?.failureResult?.destinationProjectId
+              ? {
+                  destinationProjectId: fork.failureResult.destinationProjectId,
+                  partialDestination: "blocked-no-replay" as const,
+                }
+              : {}),
+          }
+        : {}),
+      ...(request.capture.operation === "reference-fork-result"
+        ? {
+            inputAccounting: forkResult?.failureResult?.inputAccounting ?? {
+              limitBytes: 26214400,
+              privateBytes: 0,
+              networkBytes: 0,
+              phase: "proof",
+            },
+          }
+        : {}),
       ...(request.capture.operation === "reference-conversion-inspect"
         ? {
             inspection: {

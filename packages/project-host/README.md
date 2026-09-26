@@ -1,5 +1,28 @@
 # @design-studio/project-host
 
+## Release-v9 verified-input fork supplement
+
+The independent `reference-fork-policy.json` adds only `figma-reference-fork`
+(`figma reference-fork` in the CLI). All seven preceding policy byte sequences
+and hashes remain unchanged. Release v9 binds the eighth policy hash within
+the unchanged 1024-byte bootstrap release-policy bound; releases v1–v8 retain
+their exact canonical parsing and capability rules. Both bootstrap install and
+launch delegate release-policy admission to the same verified installation API.
+
+The dedicated issuer never forwards to the offline writer. Source proof reads
+are read-only; destination writes require the exact `fork_reference_<64 hex>`
+job namespace and cannot write historical jobs. A write request ID must equal
+its own job ID. Grants deny egress and contain no credential or provider
+authority. The source immutable database pin and
+selected retained-body pins are rooted in current native project, principal and
+v9 installation authority. Acquiring fork authority selects that supplement for
+subsequent retained-entry pins without weakening the underlying pin checks.
+Application/storage enforce schema-5 recorded inputs, a newly created schema-6
+destination, the 16-output/publication bounds, and blocked destination replay.
+No historical stage adoption, source recovery, sidecar repair, or broad source
+inventory capability is introduced. Policy/issuer unit fixtures are synthetic;
+they do not attest a candidate, installed release, or private project.
+
 ## Release-v8 read-only conversion inspection
 
 The exact `reference-conversion-inspection-policy.json` supplement adds only

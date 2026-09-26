@@ -32,6 +32,7 @@ import {
   assertCaptureRecoveryInstallation,
   assertCaptureReferenceInstallation,
   assertReferenceConversionInspectionInstallation,
+  assertReferenceForkInstallation,
   assertReferenceOfflineInstallation,
   assertReferenceValidationInstallation,
 } from "./installation.js";
@@ -43,6 +44,7 @@ import {
   type ReferenceBackupPin,
 } from "./reference-backup.js";
 import { REFERENCE_CONVERSION_INSPECTION_POLICY_SHA256 } from "./reference-conversion-inspection-profile.js";
+import { REFERENCE_FORK_POLICY_SHA256 } from "./reference-fork-profile.js";
 import { REFERENCE_OFFLINE_POLICY_SHA256 } from "./reference-offline-profile.js";
 import { pinImmutableReferenceDatabase } from "./reference-validation-database.js";
 import { pinRetainedReferenceEntry } from "./reference-validation-entry.js";
@@ -69,6 +71,8 @@ export interface CaptureWork {
   referenceValidationAuthority?(): Promise<string>;
   referenceOfflineAuthority?(): Promise<string>;
   referenceConversionInspectionAuthority?(): Promise<string>;
+  referenceForkAuthority?(): Promise<string>;
+  pinReferenceForkDatabase?: CaptureWork["pinReferenceOfflineDatabase"];
   pinReferenceConversionInspectionDatabase?: CaptureWork["pinReferenceOfflineDatabase"];
   pinReferenceOfflineDatabase?(): Promise<{
     identitySha256: string;
@@ -123,6 +127,7 @@ export function acquireCaptureWork(project: CaptureProject): CaptureWork {
   const retainedPins = new Set<ReadLease>();
   let closed = false;
   let policy: NativeCapturePolicy | undefined;
+  let referenceFork = false;
   const current = async () => {
     captureProjectOwner(project);
     if (closed) refuse("Native capture work is closed.");
@@ -233,6 +238,38 @@ export function acquireCaptureWork(project: CaptureProject): CaptureWork {
       await current();
       assertReferenceConversionInspectionInstallation(owner.installation);
       return REFERENCE_CONVERSION_INSPECTION_POLICY_SHA256;
+    },
+    async referenceForkAuthority() {
+      await current();
+      assertReferenceForkInstallation(owner.installation);
+      referenceFork = true;
+      return REFERENCE_FORK_POLICY_SHA256;
+    },
+    async pinReferenceForkDatabase() {
+      await current();
+      assertReferenceForkInstallation(owner.installation);
+      referenceFork = true;
+      return pinImmutableReferenceDatabase({
+        filename: project.paths.database,
+        sid: owner.sid,
+        retainedPins,
+        authoritySha256: digest(
+          Buffer.from(
+            JSON.stringify({
+              installation: owner.installation.identity,
+              projectId: project.projectId,
+              actorId: work.actorId,
+              artifactRootId: project.artifactRootId,
+              permissionScope: work.permissionScope,
+              policySha256: REFERENCE_FORK_POLICY_SHA256,
+            }),
+          ),
+        ),
+        authorize: async () => {
+          await current();
+          assertReferenceForkInstallation(owner.installation);
+        },
+      });
     },
     async pinReferenceConversionInspectionDatabase() {
       await current();
@@ -360,8 +397,11 @@ export function acquireCaptureWork(project: CaptureProject): CaptureWork {
       relative: string,
       directory: boolean,
     ) {
+      const assertInstallation = referenceFork
+        ? assertReferenceForkInstallation
+        : assertReferenceValidationInstallation;
       await current();
-      assertReferenceValidationInstallation(owner.installation);
+      assertInstallation(owner.installation);
       const root =
         rootId === project.artifactRootId
           ? project.paths.artifacts
@@ -378,7 +418,7 @@ export function acquireCaptureWork(project: CaptureProject): CaptureWork {
         retainedPins,
         authorize: async () => {
           await current();
-          assertReferenceValidationInstallation(owner.installation);
+          assertInstallation(owner.installation);
         },
       });
     },

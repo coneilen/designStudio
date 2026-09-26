@@ -2,11 +2,6 @@
 
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "SchemaVersion".
- */
-export type SchemaVersion = "1.0";
-/**
- * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "StableId".
  */
 export type StableId = string;
@@ -16,6 +11,185 @@ export type StableId = string;
  */
 export type Sha256 = string;
 /**
+ * @minItems 5
+ * @maxItems 7
+ */
+export type Artifacts =
+  | [
+      {
+        role: "design" | "resources" | "source-map" | "conversion-evidence" | "provenance" | "report" | "reference";
+        artifact: ArtifactReference;
+      },
+      {
+        role: "design" | "resources" | "source-map" | "conversion-evidence" | "provenance" | "report" | "reference";
+        artifact: ArtifactReference;
+      },
+      {
+        role: "design" | "resources" | "source-map" | "conversion-evidence" | "provenance" | "report" | "reference";
+        artifact: ArtifactReference;
+      },
+      {
+        role: "design" | "resources" | "source-map" | "conversion-evidence" | "provenance" | "report" | "reference";
+        artifact: ArtifactReference;
+      },
+      {
+        role: "design" | "resources" | "source-map" | "conversion-evidence" | "provenance" | "report" | "reference";
+        artifact: ArtifactReference;
+      },
+    ]
+  | [
+      {
+        role: "design" | "resources" | "source-map" | "conversion-evidence" | "provenance" | "report" | "reference";
+        artifact: ArtifactReference;
+      },
+      {
+        role: "design" | "resources" | "source-map" | "conversion-evidence" | "provenance" | "report" | "reference";
+        artifact: ArtifactReference;
+      },
+      {
+        role: "design" | "resources" | "source-map" | "conversion-evidence" | "provenance" | "report" | "reference";
+        artifact: ArtifactReference;
+      },
+      {
+        role: "design" | "resources" | "source-map" | "conversion-evidence" | "provenance" | "report" | "reference";
+        artifact: ArtifactReference;
+      },
+      {
+        role: "design" | "resources" | "source-map" | "conversion-evidence" | "provenance" | "report" | "reference";
+        artifact: ArtifactReference;
+      },
+      {
+        role: "design" | "resources" | "source-map" | "conversion-evidence" | "provenance" | "report" | "reference";
+        artifact: ArtifactReference;
+      },
+    ]
+  | [
+      {
+        role: "design" | "resources" | "source-map" | "conversion-evidence" | "provenance" | "report" | "reference";
+        artifact: ArtifactReference;
+      },
+      {
+        role: "design" | "resources" | "source-map" | "conversion-evidence" | "provenance" | "report" | "reference";
+        artifact: ArtifactReference;
+      },
+      {
+        role: "design" | "resources" | "source-map" | "conversion-evidence" | "provenance" | "report" | "reference";
+        artifact: ArtifactReference;
+      },
+      {
+        role: "design" | "resources" | "source-map" | "conversion-evidence" | "provenance" | "report" | "reference";
+        artifact: ArtifactReference;
+      },
+      {
+        role: "design" | "resources" | "source-map" | "conversion-evidence" | "provenance" | "report" | "reference";
+        artifact: ArtifactReference;
+      },
+      {
+        role: "design" | "resources" | "source-map" | "conversion-evidence" | "provenance" | "report" | "reference";
+        artifact: ArtifactReference;
+      },
+      {
+        role: "design" | "resources" | "source-map" | "conversion-evidence" | "provenance" | "report" | "reference";
+        artifact: ArtifactReference;
+      },
+    ];
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "NativeReferenceForkResultEnvelope".
+ */
+export type NativeReferenceForkResultEnvelope = {
+  [k: string]: unknown;
+} & {
+  schemaVersion: "1.0";
+  operation: "reference-fork-result";
+  projectId: StableId;
+  requestId: StableId;
+  status: "complete" | "failed";
+  inputAccounting: ReferenceInputAccounting;
+  error?: ContractError;
+  conversion?: Conversion;
+};
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "ErrorCode".
+ */
+export type ErrorCode =
+  | "INVALID_INPUT"
+  | "INVALID_SCHEMA"
+  | "UNSUPPORTED_SCHEMA_VERSION"
+  | "INPUT_LIMIT"
+  | "RASTER_LIMIT"
+  | "NODE_LIMIT"
+  | "DEPTH_LIMIT"
+  | "ASSET_LIMIT"
+  | "UNKNOWN_PROPERTY"
+  | "INVALID_LAYOUT"
+  | "DUPLICATE_NODE_ID"
+  | "DEPENDENCY_CYCLE"
+  | "RESOURCE_UNRESOLVED"
+  | "TOKEN_TYPE_MISMATCH"
+  | "TOKEN_MODE_MISSING"
+  | "COMPONENT_PROPERTY_INVALID"
+  | "COMPONENT_SLOT_INVALID"
+  | "MAPPING_STALE"
+  | "BEHAVIOR_UNRESOLVED"
+  | "UNSUPPORTED_FEATURE"
+  | "FONT_MISSING"
+  | "FONT_FALLBACK"
+  | "LICENSE_UNVERIFIED"
+  | "ASSET_INVALID"
+  | "ARTIFACT_INTEGRITY"
+  | "PATH_FORBIDDEN"
+  | "NODE_SELECTION_REQUIRED"
+  | "FIGMA_NODE_NOT_FOUND"
+  | "FIGMA_ACCESS_DENIED"
+  | "RATE_LIMITED"
+  | "HISTORICAL_ASSET_UNAVAILABLE"
+  | "SOURCE_CHANGED_DURING_CAPTURE"
+  | "SOURCE_BINDING_UNVERIFIED"
+  | "SOURCE_INCOMPLETE"
+  | "PLUGIN_UNAVAILABLE"
+  | "TRANSPORT_UNAVAILABLE"
+  | "AUTH_REQUIRED"
+  | "FORBIDDEN"
+  | "NOT_FOUND"
+  | "ORIGIN_FORBIDDEN"
+  | "CSRF_INVALID"
+  | "EGRESS_DENIED"
+  | "CONFLICT"
+  | "IDEMPOTENCY_CONFLICT"
+  | "APPROVAL_REQUIRED"
+  | "ACTION_REQUIRED"
+  | "CANCELLED"
+  | "DEADLINE_EXCEEDED"
+  | "LEASE_LOST"
+  | "INTERRUPTED"
+  | "OUTPUT_UNCERTAIN"
+  | "PROVIDER_UNAVAILABLE"
+  | "TOOL_MISSING"
+  | "TOOL_VERSION_UNSUPPORTED"
+  | "PROCESS_FAILED"
+  | "OUTPUT_LIMIT"
+  | "UNSUPPORTED_HOST"
+  | "DEVICE_SELECTION_REQUIRED"
+  | "DEVICE_UNAUTHORIZED"
+  | "DEVICE_OFFLINE"
+  | "CAPTURE_PROTECTED"
+  | "APP_UNAVAILABLE"
+  | "NAVIGATION_FAILED"
+  | "READINESS_TIMEOUT"
+  | "SCREEN_UNVERIFIED"
+  | "PROFILE_MISMATCH"
+  | "EVIDENCE_MISSING"
+  | "POLICY_FAILED"
+  | "VALIDATION_INCONCLUSIVE"
+  | "INTERNAL_ERROR";
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "Timestamp".
+ */
+export type Timestamp = string;
+/**
  * Portable bundle-relative slash path, not a host filesystem path. No drives, traversal, empty segments, percent escapes, ADS or Windows reserved basenames. Host confinement/symlink checks are F04.
  *
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
@@ -24,9 +198,9 @@ export type Sha256 = string;
 export type RelativePath = string;
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "Timestamp".
+ * via the `definition` "SchemaVersion".
  */
-export type Timestamp = string;
+export type SchemaVersion = "1.0";
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "Operation".
@@ -46,6 +220,24 @@ export type Operation =
   | "execute"
   | "credential-use"
   | "model-egress";
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "NativeReferenceForkEnvelope".
+ */
+export type NativeReferenceForkEnvelope = {
+  [k: string]: unknown;
+} & {
+  schemaVersion: "1.0";
+  operation: "reference-fork";
+  projectId: StableId;
+  requestId: StableId;
+  destinationProjectId?: StableId;
+  status: "complete" | "failed";
+  inputAccounting: ReferenceInputAccounting;
+  error?: ContractError;
+  partialDestination?: "blocked-no-replay";
+  conversion?: Conversion;
+};
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "ReferenceConversionInspection".
@@ -171,81 +363,6 @@ export type NativeReferenceOfflineEnvelope = {
   inputAccounting?: ReferenceInputAccounting;
   error?: ContractError;
 };
-/**
- * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "ErrorCode".
- */
-export type ErrorCode =
-  | "INVALID_INPUT"
-  | "INVALID_SCHEMA"
-  | "UNSUPPORTED_SCHEMA_VERSION"
-  | "INPUT_LIMIT"
-  | "RASTER_LIMIT"
-  | "NODE_LIMIT"
-  | "DEPTH_LIMIT"
-  | "ASSET_LIMIT"
-  | "UNKNOWN_PROPERTY"
-  | "INVALID_LAYOUT"
-  | "DUPLICATE_NODE_ID"
-  | "DEPENDENCY_CYCLE"
-  | "RESOURCE_UNRESOLVED"
-  | "TOKEN_TYPE_MISMATCH"
-  | "TOKEN_MODE_MISSING"
-  | "COMPONENT_PROPERTY_INVALID"
-  | "COMPONENT_SLOT_INVALID"
-  | "MAPPING_STALE"
-  | "BEHAVIOR_UNRESOLVED"
-  | "UNSUPPORTED_FEATURE"
-  | "FONT_MISSING"
-  | "FONT_FALLBACK"
-  | "LICENSE_UNVERIFIED"
-  | "ASSET_INVALID"
-  | "ARTIFACT_INTEGRITY"
-  | "PATH_FORBIDDEN"
-  | "NODE_SELECTION_REQUIRED"
-  | "FIGMA_NODE_NOT_FOUND"
-  | "FIGMA_ACCESS_DENIED"
-  | "RATE_LIMITED"
-  | "HISTORICAL_ASSET_UNAVAILABLE"
-  | "SOURCE_CHANGED_DURING_CAPTURE"
-  | "SOURCE_BINDING_UNVERIFIED"
-  | "SOURCE_INCOMPLETE"
-  | "PLUGIN_UNAVAILABLE"
-  | "TRANSPORT_UNAVAILABLE"
-  | "AUTH_REQUIRED"
-  | "FORBIDDEN"
-  | "NOT_FOUND"
-  | "ORIGIN_FORBIDDEN"
-  | "CSRF_INVALID"
-  | "EGRESS_DENIED"
-  | "CONFLICT"
-  | "IDEMPOTENCY_CONFLICT"
-  | "APPROVAL_REQUIRED"
-  | "ACTION_REQUIRED"
-  | "CANCELLED"
-  | "DEADLINE_EXCEEDED"
-  | "LEASE_LOST"
-  | "INTERRUPTED"
-  | "OUTPUT_UNCERTAIN"
-  | "PROVIDER_UNAVAILABLE"
-  | "TOOL_MISSING"
-  | "TOOL_VERSION_UNSUPPORTED"
-  | "PROCESS_FAILED"
-  | "OUTPUT_LIMIT"
-  | "UNSUPPORTED_HOST"
-  | "DEVICE_SELECTION_REQUIRED"
-  | "DEVICE_UNAUTHORIZED"
-  | "DEVICE_OFFLINE"
-  | "CAPTURE_PROTECTED"
-  | "APP_UNAVAILABLE"
-  | "NAVIGATION_FAILED"
-  | "READINESS_TIMEOUT"
-  | "SCREEN_UNVERIFIED"
-  | "PROFILE_MISMATCH"
-  | "EVIDENCE_MISSING"
-  | "POLICY_FAILED"
-  | "VALIDATION_INCONCLUSIVE"
-  | "INTERNAL_ERROR";
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "Version".
@@ -873,6 +990,11 @@ export type ProviderOutcome =
     };
 
 export interface ContractCatalog {
+  ReferenceForkResultManifest: ReferenceForkResultManifest;
+  NativeReferenceForkResultEnvelope: NativeReferenceForkResultEnvelope;
+  ReferenceForkReservation: ReferenceForkReservation;
+  ReferenceForkOrigin: ReferenceForkOrigin;
+  NativeReferenceForkEnvelope: NativeReferenceForkEnvelope;
   ReferenceRecoveryBinding: ReferenceRecoveryBinding;
   ReferenceRecoveryArchive: ReferenceRecoveryArchive;
   ReferenceRecoveryRecord: ReferenceRecoveryRecord;
@@ -1056,6 +1178,854 @@ export interface ContractCatalog {
 }
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "ReferenceForkResultManifest".
+ */
+export interface ReferenceForkResultManifest {
+  schemaVersion: "1.0";
+  operationId: StableId;
+  projectId: StableId;
+  origin: ArtifactReference;
+  artifacts: Artifacts;
+  readiness: "blocked" | "needs-review";
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "ArtifactReference".
+ */
+export interface ArtifactReference {
+  id: StableId;
+  sha256: Sha256;
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "ReferenceInputAccounting".
+ */
+export interface ReferenceInputAccounting {
+  limitBytes: number;
+  privateBytes: number;
+  networkBytes: number;
+  phase: "proof" | "history" | "inventory" | "admission" | "acquisition" | "commit" | "inspection";
+  rejected?: {
+    kind: "private" | "network";
+    bytes: number;
+    limit: "aggregate" | "per-read";
+    phase: "proof" | "history" | "inventory" | "admission" | "acquisition" | "commit" | "inspection";
+  };
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "ContractError".
+ */
+export interface ContractError {
+  code: ErrorCode;
+  message: string;
+  retryable: boolean;
+  retryAfter?: Timestamp;
+  jobId?: StableId;
+  referenceDiagnostic?: ReferenceDiagnostic;
+  diagnosticIds: StableId[];
+}
+/**
+ * Closed nonsecret observations only. Absence on legacy evidence means unknown, never a reconstructed diagnosis. A command diagnostic without a receipt is not durable proof.
+ *
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "ReferenceDiagnostic".
+ */
+export interface ReferenceDiagnostic {
+  stage: "mime" | "png" | "json" | "worker" | "operation" | "legacy";
+  reason:
+    | "validated"
+    | "mime-missing"
+    | "mime-rejected"
+    | "not-png"
+    | "png-malformed"
+    | "png-unsupported"
+    | "png-interlace"
+    | "png-animation"
+    | "png-critical"
+    | "png-color-unsupported"
+    | "png-color-conflict"
+    | "input-limit"
+    | "output-limit"
+    | "raster-limit"
+    | "node-limit"
+    | "depth-limit"
+    | "intermediate-limit"
+    | "json-malformed"
+    | "worker-protocol"
+    | "worker-unavailable"
+    | "worker-limit"
+    | "cancelled"
+    | "deadline"
+    | "authority"
+    | "legacy-unknown";
+  mimeClass: "not-observed" | "png" | "generic-binary" | "missing" | "other";
+}
+export interface Conversion {
+  operationId: StableId;
+  origin: ArtifactReference;
+  receiptSha256: string;
+  /**
+   * @minItems 1
+   * @maxItems 16
+   */
+  outputs:
+    | [Artifact]
+    | [Artifact, Artifact]
+    | [Artifact, Artifact, Artifact]
+    | [Artifact, Artifact, Artifact, Artifact]
+    | [Artifact, Artifact, Artifact, Artifact, Artifact]
+    | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+    | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+    | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+    | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+    | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+    | [Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact, Artifact]
+    | [
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+      ]
+    | [
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+      ]
+    | [
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+      ]
+    | [
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+      ]
+    | [
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+        Artifact,
+      ];
+  artifacts: Artifacts;
+  readiness: "blocked" | "needs-review";
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "Artifact".
+ */
+export interface Artifact {
+  id: StableId;
+  path: RelativePath;
+  mediaType: string;
+  byteLength: number;
+  sha256: Sha256;
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "ReferenceForkReservation".
+ */
+export interface ReferenceForkReservation {
+  binding: {
+    version: 1;
+    operationId: string;
+    projectId: StableId;
+    artifactRootId: StableId;
+    actorId: StableId;
+    sourceProjectId: StableId;
+    originSha256: Sha256;
+    resultSha256: Sha256;
+    policySha256: Sha256;
+  };
+  hostId: string;
+  /**
+   * @minItems 1
+   * @maxItems 16
+   */
+  stages:
+    | [
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+      ]
+    | [
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+      ]
+    | [
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+      ]
+    | [
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+      ]
+    | [
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+      ]
+    | [
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+      ]
+    | [
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+      ]
+    | [
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+      ]
+    | [
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+      ]
+    | [
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+      ]
+    | [
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+      ]
+    | [
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+      ]
+    | [
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+      ]
+    | [
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+      ]
+    | [
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+      ]
+    | [
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+        {
+          stagingId: string;
+          artifact: Artifact;
+        },
+      ];
+  staged: number;
+  receipt?: CommitReceipt;
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "CommitReceipt".
+ */
+export interface CommitReceipt {
+  schemaVersion: SchemaVersion;
+  id: StableId;
+  projectId: StableId;
+  jobId: StableId;
+  idempotency: IdempotencyScope;
+  committedAt: Timestamp;
+  outputs: Artifact[];
+  integrity: "verified";
+  publication: "atomic";
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "IdempotencyScope".
+ */
+export interface IdempotencyScope {
+  key: StableId;
+  projectId: StableId;
+  actorId: StableId;
+  operation: Operation;
+  payloadSha256: Sha256;
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "ReferenceForkOrigin".
+ */
+export interface ReferenceForkOrigin {
+  schemaVersion: "1.0";
+  operationId: StableId;
+  sourceProjectId: StableId;
+  destinationProjectId: StableId;
+  actorId: StableId;
+  sourceJobSha256: string;
+  sourceStateSha256: string;
+  sourceControlSha256: string;
+  recoveryReceipt: CommitReceipt;
+  captureReceipt: CommitReceipt;
+  source: ArtifactReference;
+  structure: ArtifactReference;
+  reference: ArtifactReference;
+  recoveryEvidence: ArtifactReference;
+  policySha256: string;
+  ownership: "origin-evidence-not-destination-authority";
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "ReferenceRecoveryBinding".
  */
 export interface ReferenceRecoveryBinding {
@@ -1081,25 +2051,6 @@ export interface ReferenceRecoveryBinding {
   reference: Artifact;
   recordedAt: Timestamp;
   confirmation: "RECOVER-VERIFIED-REFERENCE-OFFLINE";
-}
-/**
- * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "ArtifactReference".
- */
-export interface ArtifactReference {
-  id: StableId;
-  sha256: Sha256;
-}
-/**
- * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "Artifact".
- */
-export interface Artifact {
-  id: StableId;
-  path: RelativePath;
-  mediaType: string;
-  byteLength: number;
-  sha256: Sha256;
 }
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
@@ -3080,32 +4031,6 @@ export interface ReferenceRecoveryRecord {
 }
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "CommitReceipt".
- */
-export interface CommitReceipt {
-  schemaVersion: SchemaVersion;
-  id: StableId;
-  projectId: StableId;
-  jobId: StableId;
-  idempotency: IdempotencyScope;
-  committedAt: Timestamp;
-  outputs: Artifact[];
-  integrity: "verified";
-  publication: "atomic";
-}
-/**
- * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "IdempotencyScope".
- */
-export interface IdempotencyScope {
-  key: StableId;
-  projectId: StableId;
-  actorId: StableId;
-  operation: Operation;
-  payloadSha256: Sha256;
-}
-/**
- * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "ReferenceRecoveryEvidence".
  */
 export interface ReferenceRecoveryEvidence {
@@ -3216,71 +4141,6 @@ export interface ReferenceConversionInspectionProof {
   identitySha256: Sha256;
   controlSha256: Sha256;
   proofSha256: Sha256;
-}
-/**
- * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "ReferenceInputAccounting".
- */
-export interface ReferenceInputAccounting {
-  limitBytes: number;
-  privateBytes: number;
-  networkBytes: number;
-  phase: "proof" | "history" | "inventory" | "admission" | "acquisition" | "commit" | "inspection";
-  rejected?: {
-    kind: "private" | "network";
-    bytes: number;
-    limit: "aggregate" | "per-read";
-    phase: "proof" | "history" | "inventory" | "admission" | "acquisition" | "commit" | "inspection";
-  };
-}
-/**
- * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "ContractError".
- */
-export interface ContractError {
-  code: ErrorCode;
-  message: string;
-  retryable: boolean;
-  retryAfter?: Timestamp;
-  jobId?: StableId;
-  referenceDiagnostic?: ReferenceDiagnostic;
-  diagnosticIds: StableId[];
-}
-/**
- * Closed nonsecret observations only. Absence on legacy evidence means unknown, never a reconstructed diagnosis. A command diagnostic without a receipt is not durable proof.
- *
- * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "ReferenceDiagnostic".
- */
-export interface ReferenceDiagnostic {
-  stage: "mime" | "png" | "json" | "worker" | "operation" | "legacy";
-  reason:
-    | "validated"
-    | "mime-missing"
-    | "mime-rejected"
-    | "not-png"
-    | "png-malformed"
-    | "png-unsupported"
-    | "png-interlace"
-    | "png-animation"
-    | "png-critical"
-    | "png-color-unsupported"
-    | "png-color-conflict"
-    | "input-limit"
-    | "output-limit"
-    | "raster-limit"
-    | "node-limit"
-    | "depth-limit"
-    | "intermediate-limit"
-    | "json-malformed"
-    | "worker-protocol"
-    | "worker-unavailable"
-    | "worker-limit"
-    | "cancelled"
-    | "deadline"
-    | "authority"
-    | "legacy-unknown";
-  mimeClass: "not-observed" | "png" | "generic-binary" | "missing" | "other";
 }
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
