@@ -22,6 +22,35 @@ import { storageTestSignal } from "./lifetime.js";
 export const hash = (bytes: Uint8Array | string) =>
   createHash("sha256").update(bytes).digest("hex");
 export const bytes = (text: string) => new TextEncoder().encode(text);
+export async function syntheticBackupPin(filename: string) {
+  if (
+    !/[\\/](?:reference-synthetic-|capture-recovery-synthetic-)[^\\/]+[\\/]/.test(
+      filename,
+    )
+  )
+    throw new Error("Expected generated synthetic backup.");
+  const before = await lstat(filename);
+  const sha256 = hash(await readFile(filename));
+  let closed = false;
+  return {
+    sha256,
+    byteLength: before.size,
+    async check() {
+      if (closed) throw new Error("Synthetic backup pin closed.");
+      const now = await lstat(filename);
+      if (
+        now.ino !== before.ino ||
+        now.dev !== before.dev ||
+        now.size !== before.size ||
+        hash(await readFile(filename)) !== sha256
+      )
+        throw new Error("Synthetic backup preimage changed.");
+    },
+    close() {
+      closed = true;
+    },
+  };
+}
 // Synthetic identity observation, not a native owner/DACL or file-lock assertion.
 export async function syntheticImmutableSnapshot(filename: string) {
   const before = await lstat(filename);

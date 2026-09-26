@@ -124,6 +124,26 @@ export async function pinImmutableReferenceDatabase(input: {
       ),
       check,
       close: release,
+      async checkReleased() {
+        if (held.length) refuse("Immutable database pins remain held.");
+        await authorize();
+        await noSidecars();
+        const after = await lstat(filename);
+        if (
+          !after.isFile() ||
+          after.isSymbolicLink() ||
+          after.nlink !== 1 ||
+          after.dev !== before.dev ||
+          after.ino !== before.ino ||
+          after.size !== before.size ||
+          after.mtimeMs !== before.mtimeMs ||
+          (await realpath(filename)) !== filename
+        )
+          refuse("Database preimage changed after immutable pin release.");
+        const inspected = native.inspect(filename, false, sid);
+        inspected.close();
+        await authorize();
+      },
     };
   } catch (error) {
     try {

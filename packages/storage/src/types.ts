@@ -22,6 +22,11 @@ import type {
   StoredJobResource,
   StoredJobStage,
 } from "./job-types.js";
+import type { ReferenceForkReservation } from "./reference-fork.js";
+import type {
+  ReferenceRawTable,
+  ReferenceRecoveryRecord,
+} from "./reference-recovery.js";
 
 export interface StorageScope {
   projectId: string;
@@ -54,8 +59,43 @@ export interface StoredArtifactBinding extends LogicalArtifactBinding {
 }
 
 export interface StorageOptions {
+  referenceForkRead?: {
+    expectedReceiptSha256: string;
+    authorize(context: OperationContext): Promise<void>;
+  };
+  referenceFork?: {
+    authorize(context: OperationContext): Promise<void>;
+    stage(
+      reservation: ReferenceForkReservation,
+      index: number,
+      bytes: Uint8Array,
+      context: OperationContext,
+    ): Promise<StagedArtifact>;
+  };
   access?: "read-only";
   readonlySnapshot?: { check(): Promise<void> };
+  referenceRecovery?: {
+    authorize(context: OperationContext): Promise<void>;
+    verify(
+      record: ReferenceRecoveryRecord | null,
+      state: CaptureRecoveryState,
+      context: OperationContext,
+    ): Promise<void>;
+    writer?: {
+      metadataSha256: string;
+      controlSha256: string;
+      schema: 4 | 5;
+      beforeOpen(): Promise<void>;
+      check(): Promise<void>;
+    };
+    prepareBackup?(path: string): Promise<void>;
+    pinBackup?(path: string): Promise<ReferenceDatabaseBackupProof>;
+    publishBackup?(
+      source: string,
+      destination: string,
+      proof: ReferenceDatabaseBackupProof,
+    ): Promise<ReferenceDatabaseBackupProof>;
+  };
   referenceInspection?: {
     authorize(context: OperationContext): Promise<void>;
   };
@@ -134,6 +174,9 @@ export interface StorageOptions {
   ): Promise<boolean>;
   fault?(
     point:
+      | "fork-after-reservation"
+      | "fork-after-stage"
+      | "fork-before-receipt"
       | "before-commit"
       | "after-commit"
       | "migration-before-commit"
@@ -142,8 +185,18 @@ export interface StorageOptions {
       | "job-after-receipt"
       | "job-after-state"
       | "job-cancel-after-state"
-      | "job-cancel-after-control",
+      | "job-cancel-after-control"
+      | "reference-after-reserve"
+      | "reference-after-intent"
+      | "reference-after-stage"
+      | "reference-before-receipt",
   ): void;
+}
+export interface ReferenceDatabaseBackupProof {
+  sha256: string;
+  byteLength: number;
+  check(): Promise<void>;
+  close(): void;
 }
 
 export interface RevisionCommit {
@@ -189,11 +242,18 @@ export interface BoundBackupMetadata
   storageVersion: 4;
   artifactBindings: StoredArtifactBinding[];
 }
+export interface ReferenceBackupMetadata
+  extends Omit<BoundBackupMetadata, "storageVersion"> {
+  storageVersion: 5;
+  referenceRecoveries: ReferenceRecoveryRecord[];
+  referenceRecoveryRows: ReferenceRawTable[];
+}
 
 export type BackupMetadata =
   | LegacyBackupMetadata
   | JobBackupMetadata
-  | BoundBackupMetadata;
+  | BoundBackupMetadata
+  | ReferenceBackupMetadata;
 
 export interface ProjectBackup {
   metadata: BackupMetadata;

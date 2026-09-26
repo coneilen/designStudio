@@ -19,6 +19,24 @@ export interface ReadLease extends Lease {
 export interface RetainedReadLease extends ReadLease {
   check(): void;
 }
+export interface RetainedCreatedEntry extends Lease {
+  write(bytes: Buffer): void;
+  flush(): void;
+  check(): void;
+}
+export class ReservedCreationCleanupRequired extends HostBoundaryError {
+  constructor(
+    readonly close: () => void,
+    cause: unknown,
+  ) {
+    super(
+      "INTERRUPTED",
+      "Reserved creation retains an unclosed native handle.",
+      false,
+      { cause },
+    );
+  }
+}
 export interface InstallationEntry extends Lease {
   write(bytes: Buffer): void;
   finalize(publicBrowser?: boolean): void;
@@ -42,6 +60,11 @@ export interface Native {
     name: string,
     directory: boolean,
   ): RetainedReadLease;
+  createRetainedChild(
+    parent: RetainedReadLease,
+    name: string,
+    directory: boolean,
+  ): RetainedCreatedEntry;
   pinInstallation(
     filename: string,
     directory: boolean,
@@ -411,12 +434,15 @@ async function load(): Promise<Native> {
     sid: string,
     directory: boolean,
     operation: (attributes: Buffer) => T,
+    inherited = false,
   ): T {
     if (principal() !== sid) refuse("Current native principal changed.");
     const pointer: unknown[] = [null];
     const size = Buffer.alloc(4);
     const flags = directory ? "OICI" : "";
-    const sddl = `O:${sid}D:P(A;${flags};FA;;;${sid})(A;${flags};FA;;;SY)`;
+    const sddl = inherited
+      ? `O:${sid}`
+      : `O:${sid}D:P(A;${flags};FA;;;${sid})(A;${flags};FA;;;SY)`;
     if (!convertDescriptor(sddl, 1, pointer, size))
       throw failure("ConvertStringSecurityDescriptor");
     return preserving(
@@ -755,6 +781,119 @@ async function load(): Promise<Native> {
     principal,
     pinRead: (filename, directory, sid) => pin(filename, directory, sid),
     pinRetainedRoot: (filename, sid) => retainedPin(filename, true, sid),
+    createRetainedChild(parent, name, directory) {
+      const admitted = retained.get(parent);
+      if (
+        !admitted ||
+        !admitted.directory ||
+        !/^(?:blobs|\.host-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/.test(
+          name,
+        )
+      )
+        refuse(
+          "Reserved creation requires a branded parent and bounded child name.",
+        );
+      admitted.check();
+      if (principal() !== admitted.sid)
+        refuse("Reserved creation principal changed.");
+      const filename = path.join(admitted.filename, name);
+      let acquired: Handle | undefined;
+      const closeFailedCreation = (handle: Handle, error: unknown): never => {
+        try {
+          close(handle);
+        } catch (cleanup) {
+          throw new ReservedCreationCleanupRequired(
+            () => close(handle),
+            new AggregateError([error, cleanup]),
+          );
+        }
+        throw error;
+      };
+      let handle: Handle;
+      try {
+        handle = withSecurity(
+          admitted.sid,
+          directory,
+          (attributes) => {
+            if (directory) {
+              if (!createDirectory(`\\\\?\\${filename}`, attributes))
+                throw failure("CreateDirectoryW(reserved)");
+              acquired = open(filename, 0x20081, 1, null, 3, 0x02200000);
+            } else {
+              acquired = open(
+                filename,
+                0xc0020000,
+                1,
+                attributes,
+                1,
+                0x80200000,
+              );
+            }
+            return acquired;
+          },
+          true,
+        );
+      } catch (error) {
+        if (acquired !== undefined) return closeFailedCreation(acquired, error);
+        throw error;
+      }
+      let closed = false;
+      let identity: Identity;
+      const inspect = () => {
+        admitted.check();
+        if (principal() !== admitted.sid)
+          refuse("Reserved creation principal changed.");
+        const actual = inspectHandle(handle, filename, directory);
+        checkRetainedAcl(handle, admitted.sid, directory);
+        if (actual.volume !== parent.identity.volume)
+          refuse("Reserved child volume changed.");
+        return actual;
+      };
+      try {
+        identity = inspect();
+      } catch (error) {
+        return closeFailedCreation(handle, error);
+      }
+      const check = () => {
+        if (closed) refuse("Reserved entry is closed.");
+        const current = inspect();
+        if (
+          current.file !== identity.file ||
+          current.volume !== identity.volume
+        )
+          refuse("Reserved child identity changed.");
+      };
+      return {
+        handle,
+        identity,
+        check,
+        write(bytes) {
+          check();
+          if (directory || bytes.length > 65536)
+            refuse("Reserved write is not a bounded file chunk.");
+          if (bytes.length) {
+            const count = Buffer.alloc(4);
+            if (!write(handle, bytes, bytes.length, count, null))
+              throw failure("WriteFile(reserved)");
+            if (count.readUInt32LE() !== bytes.length)
+              refuse("Incomplete reserved write.");
+          }
+          check();
+        },
+        flush() {
+          check();
+          if (!directory && !flush(handle))
+            throw failure("FlushFileBuffers(reserved)");
+          check();
+        },
+        close() {
+          if (!closed) {
+            close(handle);
+            closed = true;
+          }
+        },
+      };
+    },
     pinRetainedChild(parent, name, directory) {
       const admitted = retained.get(parent);
       if (

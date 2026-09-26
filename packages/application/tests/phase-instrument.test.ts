@@ -1,4 +1,11 @@
-import { cp, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -8,14 +15,21 @@ import { instrumentCandidate } from "./phase-instrument.js";
 it("patches only expected copied functions exactly once before inventory and leaves real entrypoints unchanged", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "f08-hook-test-"));
   const diagnostics = path.join(root, "diagnostics");
-  await mkdir(diagnostics);
   try {
-    for (const name of ["application", "project-host"]) {
-      await mkdir(path.join(root, "packages", name), { recursive: true });
-      await cp(
-        path.resolve("packages", name, "dist"),
-        path.join(root, "packages", name, "dist"),
-        { recursive: true },
+    await mkdir(diagnostics);
+    for (const [name, filenames] of [
+      ["application", ["installed-project.js", "render-worker.js"]],
+      ["project-host", ["native.js", "installation.js"]],
+    ] as const) {
+      const destination = path.join(root, "packages", name, "dist");
+      await mkdir(destination, { recursive: true });
+      for (const filename of filenames)
+        await copyFile(
+          path.resolve("packages", name, "dist", filename),
+          path.join(destination, filename),
+        );
+      expect((await readdir(destination)).sort()).toEqual(
+        [...filenames].sort(),
       );
     }
     const entry = path.join(

@@ -1,12 +1,196 @@
-import { describe, expect, it } from "vitest";
+import { readFile } from "node:fs/promises";
+import { Ajv, type ErrorObject } from "ajv";
+import { describe, expect, it, vi } from "vitest";
 import {
   ContractBoundaryError,
+  contractNames,
   DEFAULT_BUDGETS,
   EXIT_CODES,
   MOBILE_STATIC_POLICY,
   parseContract,
   validateContract,
 } from "../src/index.js";
+import { foundationSchema } from "../src/schema.generated.js";
+
+it("registers authoritative named definitions by reference without an unused root validator", async () => {
+  vi.resetModules();
+  const registered = vi.spyOn(Ajv.prototype, "addSchema");
+  try {
+    const cold = await import("../src/boundary.js");
+    const { foundationSchema: source } = await import(
+      "../src/schema.generated.js"
+    );
+    const entries = registered.mock.calls
+      .map((args) => args[0])
+      .filter(
+        (schema) =>
+          schema &&
+          typeof schema === "object" &&
+          "$id" in schema &&
+          schema.$id === source.$id,
+      );
+    expect(entries).toHaveLength(1);
+    const schema = entries[0];
+    if (!schema || typeof schema !== "object")
+      throw new Error("Missing authoritative registration.");
+    expect(schema).toEqual({
+      $schema: source.$schema,
+      $id: source.$id,
+      definitions: source.definitions,
+    });
+    expect(Reflect.get(schema, "definitions")).toBe(source.definitions);
+    expect(source.anyOf).toHaveLength(4);
+    expect(
+      cold.validateContract("JsonObject", { synthetic: true }).success,
+    ).toBe(true);
+  } finally {
+    registered.mockRestore();
+  }
+});
+
+it("keeps named fragments independent of the unused document-root union", () => {
+  const refs = new Set<string>();
+  const walk = (value: unknown) => {
+    if (!value || typeof value !== "object") return;
+    for (const [key, item] of Object.entries(value)) {
+      expect(
+        ["$id", "$anchor", "$dynamicAnchor", "$dynamicRef"].includes(key),
+      ).toBe(false);
+      if (key === "$ref") {
+        expect(typeof item).toBe("string");
+        const match =
+          typeof item === "string"
+            ? /^#\/definitions\/([A-Za-z0-9]+)$/.exec(item)
+            : null;
+        expect(match).not.toBeNull();
+        expect(contractNames).toContain(match?.[1]);
+        if (typeof item === "string") refs.add(item);
+      } else walk(item);
+    }
+  };
+  walk(foundationSchema.definitions);
+  expect(refs.size).toBeGreaterThan(0);
+  expect(Object.keys(foundationSchema.definitions)).toEqual(contractNames);
+  expect(validateContract("FoundationContracts", {})).toMatchObject({
+    success: false,
+    issues: [{ code: "INVALID_SCHEMA" }],
+  });
+});
+
+it("matches full-root fragment validation, normalized errors and immutable inputs for every named contract", async () => {
+  const make = (schema: object) => {
+    const ajv = new Ajv({
+      strict: true,
+      strictRequired: false,
+      allErrors: false,
+      validateFormats: true,
+      useDefaults: false,
+      coerceTypes: false,
+      removeAdditional: false,
+      ownProperties: true,
+    });
+    ajv.addFormat("date-time", {
+      type: "string",
+      validate(value: string) {
+        const milliseconds = Date.parse(value);
+        return (
+          Number.isFinite(milliseconds) &&
+          new Date(milliseconds).toISOString().slice(0, 19) ===
+            value.slice(0, 19)
+        );
+      },
+    });
+    ajv.addSchema(schema);
+    return ajv;
+  };
+  const baseline = make(foundationSchema);
+  const named = make({
+    $schema: foundationSchema.$schema,
+    $id: foundationSchema.$id,
+    definitions: foundationSchema.definitions,
+  });
+  const errors = (value: ErrorObject[] | null | undefined) =>
+    (value ?? []).map(({ instancePath, keyword, message }) => ({
+      code: "INVALID_SCHEMA",
+      path: instancePath,
+      message: `${keyword}: ${message ?? "Schema mismatch"}`,
+    }));
+  const compare = (name: string, input: unknown) => {
+    const before = baseline.getSchema(
+      `${foundationSchema.$id}#/definitions/${name}`,
+    );
+    const after = named.getSchema(
+      `${foundationSchema.$id}#/definitions/${name}`,
+    );
+    if (!before || !after) throw new Error(`Missing named contract ${name}`);
+    const left = structuredClone(input),
+      right = structuredClone(input);
+    const expected = before(left);
+    expect(after(right), name).toBe(expected);
+    expect(errors(after.errors), name).toEqual(errors(before.errors));
+    expect(left).toEqual(input);
+    expect(right).toEqual(input);
+    const versionRejected =
+      name !== "JsonValue" &&
+      name !== "JsonObject" &&
+      input !== null &&
+      typeof input === "object" &&
+      "schemaVersion" in input &&
+      input.schemaVersion !== "1.0";
+    const result = validateContract(name, structuredClone(input));
+    if (versionRejected) {
+      expect(result).toMatchObject({
+        success: false,
+        issues: [{ code: "UNSUPPORTED_SCHEMA_VERSION" }],
+      });
+    } else {
+      expect(result.success, name).toBe(expected);
+      if (!result.success)
+        expect(result.issues, name).toEqual(errors(before.errors));
+    }
+  };
+  for (const name of contractNames)
+    for (const input of [
+      null,
+      false,
+      0,
+      "synthetic",
+      [],
+      {},
+      { schemaVersion: "1.0" },
+      { schemaVersion: "2.0" },
+    ])
+      compare(name, input);
+  const examples = parseContract(
+    "ContractExamples",
+    await readFile(
+      new URL(
+        "../../../tests/fixtures/foundation/contract-examples.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    "json",
+  );
+  for (const example of examples.artifacts) {
+    compare(example.contract, example.value);
+    if (
+      example.value &&
+      typeof example.value === "object" &&
+      !Array.isArray(example.value)
+    ) {
+      compare(example.contract, {
+        ...example.value,
+        unexpected_synthetic_field: true,
+      });
+      for (const key of Object.keys(example.value)) {
+        const value = { ...example.value };
+        delete value[key];
+        compare(example.contract, value);
+      }
+    }
+  }
+});
 
 it("reuses compiled schemas without trusting previously validated mutable input", () => {
   const value: Record<string, unknown> = { ...DEFAULT_BUDGETS };

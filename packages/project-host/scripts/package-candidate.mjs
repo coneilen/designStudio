@@ -38,6 +38,18 @@ import {
   relativeName,
 } from "../dist/installation-manifest.js";
 import {
+  REFERENCE_CONVERSION_INSPECTION_POLICY_SHA256,
+  referenceConversionInspectionPolicyBytes,
+} from "../dist/reference-conversion-inspection-profile.js";
+import {
+  REFERENCE_FORK_POLICY_SHA256,
+  referenceForkPolicyBytes,
+} from "../dist/reference-fork-profile.js";
+import {
+  REFERENCE_OFFLINE_POLICY_SHA256,
+  referenceOfflinePolicyBytes,
+} from "../dist/reference-offline-profile.js";
+import {
   REFERENCE_VALIDATION_POLICY_SHA256,
   referenceValidationPolicyBytes,
 } from "../dist/reference-validation-profile.js";
@@ -576,6 +588,21 @@ export async function packageCandidate({
       referenceValidationPolicyBytes(),
       { flag: "wx" },
     );
+    await writeFile(
+      path.join(payload, "reference-offline-policy.json"),
+      referenceOfflinePolicyBytes(),
+      { flag: "wx" },
+    );
+    await writeFile(
+      path.join(payload, "reference-conversion-inspection-policy.json"),
+      referenceConversionInspectionPolicyBytes(),
+      { flag: "wx" },
+    );
+    await writeFile(
+      path.join(payload, "reference-fork-policy.json"),
+      referenceForkPolicyBytes(),
+      { flag: "wx" },
+    );
   } else {
     await mkdir(path.join(payload, "fixtures"));
     await copyPhysical(
@@ -633,7 +660,7 @@ export async function packageCandidate({
     JSON.stringify(
       capture
         ? {
-            version: 6,
+            version: 9,
             kind: CAPTURE_PROFILE,
             manifestSha256: digest(manifest),
             capturePolicySha256: CAPTURE_POLICY_SHA256,
@@ -641,6 +668,10 @@ export async function packageCandidate({
             captureReferencePolicySha256: CAPTURE_REFERENCE_POLICY_SHA256,
             captureDiagnosticPolicySha256: CAPTURE_DIAGNOSTIC_POLICY_SHA256,
             referenceValidationPolicySha256: REFERENCE_VALIDATION_POLICY_SHA256,
+            referenceOfflinePolicySha256: REFERENCE_OFFLINE_POLICY_SHA256,
+            referenceConversionInspectionPolicySha256:
+              REFERENCE_CONVERSION_INSPECTION_POLICY_SHA256,
+            referenceForkPolicySha256: REFERENCE_FORK_POLICY_SHA256,
           }
         : {
             version: 1,

@@ -23,7 +23,12 @@ import {
   captureProjectOwner,
   openCaptureProject,
 } from "../src/capture-project.js";
-import { verifyInstalledRoot } from "../src/installation.js";
+import { acquireCaptureWork } from "../src/capture-work.js";
+import {
+  assertReferenceConversionInspectionInstallation,
+  assertReferenceOfflineInstallation,
+  verifyInstalledRoot,
+} from "../src/installation.js";
 import { loadNative } from "../src/native.js";
 import {
   captureInstallationSuite,
@@ -69,6 +74,60 @@ it("admits only the exact closed capture policy without learned origins", () => 
     validateCapturePolicy(Buffer.from(JSON.stringify(policy))),
   ).toThrow();
 });
+it("native version8 adds only explicit readonly inspection capability while version7 keeps its existing authority", async () => {
+  for (const releaseVersion of [7, 8] as const) {
+    await withCaptureInstallation(
+      async (installation) => {
+        assertReferenceOfflineInstallation(installation);
+        if (releaseVersion === 7)
+          expect(() =>
+            assertReferenceConversionInspectionInstallation(installation),
+          ).toThrow();
+        else assertReferenceConversionInspectionInstallation(installation);
+        const project = await openCaptureProject(installation);
+        try {
+          const work = acquireCaptureWork(project);
+          try {
+            if (releaseVersion === 7)
+              await expect(
+                work.referenceConversionInspectionAuthority?.(),
+              ).rejects.toThrow();
+            else {
+              expect(
+                await work.referenceConversionInspectionAuthority?.(),
+              ).toMatch(/^[a-f0-9]{64}$/);
+              const input = {
+                jobId: "readonly_synthetic",
+                requestId: "readonly_synthetic",
+                jobReads: [],
+                deadline: new Date(Date.now() + 30000).toISOString(),
+                signal: new AbortController().signal,
+              };
+              await expect(
+                work.policy.issueReferenceConversionInspection(
+                  Object.assign({}, input, { write: true }),
+                ),
+              ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+              const context =
+                await work.policy.issueReferenceConversionInspection(input);
+              expect(context.authorization.egress).toBe("deny");
+              expect(
+                context.authorization.grants.every((grant) =>
+                  grant.operations.every((op) => op === "read"),
+                ),
+              ).toBe(true);
+            }
+          } finally {
+            work.close();
+          }
+        } finally {
+          await project.close();
+        }
+      },
+      { releaseVersion },
+    );
+  }
+}, 60000);
 
 describe.skipIf(process.platform !== "win32")(
   "suite-owned native capture installation",

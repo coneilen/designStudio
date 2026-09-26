@@ -40,6 +40,10 @@ import type {
   RecoveryFacts,
   TrustedJobHandler,
 } from "../src/types.js";
+import type {
+  ObservationCounters,
+  TestObservation,
+} from "./test-observation.js";
 import {
   AsyncTestScope,
   inTestScope,
@@ -61,6 +65,7 @@ export function deferred<T>() {
   return { promise, resolve };
 }
 const cleanup: Array<() => Promise<void>> = [];
+const observations = new WeakMap<AsyncTestScope, TestObservation>();
 export function inJobsTest<T>(signal: AbortSignal, run: () => T) {
   if (cleanup.length)
     throw new Error("Previous jobs fixture has not quiesced.");
@@ -70,19 +75,31 @@ aroundEach((run, context) => inJobsTest(context.signal, run));
 export function ownCleanup(close: () => Promise<void>) {
   cleanup.push(close);
 }
+export function jobsCleanupCount(): number {
+  return cleanup.length;
+}
 afterEach(async () => {
-  await testScope().close();
-  const errors: unknown[] = [];
-  for (const close of [...cleanup].reverse()) {
-    try {
-      await close();
-      cleanup.splice(cleanup.indexOf(close), 1);
-    } catch (error) {
-      errors.push(error);
+  const observed = observations.get(testScope());
+  let settled = false;
+  try {
+    observed?.phase("support-scope-join");
+    await testScope().close();
+    const errors: unknown[] = [];
+    for (const close of [...cleanup].reverse()) {
+      try {
+        await close();
+        cleanup.splice(cleanup.indexOf(close), 1);
+      } catch (error) {
+        errors.push(error);
+      }
     }
+    if (errors.length)
+      throw new AggregateError(errors, "Owned jobs fixtures did not close.");
+    settled = true;
+  } finally {
+    if (settled) observed?.closed();
+    else observed?.unresolved();
   }
-  if (errors.length)
-    throw new AggregateError(errors, "Owned jobs fixtures did not close.");
 });
 
 export function fixture(options: Parameters<typeof createFixture>[0] = {}) {
@@ -95,11 +112,16 @@ async function createFixture(
     workers?: number;
     clock?: Clock;
     seed?: boolean;
+    observation?: TestObservation;
+    observationCounters?: () => ObservationCounters;
   } = {},
 ) {
   const scope = testScope();
+  const observed = options.observation;
+  if (observed) observations.set(scope, observed);
   const clock =
     options.clock ?? createFakeClock(Date.parse("2026-09-17T00:00:00Z"));
+  observed?.phase("root-open");
   const root = await mkdtemp(join(tmpdir(), "jobs service synthetic "));
   let store: LocalStore | undefined;
   let host: ProjectFileSystem | undefined;
@@ -111,12 +133,53 @@ async function createFixture(
   >[] = [];
   let closing = false;
   let closed = false;
+  const queues = new WeakSet<Promise<unknown>>();
+  let queueSequence = 0;
+  observed?.counters(() => {
+    let operationsValid = true,
+      jobsValid = true,
+      authoritiesValid = true,
+      queueValid = true;
+    let activeStoreOperations = 0,
+      activeJobs = 0,
+      pendingAuthorities = 0;
+    for (const opened of stores) {
+      const queue: unknown = Reflect.get(opened, "queue");
+      if (queue instanceof Promise && !queues.has(queue)) {
+        queues.add(queue);
+        queueSequence++;
+      }
+      if (!(queue instanceof Promise)) queueValid = false;
+      const active: unknown = Reflect.get(opened, "active");
+      if (typeof active === "number") activeStoreOperations += active;
+      else operationsValid = false;
+    }
+    for (const service of services) {
+      const active: unknown = Reflect.get(service, "active");
+      const authorities: unknown = Reflect.get(service, "authorities");
+      if (active instanceof Map) activeJobs += active.size;
+      else jobsValid = false;
+      if (authorities instanceof Set) pendingAuthorities += authorities.size;
+      else authoritiesValid = false;
+    }
+    const pending: unknown = Reflect.get(scope, "pending");
+    return {
+      stores: stores.length,
+      queueSequence: queueValid ? queueSequence : null,
+      activeStoreOperations: operationsValid ? activeStoreOperations : null,
+      activeJobs: jobsValid ? activeJobs : null,
+      pendingAuthorities: authoritiesValid ? pendingAuthorities : null,
+      pendingBodies: pending instanceof Set ? pending.size : null,
+      ...options.observationCounters?.(),
+    };
+  });
   const current = () => {
     scope.signal.throwIfAborted();
     if (closing || closed)
       throw new Error("Synthetic jobs fixture is closing.");
   };
   const stop = () => {
+    observed?.phase("service-stop");
     for (const service of services) {
       const stopping = service.stop();
       stops.push(stopping);
@@ -144,8 +207,11 @@ async function createFixture(
         errors,
         "Original jobs service stops did not settle successfully.",
       );
+    observed?.phase("queue-join");
     await closeSettledStores(stores);
+    observed?.phase("filesystem-close");
     if (host) await host.close();
+    observed?.phase("root-delete");
     await rm(root, { recursive: true, force: true });
     closed = true;
   };
@@ -369,9 +435,11 @@ async function createFixture(
   };
   const open = () => {
     current();
+    observed?.phase("store-open");
     const pending = LocalStore.open(settings).then((opened) => {
       stores.push(opened);
       current();
+      observed?.phase("fixture-open");
       return opened;
     });
     openings.add(pending);
@@ -387,6 +455,7 @@ async function createFixture(
     sha256: createHash("sha256").update(inputBytes).digest("hex"),
   };
   if (options.seed !== false) {
+    observed?.phase("seed");
     const seedCtx = context("seed");
     const inputStage = value(await store.stage(inputBytes, seedCtx));
     value(await store.commit([inputStage], seedCtx));

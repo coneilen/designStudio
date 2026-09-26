@@ -23,6 +23,10 @@ import {
   FigmaHttpsTransport,
 } from "../../figma-capture/dist/transport.js";
 import { AsyncTestScope } from "../../jobs/tests/async-scope.js";
+import {
+  observeSelectedTest,
+  type TestObservation,
+} from "../../jobs/tests/test-observation.js";
 import { nativeCapturePolicy } from "../../project-host/dist/capture-authority.js";
 import type { CaptureWork } from "../../project-host/dist/capture-work.js";
 import {
@@ -51,18 +55,34 @@ function deferred<T>() {
   return { promise, resolve };
 }
 let owner: AsyncTestScope;
+let observation: TestObservation;
 let prepared: Awaited<ReturnType<typeof createFixture>> | undefined;
 const cleanups: (() => Promise<void>)[] = [];
-beforeEach(async ({ signal }) => {
+beforeEach(async ({ signal, task }) => {
+  const observed = observeSelectedTest(task.name, signal);
+  observation = observed;
   owner = new AsyncTestScope(signal);
+  observed.phase("setup");
   prepared = await owner.track(createFixture());
+  observed.phase("body");
 });
 afterEach(async () => {
-  await owner.close();
-  for (const close of cleanups.splice(0).reverse()) await close();
-  vi.restoreAllMocks();
-  seam.work = undefined;
-  prepared = undefined;
+  const observed = observation;
+  let settled = false;
+  try {
+    observed.phase("scope-join");
+    await owner.close();
+    observed.phase("cleanup");
+    for (const close of cleanups.splice(0).reverse()) await close();
+    observed.phase("mock-reset");
+    vi.restoreAllMocks();
+    seam.work = undefined;
+    prepared = undefined;
+    settled = true;
+  } finally {
+    if (settled) observed.closed();
+    else observed.unresolved();
+  }
 });
 function owned<T extends unknown[]>(work: (...args: T) => Promise<void>) {
   return (...args: T) => owner.track(work(...args));
@@ -80,6 +100,8 @@ async function fixture() {
 }
 async function createFixture() {
   const scope = owner;
+  const observed = observation;
+  observed.phase("root-open");
   const root = await mkdtemp(
     path.join(tmpdir(), "capture-scheduler-synthetic-"),
   );
@@ -91,11 +113,13 @@ async function createFixture() {
   let closing: Promise<void> | undefined;
   const close = () => {
     closing ??= (async () => {
+      observed.phase("runtime-close");
       if (openedRuntime) await openedRuntime.close();
       else {
         store?.close();
         policy?.close();
       }
+      observed.phase("root-delete");
       await rm(root, { recursive: true, force: true });
     })();
     return closing;
@@ -108,6 +132,7 @@ async function createFixture() {
     { milliseconds: number; signal: AbortSignal }
   >();
   let schedulerSignal: AbortSignal | undefined;
+  let currentService: JobService | undefined;
   vi.spyOn(SystemClock.prototype, "now").mockImplementation(clock.now);
   vi.spyOn(SystemClock.prototype, "sleep").mockImplementation((ms, signal) => {
     const sleeping = clock.sleep(ms, signal);
@@ -208,6 +233,7 @@ async function createFixture() {
   const stops = vi
     .spyOn(JobService.prototype, "stop")
     .mockImplementation(function (this: JobService, ...args) {
+      observed.phase("service-stop");
       const result = originalStop.apply(this, args);
       queueMicrotask(() => scope.notify());
       return result;
@@ -216,6 +242,7 @@ async function createFixture() {
   const starts = vi
     .spyOn(JobService.prototype, "start")
     .mockImplementation(async function (this: JobService) {
+      currentService = this;
       const prior = new Set(
         [...scheduled.values()].map((entry) => entry.signal),
       );
@@ -232,6 +259,7 @@ async function createFixture() {
       return result;
     });
   const wait = vi.spyOn(JobService.prototype, "waitForAttempt");
+  observed.phase("fixture-open");
   const runtime = await assembleNativeCapture(project);
   openedRuntime = runtime;
   if (!store) throw new Error("Missing synthetic store");
@@ -248,6 +276,35 @@ async function createFixture() {
       return result;
     });
   const parent = new AbortController();
+  observed.counters(() => {
+    const pending: unknown = Reflect.get(scope, "pending");
+    const active: unknown =
+      currentService && Reflect.get(currentService, "active");
+    const authorities: unknown =
+      currentService && Reflect.get(currentService, "authorities");
+    const running: unknown = store && Reflect.get(store, "active");
+    return {
+      pendingBodies: pending instanceof Set ? pending.size : null,
+      sleepers: sleepers.size,
+      cadenceSleeps: [...scheduled.values()].filter(
+        (e) => e.milliseconds === 100,
+      ).length,
+      stopSleeps: [...scheduled.values()].filter((e) => e.milliseconds === 5000)
+        .length,
+      deadlineSleeps: [...scheduled.values()].filter(
+        (e) => e.milliseconds === 30000,
+      ).length,
+      abortedSleeps: [...scheduled.values()].filter((e) => e.signal.aborted)
+        .length,
+      turns: turns.mock.calls.length,
+      heartbeats: heartbeat.mock.calls.length,
+      starts: starts.mock.calls.length,
+      stops: stops.mock.calls.length,
+      activeJobs: active instanceof Map ? active.size : null,
+      pendingAuthorities: authorities instanceof Set ? authorities.size : null,
+      activeStoreOperations: typeof running === "number" ? running : null,
+    };
+  });
   scope.releaseOnEnd(() => parent.abort());
   const input = {
     operation: "capture" as const,
@@ -274,6 +331,7 @@ async function createFixture() {
     return next;
   };
   return {
+    observePhase: observed.phase,
     clock,
     policy,
     runtime,
@@ -365,6 +423,7 @@ it.each([
         maxAttempts: 1,
         maxExternalCalls: 4,
       });
+      f.observePhase("turns");
       for (let elapsed = 0; elapsed < duration; elapsed += step) {
         await f.turn(step);
         expect(await f.turns.mock.results.at(-1)?.value).toMatchObject({
@@ -630,6 +689,7 @@ it(
     const entered = deferred<void>();
     const release = gate();
     f.commit.mockImplementationOnce(async (...args) => {
+      f.observePhase("finalization");
       entered.resolve();
       await release.promise;
       return f.commitJob(...args);
@@ -679,6 +739,7 @@ it(
         ...(parentSignal ? { parentSignal } : {}),
       });
     try {
+      f.observePhase("authorities");
       const active = await issue(held.signal);
       for (let index = 0; index < 140; index++) {
         const own = new AbortController();

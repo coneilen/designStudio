@@ -1,6 +1,7 @@
 import type {
   Artifact,
   FigmaReferenceProposal,
+  RetainedPublicationCheck,
 } from "@design-studio/contracts";
 import { canonicalDigest } from "@design-studio/design-ir";
 import {
@@ -15,6 +16,27 @@ import {
 } from "@design-studio/storage";
 import { type ReferenceReader, ref, same } from "./reference-proof.js";
 import { ApplicationError } from "./response.js";
+
+const publicationChecks = new WeakMap<
+  ApplicationError,
+  { reader: ReferenceReader; check: RetainedPublicationCheck }
+>();
+function publicationFailure(
+  reader: ReferenceReader,
+  check: RetainedPublicationCheck,
+): ApplicationError {
+  const error = new ApplicationError("ACTION_REQUIRED");
+  publicationChecks.set(error, { reader, check });
+  return error;
+}
+export function retainedPublicationCheck(
+  error: unknown,
+  reader: ReferenceReader | undefined,
+): RetainedPublicationCheck | undefined {
+  if (!(error instanceof ApplicationError) || !reader) return undefined;
+  const marked = publicationChecks.get(error);
+  return marked?.reader === reader ? marked.check : undefined;
+}
 
 function authenticatedReferenceDescendant(
   state: CaptureRecoveryState,
@@ -144,7 +166,11 @@ export async function retainedReferenceInventory(
     return false;
   });
   if (!binding) {
-    if (pending.length) throw new ApplicationError("ACTION_REQUIRED");
+    if (pending.length)
+      throw publicationFailure(
+        reader,
+        "pending-stages-without-capture-recovery-binding",
+      );
     return {
       stages: [],
       committedHistoryArtifacts: [],
@@ -218,7 +244,7 @@ export async function retainedReferenceInventory(
       (lease !== undefined &&
         (stage.leaseId !== lease || stage.hostInstanceId !== host))
     )
-      throw new ApplicationError("ACTION_REQUIRED");
+      throw publicationFailure(reader, "pending-stage-provenance-mismatch");
     lease = stage.leaseId;
     host = stage.hostInstanceId;
     return {

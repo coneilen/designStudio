@@ -4,6 +4,7 @@ import {
   lstat,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   rename,
   rm,
@@ -117,6 +118,13 @@ it.each([
   "missing",
   "unknown",
   "duplicate",
+  "unknown-blob",
+  "malformed-blob",
+  "stage-wrong-root",
+  "unknown-root",
+  "invalid-output-root",
+  "empty-output-stage",
+  "valid-output-file",
   "corrupt",
   "hardlink",
   "grow",
@@ -203,6 +211,66 @@ it.each([
       await rename(path.join(artifacts, staging), foreign);
       await symlink(foreign, path.join(artifacts, staging), "junction");
     }
+    if (kind === "unknown-blob" || kind === "malformed-blob")
+      await writeFile(
+        path.join(
+          artifacts,
+          "blobs",
+          kind === "unknown-blob" ? "f".repeat(64) : "not-a-hash",
+        ),
+        Buffer.of(99),
+      );
+    if (kind === "stage-wrong-root" || kind === "empty-output-stage") {
+      await mkdir(path.join(outputs, staging));
+      if (kind === "stage-wrong-root")
+        await writeFile(
+          path.join(outputs, staging, first.stagingId),
+          Buffer.of(42),
+        );
+    }
+    if (kind === "unknown-root")
+      await writeFile(path.join(artifacts, "unknown"), Buffer.of(99));
+    if (kind === "invalid-output-root")
+      await writeFile(path.join(outputs, "_unclassified"), Buffer.of(99));
+    if (kind === "valid-output-file")
+      await writeFile(path.join(outputs, "export.json"), Buffer.of(99));
+    const scanCheck =
+      kind === "unknown-blob" || kind === "malformed-blob"
+        ? "scan-blob-classification"
+        : kind === "unknown" ||
+            kind === "duplicate" ||
+            kind === "stage-wrong-root"
+          ? "scan-stage-classification"
+          : kind === "unknown-root" || kind === "invalid-output-root"
+            ? "scan-root-entry-classification"
+            : undefined;
+    const snapshot = async () => {
+      const entries: object[] = [];
+      const visit = async (current: string) => {
+        for (const name of (await readdir(current)).sort()) {
+          const filename = path.join(current, name);
+          const stat = await lstat(filename, { bigint: true });
+          entries.push({
+            relative: path.relative(directory, filename),
+            dev: String(stat.dev),
+            ino: String(stat.ino),
+            size: String(stat.size),
+            mtime: String(stat.mtimeNs),
+            nlink: String(stat.nlink),
+            sha256: stat.isFile()
+              ? createHash("sha256")
+                  .update(await readFile(filename))
+                  .digest("hex")
+              : null,
+          });
+          if (stat.isDirectory()) await visit(filename);
+        }
+      };
+      await visit(artifacts);
+      await visit(outputs);
+      return entries;
+    };
+    const beforeScan = scanCheck ? await snapshot() : undefined;
     const context = syntheticContext();
     context.authorization.grants.push(
       ...["artifacts", "outputs"].map((resourceId) => ({
@@ -251,6 +319,7 @@ it.each([
     let sequence = 0;
     const closes = new Map<number, number>();
     let charged = 0;
+    const charges: number[] = [];
     let inspectionActive = false;
     let rootChecks = 0;
     let mutated = false;
@@ -258,6 +327,7 @@ it.each([
       projectId: context.projectId,
       authority: () => true,
       reserveRead: (bytes) => {
+        charges.push(bytes);
         charged += bytes;
       },
       roots: [
@@ -387,6 +457,46 @@ it.each([
         return;
       }
       const result = await files.inspectRetainedReference(input, context);
+      if (scanCheck) {
+        expect(result.status).toBe("failed");
+        if (result.status !== "failed")
+          throw new Error("Expected scan refusal");
+        const message =
+          scanCheck === "scan-blob-classification"
+            ? "Unclassified retained blob."
+            : scanCheck === "scan-stage-classification"
+              ? "Unclassified or duplicate retained stage."
+              : "Unclassified retained namespace.";
+        expect(result.error).toMatchObject({
+          code: "ACTION_REQUIRED",
+          message,
+          retryable: false,
+        });
+        expect(result.inventoryFailure).toEqual({
+          check: scanCheck,
+          category: "namespace",
+        });
+        expect(charges).toEqual([]);
+        expect(sequence).toBe(0);
+        expect(pins).toBe(0);
+        expect(await snapshot()).toEqual(beforeScan);
+        expect(JSON.stringify(result.inventoryFailure)).not.toMatch(
+          /unknown|not-a-hash|unclassified|stagingId|sha256|path/,
+        );
+        console.log(
+          JSON.stringify({
+            scope: "synthetic-retained-scan-refusal",
+            kind,
+            check: scanCheck,
+            code: result.error.code,
+            charges,
+            pinAdmissions: sequence,
+            retainedPins: pins,
+            unchangedEntries: beforeScan?.length,
+          }),
+        );
+        return;
+      }
       const expectedDiagnostics: Record<
         string,
         { check: string; category: string; detail?: string }
@@ -463,7 +573,14 @@ it.each([
         await files.closePreservingStages();
       }
       if (
-        ["stage-only", "published-only", "pair", "close-failure"].includes(kind)
+        [
+          "stage-only",
+          "published-only",
+          "pair",
+          "close-failure",
+          "empty-output-stage",
+          "valid-output-file",
+        ].includes(kind)
       ) {
         expect(result.status, JSON.stringify(result)).toBe("complete");
         if (result.status !== "complete")
@@ -472,7 +589,11 @@ it.each([
           expect(result.value.targets[0]?.publication).toBe(
             kind === "pair"
               ? "known-pair-native-read-blocked"
-              : kind === "close-failure"
+              : [
+                    "close-failure",
+                    "empty-output-stage",
+                    "valid-output-file",
+                  ].includes(kind)
                 ? "stage-only"
                 : kind,
           );

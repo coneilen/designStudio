@@ -26,6 +26,9 @@ import {
 import {
   type CaptureRecoveryState,
   LocalStore,
+  projectRecoveryState,
+  type ReferenceRecoveryRecord,
+  recoveryEvidence,
   type StoredJob,
 } from "@design-studio/storage";
 import {
@@ -233,7 +236,7 @@ function retainedDiagnostic(
 }
 
 async function validateBytes(
-  inspection: RetainedReferenceInspection,
+  inspection: Pick<RetainedReferenceInspection, "targets">,
   reader: ReferenceReader,
   record: StoredJob,
   approved: Awaited<ReturnType<typeof approvedRequest>>,
@@ -310,6 +313,349 @@ async function validateBytes(
     throw new ApplicationError("ARTIFACT_INTEGRITY");
   await reader.check();
   return { evidence, decoded, evidenceIndex: index };
+}
+
+type RetainedProofInput = {
+  work: CaptureWork;
+  store: LocalStore;
+  files: ProjectFileSystem;
+  requestId: string;
+  expectedJob: string;
+  issue(jobId: string, reads: string[]): Promise<ReferenceReader>;
+  inspect(
+    value: RetainedReferenceInput,
+    context: OperationContext,
+  ): Promise<RetainedReferenceInspection>;
+  reason(value: NativeReferenceRecoveryPlanEnvelope["reason"]): void;
+  projectState?(state: CaptureRecoveryState): CaptureRecoveryState;
+};
+async function prepareRetainedReference(input: RetainedProofInput) {
+  const { work, store: db, requestId, expectedJob, reason } = input;
+  const ids = referenceIds(work, requestId);
+  let proof = await input.issue(ids.approval, [ids.original, ids.job]);
+  reason("source-metadata-invalid");
+  const predecessorMetadata = unwrap(
+    await db.referenceJobMetadata(ids.job, proof.context),
+  );
+  if (!predecessorMetadata?.receipt)
+    throw new ApplicationError("EVIDENCE_MISSING");
+  const jobId = diagnosticReferenceId(
+    work,
+    ids.job,
+    predecessorMetadata.receipt,
+  );
+  proof = await input.issue(ids.approval, [
+    ids.original,
+    ids.job,
+    jobId,
+    ...[ids.job, jobId].flatMap((id) =>
+      Array.from({ length: 32 }, (_, n) => approvalKey(id, n)),
+    ),
+  ]);
+  reason("job-changed");
+  const metadata = unwrap(await db.referenceJobMetadata(jobId, proof.context));
+  if (!metadata || canonicalDigest(metadata.record.job) !== expectedJob)
+    throw new ApplicationError("CONFLICT");
+  reason("ineligible-job");
+  const currentState = unwrap(
+    await db.referencePublicationState(proof.context),
+  );
+  const state = input.projectState
+    ? input.projectState(currentState)
+    : currentState;
+  const record = state.jobs.find((r) => r.job.id === jobId);
+  if (
+    !record ||
+    !same(record, metadata.record) ||
+    metadata.receipt ||
+    record.handlerId !== DIAGNOSTIC_REFERENCE_HANDLER ||
+    record.handlerVersion !== "1.0.0" ||
+    record.authorityRef !==
+      `diagnostic_${await work.diagnosticAuthority?.()}` ||
+    record.job.id !== jobId ||
+    record.requestId !== jobId ||
+    record.job.operation !== "reference-download" ||
+    record.job.projectId !== work.project.projectId ||
+    record.job.actorId !== work.actorId ||
+    !same(record.resourceKeys, [`diagnostic_${ids.job}`]) ||
+    !same(record.job.budget, REFERENCE_LIMITS)
+  )
+    throw new ApplicationError("ACTION_REQUIRED");
+  const targets = retainedDiagnostic(state, record, work, proof.context);
+  if (
+    !same(
+      metadata.stages,
+      state.stages.filter((s) => s.jobId === jobId),
+    )
+  )
+    throw new ApplicationError("ARTIFACT_INTEGRITY");
+  reason("source-proof-invalid");
+  const source = await proof.proposal(requestId);
+  const predecessor = unwrap(await db.jobs.get(ids.job, proof.context));
+  const receipt = unwrap(await db.jobs.getJobReceipt(ids.job, proof.context));
+  if (
+    !receipt ||
+    !same(predecessor, predecessorMetadata.record) ||
+    !same(receipt, predecessorMetadata.receipt) ||
+    predecessor.handlerId !== REFERENCE_HANDLER
+  )
+    throw new ApplicationError("ARTIFACT_INTEGRITY");
+  const original = await approvedRequest(
+    proof,
+    ids.job,
+    source.proposal,
+    predecessor,
+    REFERENCE_APPROVAL_CONFIRMATION,
+  );
+  const originalEvidence = receipt.outputs[0];
+  if (!originalEvidence) throw new ApplicationError("EVIDENCE_MISSING");
+  const evidence = await proof.contract(
+    "FigmaReferenceEvidence",
+    originalEvidence,
+  );
+  const originalEnvelope: NativeReferenceEnvelope = {
+    schemaVersion: "1.0",
+    operation: "reference-inspect",
+    projectId: work.project.projectId,
+    requestId,
+    status: "unavailable",
+    value: {
+      phase: "completed",
+      consumed: true,
+      proposal: original.proposal,
+      approval: original.approved,
+      job: predecessor.job,
+      receipt,
+      evidence,
+    },
+  };
+  const proposal = diagnosticReferenceProposal(
+    originalEnvelope,
+    predecessor,
+    source.proposal,
+    jobId,
+    (await work.diagnosticAuthority?.()) ?? "",
+  );
+  const approved = await approvedRequest(
+    proof,
+    jobId,
+    proposal,
+    record,
+    DIAGNOSTIC_APPROVAL_CONFIRMATION,
+  );
+  return {
+    proof,
+    state,
+    currentState,
+    record,
+    proposal,
+    approved,
+    source,
+    targets,
+    jobId,
+  };
+}
+
+/** Explicitly selected committed blobs only; never discovers or reads pending stages. */
+export async function proveRecordedRecoveredReference(
+  input: Omit<RetainedProofInput, "inspect" | "projectState">,
+  recovery: ReferenceRecoveryRecord,
+) {
+  if (!input.work.referenceForkAuthority)
+    throw new ApplicationError("FORBIDDEN");
+  await input.work.referenceForkAuthority();
+  const final = recovery.events[7];
+  if (final?.kind !== "committed" || !final.receipt || recovery.archive)
+    throw new ApplicationError("ACTION_REQUIRED");
+  const selected = await prepareRetainedReference({
+    ...input,
+    inspect: async () => {
+      throw new ApplicationError("FORBIDDEN");
+    },
+    projectState: (state) =>
+      projectRecoveryState(state, recovery, canonicalDigest),
+  });
+  const { proof, state, record, targets, approved } = selected;
+  const b = recovery.reservation.binding;
+  if (
+    b.policySha256 !== (await input.work.referenceOfflineAuthority?.()) ||
+    b.jobSha256 !== input.expectedJob ||
+    b.projectId !== input.work.project.projectId ||
+    b.actorId !== input.work.actorId ||
+    b.artifactRootId !== input.work.project.artifactRootId ||
+    b.permissionScope !== input.work.permissionScope ||
+    b.recordSha256 !== canonicalDigest(record) ||
+    b.stateSha256 !== canonicalDigest(state) ||
+    b.stagesSha256 !==
+      canonicalDigest(state.stages.filter((s) => s.jobId === record.job.id)) ||
+    !same(b.source, selected.proposal.binding.source) ||
+    !same(b.approval, approved.approved)
+  )
+    throw new ApplicationError("ARTIFACT_INTEGRITY");
+  const snapshot = unwrap(
+    await input.store.referenceRecoverySnapshot(proof.context),
+  );
+  if (
+    snapshot.preimages.find((p) => p.id === b.recoveryId)?.metadataSha256 !==
+    b.metadataSha256
+  )
+    throw new ApplicationError("ARTIFACT_INTEGRITY");
+  const recovered = await proof.contract(
+    "ReferenceRecoveryEvidence",
+    recovery.reservation.evidence,
+  );
+  if (!same(recovered, recoveryEvidence(b, canonicalDigest)))
+    throw new ApplicationError("ARTIFACT_INTEGRITY");
+  const loaded: RetainedReferenceInspection["targets"] = [];
+  try {
+    for (const target of targets) {
+      if (!final.receipt.outputs.some((a) => same(a, target.artifact)))
+        throw new ApplicationError("ARTIFACT_INTEGRITY");
+      const read = unwrap(
+        await input.store.readVerified(ref(target.artifact), proof.context),
+      );
+      loaded.push({
+        descriptor: target,
+        publication: "published-only",
+        bytes: read.bytes,
+      });
+      if (!same(read.artifact, target.artifact))
+        throw new ApplicationError("ARTIFACT_INTEGRITY");
+    }
+    const validated = await validateBytes(
+      { targets: loaded },
+      proof,
+      record,
+      approved,
+    );
+    if (
+      !same(
+        selected.currentState,
+        unwrap(await input.store.referencePublicationState(proof.context)),
+      )
+    )
+      throw new ApplicationError("CONFLICT");
+    await proof.check();
+    return { ...selected, validated, recovery };
+  } finally {
+    for (const target of loaded) target.bytes?.fill(0);
+  }
+}
+
+export async function proveRetainedReference(input: RetainedProofInput) {
+  const { store: db, reason } = input;
+  const {
+    proof,
+    state,
+    currentState,
+    record,
+    proposal,
+    approved,
+    source,
+    targets,
+    jobId,
+  } = await prepareRetainedReference(input);
+  reason("inventory-invalid");
+  const history = await retainedReferenceInventory(
+    proof,
+    {
+      ...state,
+      jobs: state.jobs.filter((r) => r.job.id !== jobId),
+      stages: state.stages.filter((s) => s.jobId !== jobId),
+    },
+    proposal,
+    source.verifiedCapture,
+  );
+  const inspection = await input.inspect(
+    {
+      artifacts: currentState.artifacts,
+      targets,
+      history: history.stages,
+      committedHistoryArtifacts: history.committedHistoryArtifacts,
+      successorCaptureHistoryArtifacts:
+        history.successorCaptureHistoryArtifacts,
+    },
+    proof.context,
+  );
+  if (
+    inspection.targets.some(
+      (t) => t.publication === "known-pair-native-read-blocked",
+    )
+  ) {
+    reason("known-pair-native-read-blocked");
+    throw new ApplicationError("ACTION_REQUIRED");
+  }
+  reason("evidence-invalid");
+  const validated = await validateBytes(inspection, proof, record, approved);
+  reason("state-changed");
+  await inspection.check();
+  if (
+    !same(
+      currentState,
+      unwrap(await db.referencePublicationState(proof.context)),
+    )
+  )
+    throw new ApplicationError("CONFLICT");
+  await proof.check();
+  return {
+    proof,
+    state,
+    currentState,
+    record,
+    proposal,
+    approved,
+    inspection,
+    validated,
+    verifiedCapture: source.verifiedCapture,
+  };
+}
+
+export function retainedPlanFacts(
+  verified: Awaited<ReturnType<typeof proveRetainedReference>>,
+  identitySha256: string,
+  policySha256: string,
+): ReferenceRecoveryPlan {
+  const { inspection, validated, record, proposal, approved, state } = verified;
+  const stage = (
+    index: number,
+    role: "evidence" | "reference",
+  ): ReferenceRecoveryPlan["stages"][number] => {
+    const target = inspection.targets[index];
+    if (!target || target.publication === "known-pair-native-read-blocked")
+      throw new ApplicationError("FORBIDDEN");
+    return {
+      role,
+      sha256: target.descriptor.artifact.sha256,
+      byteLength: target.descriptor.artifact.byteLength,
+      disposition: "recovery-needed",
+      publication: target.publication,
+    };
+  };
+  const facts: Omit<ReferenceRecoveryPlan, "proofSha256"> = {
+    verification: "retained-bytes",
+    eligibility: "eligible-for-recovery-review",
+    consumed: true,
+    historicalStatus: "interrupted",
+    jobId: record.job.id,
+    jobSha256: canonicalDigest(record.job),
+    stateSha256: canonicalDigest(state),
+    identitySha256,
+    policySha256,
+    sourceSha256: proposal.binding.source.sha256,
+    approvalSha256: approved.approved.sha256,
+    referenceStatus:
+      validated.evidence.referenceStatus === "complete"
+        ? "complete"
+        : "partial",
+    pixelWidth: validated.decoded.width,
+    pixelHeight: validated.decoded.height,
+    colorSpace: validated.decoded.colorSpace,
+    stages: [
+      stage(validated.evidenceIndex, "evidence"),
+      stage(1 - validated.evidenceIndex, "reference"),
+    ],
+  };
+  return { ...facts, proofSha256: canonicalDigest(facts) };
 }
 
 /** Separate composition: no writable storage, scheduler, publication or transport capability. */
@@ -571,7 +917,6 @@ export async function openNativeReferenceValidation(project: CaptureProject) {
         if (!policySha256 || !databasePin)
           throw new ApplicationError("FORBIDDEN");
         await databasePin?.check();
-        const ids = referenceIds(work, owned.requestId);
         const deadline = new Date(
           work.policy.clock.now() + 30000,
         ).toISOString();
@@ -596,234 +941,53 @@ export async function openNativeReferenceValidation(project: CaptureProject) {
           );
           return reader;
         };
-        let proof = await issue(ids.approval, [ids.original, ids.job]);
-        reason = "source-metadata-invalid";
-        const predecessorMetadata = unwrap(
-          await db.referenceJobMetadata(ids.job, proof.context),
-        );
-        if (!predecessorMetadata?.receipt)
-          throw new ApplicationError("EVIDENCE_MISSING");
-        const jobId = diagnosticReferenceId(
+        const verified = await proveRetainedReference({
           work,
-          ids.job,
-          predecessorMetadata.receipt,
-        );
-        proof = await issue(ids.approval, [
-          ids.original,
-          ids.job,
-          jobId,
-          ...[ids.job, jobId].flatMap((id) =>
-            Array.from({ length: 32 }, (_, n) => approvalKey(id, n)),
-          ),
-        ]);
-        reason = "job-changed";
-        const metadata = unwrap(
-          await db.referenceJobMetadata(jobId, proof.context),
-        );
-        if (
-          !metadata ||
-          canonicalDigest(metadata.record.job) !== owned.expectedJob
-        )
-          throw new ApplicationError("CONFLICT");
-        reason = "ineligible-job";
-        const state = unwrap(await db.referencePublicationState(proof.context));
-        const record = state.jobs.find((r) => r.job.id === jobId);
-        if (
-          !record ||
-          !same(record, metadata.record) ||
-          metadata.receipt ||
-          record.handlerId !== DIAGNOSTIC_REFERENCE_HANDLER ||
-          record.handlerVersion !== "1.0.0" ||
-          record.authorityRef !==
-            `diagnostic_${await work.diagnosticAuthority?.()}` ||
-          record.job.id !== jobId ||
-          record.requestId !== jobId ||
-          record.job.operation !== "reference-download" ||
-          record.job.projectId !== project.projectId ||
-          record.job.actorId !== work.actorId ||
-          !same(record.resourceKeys, [`diagnostic_${ids.job}`]) ||
-          !same(record.job.budget, REFERENCE_LIMITS)
-        )
-          throw new ApplicationError("ACTION_REQUIRED");
-        const targets = retainedDiagnostic(state, record, work, proof.context);
-        if (
-          !same(
-            metadata.stages,
-            state.stages.filter((s) => s.jobId === jobId),
-          )
-        )
-          throw new ApplicationError("ARTIFACT_INTEGRITY");
-        reason = "source-proof-invalid";
-        const source = await proof.proposal(owned.requestId);
-        const predecessor = unwrap(await db.jobs.get(ids.job, proof.context));
-        const receipt = unwrap(
-          await db.jobs.getJobReceipt(ids.job, proof.context),
-        );
-        if (
-          !receipt ||
-          !same(predecessor, predecessorMetadata.record) ||
-          !same(receipt, predecessorMetadata.receipt) ||
-          predecessor.handlerId !== REFERENCE_HANDLER
-        )
-          throw new ApplicationError("ARTIFACT_INTEGRITY");
-        const original = await approvedRequest(
-          proof,
-          ids.job,
-          source.proposal,
-          predecessor,
-          REFERENCE_APPROVAL_CONFIRMATION,
-        );
-        const originalEvidence = receipt.outputs[0];
-        if (!originalEvidence) throw new ApplicationError("EVIDENCE_MISSING");
-        const evidence = await proof.contract(
-          "FigmaReferenceEvidence",
-          originalEvidence,
-        );
-        const originalEnvelope: NativeReferenceEnvelope = {
-          schemaVersion: "1.0",
-          operation: "reference-inspect",
-          projectId: project.projectId,
+          store: db,
+          files: fs,
           requestId: owned.requestId,
-          status: "unavailable",
-          value: {
-            phase: "completed",
-            consumed: true,
-            proposal: original.proposal,
-            approval: original.approved,
-            job: predecessor.job,
-            receipt,
-            evidence,
+          expectedJob: owned.expectedJob,
+          issue,
+          reason: (value) => {
+            reason = value;
           },
-        };
-        const proposal = diagnosticReferenceProposal(
-          originalEnvelope,
-          predecessor,
-          source.proposal,
-          jobId,
-          (await work.diagnosticAuthority?.()) ?? "",
-        );
-        const approved = await approvedRequest(
-          proof,
-          jobId,
-          proposal,
-          record,
-          DIAGNOSTIC_APPROVAL_CONFIRMATION,
-        );
-        reason = "inventory-invalid";
-        const history = await retainedReferenceInventory(
-          proof,
-          {
-            ...state,
-            jobs: state.jobs.filter((r) => r.job.id !== jobId),
-            stages: state.stages.filter((s) => s.jobId !== jobId),
+          inspect: async (value, context) => {
+            expectedInspection = value;
+            if (!input) throw new ApplicationError("FORBIDDEN");
+            input.phase = "inspection";
+            const inspected = await fs.inspectRetainedReference(value, context);
+            if (
+              inspected.status !== "complete" &&
+              inspected.status !== "partial" &&
+              inspected.status !== "cancelled" &&
+              inspected.inventoryFailure
+            ) {
+              const diagnostic = validateContract(
+                "RetainedInventoryFailure",
+                inspected.inventoryFailure,
+              );
+              if (diagnostic.success)
+                inventoryFailure = structuredClone(diagnostic.value);
+            }
+            inspection = unwrap(inspected);
+            return inspection;
           },
-          proposal,
-          source.verifiedCapture,
-        );
-        expectedInspection = {
-          artifacts: state.artifacts,
-          targets,
-          history: history.stages,
-          committedHistoryArtifacts: history.committedHistoryArtifacts,
-          successorCaptureHistoryArtifacts:
-            history.successorCaptureHistoryArtifacts,
-        };
-        input.phase = "inspection";
-        const inspected = await fs.inspectRetainedReference(
-          expectedInspection,
-          proof.context,
-        );
-        if (
-          inspected.status !== "complete" &&
-          inspected.status !== "partial" &&
-          inspected.status !== "cancelled" &&
-          inspected.inventoryFailure
-        ) {
-          const diagnostic = validateContract(
-            "RetainedInventoryFailure",
-            inspected.inventoryFailure,
-          );
-          if (diagnostic.success)
-            inventoryFailure = structuredClone(diagnostic.value);
-        }
-        inspection = unwrap(inspected);
-        if (
-          inspection.targets.some(
-            (t) => t.publication === "known-pair-native-read-blocked",
-          )
-        ) {
-          reason = "known-pair-native-read-blocked";
-          throw new ApplicationError("ACTION_REQUIRED");
-        }
-        reason = "evidence-invalid";
-        const validated = await validateBytes(
-          inspection,
-          proof,
-          record,
-          approved,
-        );
-        reason = "state-changed";
-        await inspection.check();
-        if (
-          !same(
-            state,
-            unwrap(await db.referencePublicationState(proof.context)),
-          )
-        )
-          throw new ApplicationError("CONFLICT");
+        });
         await databasePin?.check();
-        await proof.check();
-        const projectedStage = (
-          index: number,
-          role: "evidence" | "reference",
-        ): ReferenceRecoveryPlan["stages"][number] => {
-          const target = inspection?.targets[index];
-          if (
-            !target ||
-            target.publication === "known-pair-native-read-blocked"
-          )
-            throw new ApplicationError("FORBIDDEN");
-          return {
-            role,
-            sha256: target.descriptor.artifact.sha256,
-            byteLength: target.descriptor.artifact.byteLength,
-            disposition: "recovery-needed",
-            publication: target.publication,
-          };
-        };
-        const facts: Omit<ReferenceRecoveryPlan, "proofSha256"> = {
-          verification: "retained-bytes",
-          eligibility: "eligible-for-recovery-review",
-          consumed: true,
-          historicalStatus: "interrupted",
-          jobId,
-          jobSha256: owned.expectedJob,
-          stateSha256: canonicalDigest(state),
-          identitySha256: canonicalDigest([
-            inspection.identitySha256,
-            databasePin.identitySha256,
-          ]),
-          sourceSha256: proposal.binding.source.sha256,
-          approvalSha256: approved.approved.sha256,
-          policySha256,
-          referenceStatus:
-            validated.evidence.referenceStatus === "complete"
-              ? "complete"
-              : "partial",
-          pixelWidth: validated.decoded.width,
-          pixelHeight: validated.decoded.height,
-          colorSpace: validated.decoded.colorSpace,
-          stages: [
-            projectedStage(validated.evidenceIndex, "evidence"),
-            projectedStage(1 - validated.evidenceIndex, "reference"),
-          ],
-        };
+        await verified.proof.check();
         result = {
           ...base,
           status: "complete",
-          value: { ...facts, proofSha256: canonicalDigest(facts) },
+          value: retainedPlanFacts(
+            verified,
+            canonicalDigest([
+              verified.inspection.identitySha256,
+              databasePin.identitySha256,
+            ]),
+            policySha256,
+          ),
         };
-        await proof.check();
+        await verified.proof.check();
       } catch (error) {
         const failure = safeError(error);
         primaryError = error;
