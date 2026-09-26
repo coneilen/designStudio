@@ -55,10 +55,15 @@ jobs:
       - name: Check application OpenAPI and browser inventory drift
         run: pnpm --filter @design-studio/application openapi:check
       - name: Check exact unit phase membership
+        id: validation_ready
         run: pnpm test:partition
       - name: Portable unit and SQLite composition tests
+        id: portable
         run: pnpm test:portable
       - name: Owned hardware-native integration tests
+        id: native
+        if: ${{ !cancelled() && steps.validation_ready.outcome == 'success' }}
         run: pnpm test:native
       - name: Offline package smoke
+        if: ${{ !cancelled() && steps.validation_ready.outcome == 'success' && steps.native.outcome == 'success' }}
         run: pnpm test:smoke

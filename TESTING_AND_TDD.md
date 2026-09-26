@@ -75,9 +75,13 @@ computed with the function under test.
 
 `pnpm test` and `pnpm test:unit` run a membership check, portable tests with two
 workers, then the exact hardware-native inventory with one worker and no file
-parallelism. Both phases are failure-gated; the workflow shows them as separate
-steps and does not run the combined command again. This intentionally changes
-native test scheduling, not product authorization, lease or time-budget rules.
+parallelism. The workflow shows separate sequential steps and does not run the
+combined command again. After every build/static prerequisite and the membership
+check succeeds, native tests run even if portable tests fail; smoke runs only
+after native succeeds. Cancellation or a failed/skipped prerequisite blocks both.
+There is no `continue-on-error`: any phase failure still fails the job and release
+gate. This retains independent failure evidence without masking failures or
+changing worker counts, operation budgets, or the overall 45-minute watchdog.
 
 The overall Workspace CI job watchdog is **45 minutes**. The earlier increase
 from 15 to 25 minutes covered two local phases measured at 851.19 seconds.
@@ -88,9 +92,8 @@ about 33 seconds after it started; smoke was **incomplete, not passed**.
 The 25-to-35-minute change is a bounded infrastructure allowance, not a runtime
 performance guarantee or a per-test, hook, product deadline, lease or operation-
 budget increase. Existing 5-second tests and the explicit 60-second cold native
-driver keep their limits. All assertions and sequential phases remain failure-
-gated; no retries, `continue-on-error`, worker, partition, skip or cache changes
-are introduced.
+driver keep their limits. That watchdog change introduced no retries,
+`continue-on-error`, worker, partition, skip or cache changes.
 
 The subsequent 35-to-45-minute increase adds ten minutes of bounded **overall
 job** headroom. Hosted run `36187615159` at `edaba07` passed all 150 portable
@@ -102,7 +105,7 @@ completion was **not established**, and smoke was **skipped**. The full hosted
 native cost remains unknown. Forty-five minutes is bounded headroom, not a
 completion guarantee: all remaining native and smoke tests must actually pass.
 Test/hook allowances, native 30-second/25-MiB limits, workers, partition,
-step order and failure gates are unchanged. The portable pass does not prove
+step order and failure gates were unchanged by that watchdog increase. The portable pass does not prove
 the earlier six timeout causes fixed, and observer timestamps must be used
 rather than buffered reporter delivery times when comparing phases.
 
