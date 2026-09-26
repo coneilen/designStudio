@@ -6,6 +6,7 @@ import {
 } from "@design-studio/contracts";
 import { storedBinding } from "./bindings.js";
 import { storedJob, storedResource, storedStage } from "./job-codec.js";
+import { validateReferenceRows } from "./reference-recovery.js";
 import {
   type BackupMetadata,
   type ProjectBackup,
@@ -171,15 +172,17 @@ export function backupMetadata(value: unknown): BackupMetadata {
     "reviews",
     "receipts",
     "pins",
-    ...(version === 3 || version === 4
+    ...(version === 3 || version === 4 || version === 5
       ? ["jobs", "jobResources", "jobStages"]
       : []),
-    ...(version === 4 ? ["artifactBindings"] : []),
+    ...(version === 4 || version === 5 ? ["artifactBindings"] : []),
+    ...(version === 5 ? ["referenceRecoveries", "referenceRecoveryRows"] : []),
   ]);
   if (
     data.storageVersion !== 2 &&
     data.storageVersion !== 3 &&
-    data.storageVersion !== 4
+    data.storageVersion !== 4 &&
+    data.storageVersion !== 5
   )
     throw new StorageError(
       "SCHEMA_INCOMPATIBLE",
@@ -238,7 +241,18 @@ export function backupMetadata(value: unknown): BackupMetadata {
     ? jobs
     : {
         ...jobs,
-        storageVersion: 4,
+        ...(data.storageVersion === 5
+          ? {
+              storageVersion: 5 as const,
+              referenceRecoveries: array(data.referenceRecoveries).map((r) =>
+                contract("ReferenceRecoveryRecord", r),
+              ),
+              referenceRecoveryRows: validateReferenceRows(
+                data.referenceRecoveryRows,
+                true,
+              ),
+            }
+          : { storageVersion: 4 as const }),
         artifactBindings: array(data.artifactBindings).map(storedBinding),
       };
 }

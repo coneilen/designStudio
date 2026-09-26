@@ -5,6 +5,7 @@ import {
   mkdtemp,
   readdir,
   readFile,
+  rename,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -14,10 +15,15 @@ import {
   type FigmaCaptureManifest,
   type FigmaCaptureRequest,
   type Outcome,
+  parseContract,
   validateContract,
 } from "@design-studio/contracts";
 import { fakeComplete } from "@design-studio/contracts/testing";
-import { canonicalBytes, canonicalDigest } from "@design-studio/design-ir";
+import {
+  canonicalBytes,
+  canonicalDigest,
+  hashBytes,
+} from "@design-studio/design-ir";
 import {
   CAPTURE_HANDLER_ID,
   CAPTURE_HANDLER_VERSION,
@@ -34,17 +40,32 @@ import {
   type StoredJob,
   type StoredJobStage,
 } from "@design-studio/storage";
-import { afterEach, aroundEach, expect, vi, it as vitestIt } from "vitest";
+import {
+  afterEach,
+  aroundEach,
+  beforeEach,
+  describe,
+  expect,
+  vi,
+  it as vitestIt,
+} from "vitest";
 import * as referenceDecoder from "../../figma-capture/dist/decode.js";
 import {
   CaptureHttpError,
   FigmaHttpsTransport,
 } from "../../figma-capture/dist/transport.js";
 import { png } from "../../figma-capture/tests/support.js";
+import {
+  closePortablePins,
+  type PortablePinOwner,
+  portableRetainedPin,
+} from "../../host/tests/portable-retained-pin.js";
 import { nativeCapturePolicy } from "../../project-host/dist/capture-authority.js";
 import { CAPTURE_DIAGNOSTIC_POLICY_SHA256 } from "../../project-host/src/capture-diagnostic-profile.js";
 import { CAPTURE_RECOVERY_POLICY_SHA256 } from "../../project-host/src/capture-recovery-profile.js";
 import { CAPTURE_REFERENCE_POLICY_SHA256 } from "../../project-host/src/capture-reference-profile.js";
+import { REFERENCE_CONVERSION_INSPECTION_POLICY_SHA256 } from "../../project-host/src/reference-conversion-inspection-profile.js";
+import { REFERENCE_OFFLINE_POLICY_SHA256 } from "../../project-host/src/reference-offline-profile.js";
 import { REFERENCE_VALIDATION_POLICY_SHA256 } from "../../project-host/src/reference-validation-profile.js";
 import { initializeImmutableSqlite } from "../../storage/dist/immutable-sqlite.js";
 import {
@@ -59,18 +80,27 @@ import {
   closeSettledStores,
   joinSettledStores,
 } from "../../storage/tests/lifetime.js";
-import { syntheticImmutableSnapshot } from "../../storage/tests/support.js";
+import {
+  syntheticBackupPin,
+  syntheticImmutableSnapshot,
+} from "../../storage/tests/support.js";
 import {
   CAPTURE_RECOVERY_CONFIRMATION,
   nativeCaptureResources,
 } from "../src/capture-recovery.js";
 import {
   assembleNativeCapture,
+  NativeCaptureCleanupRequired,
   type NativeCaptureRuntime,
   NativeCaptureStartupCleanupRequired,
 } from "../src/capture-runtime-internal.js";
 import { RecoveryDecisions } from "../src/recovery.js";
 import { ReferenceInput } from "../src/reference-input.js";
+import {
+  type NativeReferenceOfflineInput,
+  openNativeReferenceConversionInspection,
+  openNativeReferenceOffline,
+} from "../src/reference-offline.js";
 import { ReferenceReader } from "../src/reference-proof.js";
 import * as referencePublications from "../src/reference-publications.js";
 import {
@@ -80,12 +110,14 @@ import {
   REFERENCE_DOWNLOAD_CONFIRMATION,
 } from "../src/reference-runtime.js";
 import { openNativeReferenceValidation } from "../src/reference-validation.js";
+import { ApplicationError, safeError } from "../src/response.js";
 import {
   AsyncTestScope,
   captureTestScope,
   inCaptureTest,
   ownCaptureTests,
   ownCaptureWork,
+  referenceTelemetry,
 } from "./capture-test-scope.js";
 
 const seam = vi.hoisted(() => ({
@@ -132,28 +164,52 @@ vi.mock("../../project-host/dist/capture-work.js", () => ({
   },
 }));
 const cleanups: (() => Promise<void>)[] = [];
+const integrityTelemetry = new WeakMap<
+  AsyncTestScope,
+  ReturnType<typeof referenceTelemetry>
+>();
 const it = ownCaptureTests(vitestIt);
 aroundEach((run, context) => {
   if (cleanups.length)
     throw new Error("Previous capture fixture has not quiesced.");
-  return inCaptureTest(new AsyncTestScope(context.signal), run);
+  const scope = new AsyncTestScope(context.signal);
+  if (
+    ["diagnostic-missing-protection", "diagnostic-receipt-mutation"].some(
+      (fault) => context.task.name.endsWith(`: ${fault}`),
+    )
+  ) {
+    const telemetry = referenceTelemetry("retained-integrity", context.signal);
+    telemetry.arm();
+    integrityTelemetry.set(scope, telemetry);
+  }
+  return inCaptureTest(scope, run);
 });
 afterEach(async () => {
-  await captureTestScope().close();
-  const errors: unknown[] = [];
-  for (const cleanup of [...cleanups].reverse()) {
-    try {
-      await cleanup();
-      cleanups.splice(cleanups.indexOf(cleanup), 1);
-    } catch (error) {
-      errors.push(error);
+  const telemetry = integrityTelemetry.get(captureTestScope());
+  const cleanup = async () => {
+    await captureTestScope().close();
+    const errors: unknown[] = [];
+    for (const cleanup of [...cleanups].reverse()) {
+      try {
+        await cleanup();
+        cleanups.splice(cleanups.indexOf(cleanup), 1);
+      } catch (error) {
+        errors.push(error);
+      }
     }
-  }
-  if (errors.length)
-    throw new AggregateError(errors, "Capture fixture cleanup did not settle.");
-  vi.restoreAllMocks();
-  seam.work = undefined;
-  seam.onCurrent = undefined;
+    if (errors.length)
+      throw new AggregateError(
+        errors,
+        "Capture fixture cleanup did not settle.",
+      );
+    vi.restoreAllMocks();
+    seam.work = undefined;
+    seam.onCurrent = undefined;
+  };
+  if (telemetry) {
+    await telemetry.measure("cleanup", cleanup);
+    telemetry.close();
+  } else await cleanup();
 });
 function value<T>(outcome: Outcome<T>): T {
   expect(outcome.status, JSON.stringify(outcome)).toBe("complete");
@@ -200,6 +256,9 @@ async function createFixture(
   } = {},
 ) {
   const scope = captureTestScope();
+  const telemetry = integrityTelemetry.get(scope);
+  const measure = <T>(phase: string, work: () => Promise<T>) =>
+    telemetry ? telemetry.measure(phase, work) : work();
   initializeImmutableSqlite(
     path.resolve(
       ".tools\\sqlite-prebuild\\build\\Release\\better_sqlite3.node",
@@ -217,7 +276,9 @@ async function createFixture(
   const validations: Awaited<
     ReturnType<typeof openNativeReferenceValidation>
   >[] = [];
+  const offlines: Awaited<ReturnType<typeof openNativeReferenceOffline>>[] = [];
   const startupClosures: (() => Promise<void>)[] = [];
+  const portablePins = new Set<PortablePinOwner>();
   cleanups.push(async () => {
     await scope.close();
     const stopped = await Promise.all(stopRequests.splice(0));
@@ -239,8 +300,11 @@ async function createFixture(
     await joinSettledStores(stores);
     for (const close of startupClosures) await close();
     for (const validation of validations) await validation.close();
+    for (const offline of offlines) await offline.close();
     for (const runtime of runtimes) await runtime.close();
     await closeSettledStores(stores);
+    closePortablePins(portablePins);
+    expect(portablePins.size).toBe(0);
     await rm(root, { recursive: true, force: true });
   });
   scope.signal.throwIfAborted();
@@ -275,6 +339,11 @@ async function createFixture(
     | Awaited<ReturnType<typeof openNativeReferenceValidation>>
     | undefined;
   let validationMode = false;
+  let offlineMode = false;
+  let conversionInspectionMode = false;
+  let offline:
+    | Awaited<ReturnType<typeof openNativeReferenceOffline>>
+    | undefined;
   let clockOffset = 0;
   const fixedNow = history.fixedClock ? Date.now() : undefined;
   let store: LocalStore;
@@ -344,36 +413,57 @@ async function createFixture(
       diagnosticAuthority: async () => CAPTURE_DIAGNOSTIC_POLICY_SHA256,
       referenceValidationAuthority: async () =>
         REFERENCE_VALIDATION_POLICY_SHA256,
+      referenceOfflineAuthority: async () => REFERENCE_OFFLINE_POLICY_SHA256,
+      referenceConversionInspectionAuthority: async () =>
+        REFERENCE_CONVERSION_INSPECTION_POLICY_SHA256,
+      pinReferenceConversionInspectionDatabase: async () => {
+        if (!work.pinReferenceOfflineDatabase)
+          throw new Error("Missing immutable fixture pin");
+        return work.pinReferenceOfflineDatabase();
+      },
+      pinReferenceOfflineDatabase: async () => {
+        const pin = await syntheticImmutableSnapshot(project.paths.database);
+        const before = await lstat(project.paths.database);
+        let closed = false;
+        return {
+          ...pin,
+          close: () => {
+            pin.close();
+            closed = true;
+          },
+          checkReleased: async () => {
+            expect(closed).toBe(true);
+            const after = await lstat(project.paths.database);
+            expect([after.ino, after.dev, after.size, after.mtimeMs]).toEqual([
+              before.ino,
+              before.dev,
+              before.size,
+              before.mtimeMs,
+            ]);
+          },
+        };
+      },
+      prepareReferenceBackup: async (filename) => {
+        await writeFile(filename, Buffer.alloc(0), { flag: "wx" });
+      },
+      pinReferenceBackup: async (filename) => syntheticBackupPin(filename),
+      publishReferenceBackup: async (source, destination, _context, proof) => {
+        await proof.check();
+        proof.close();
+        await rename(source, destination);
+        return syntheticBackupPin(destination);
+      },
       pinReferenceValidationDatabase: () =>
         syntheticImmutableSnapshot(project.paths.database),
-      pinReferenceValidationEntry: async (rootId, relative) => {
+      pinReferenceValidationEntry: async (rootId, relative, directory) => {
         const filename = path.join(
           rootId === project.artifactRootId ? artifacts : outputs,
           ...relative.split("/"),
         );
-        const stat = await lstat(filename);
-        if (stat.isSymbolicLink() || (!stat.isDirectory() && stat.nlink !== 1))
-          throw new HostBoundaryError(
-            "PATH_FORBIDDEN",
-            "Synthetic retained pin refused.",
-          );
-        return {
-          check: async () => {},
-          handle: 1,
-          byteLength: stat.size,
-          identity: {
-            path: filename,
-            volume: stat.dev,
-            file: String(stat.ino),
-          },
-          read: () => {
-            throw new Error("Synthetic native pin has no body reader");
-          },
-          close: () => {},
-        };
+        return portableRetainedPin(filename, directory, portablePins);
       },
       recoveryAuthority: async () => {
-        if (validationMode)
+        if (validationMode || offlineMode)
           throw new Error(
             "Read-only validation must not inspect the credential journal",
           );
@@ -413,7 +503,12 @@ async function createFixture(
       () => (fixedNow ?? now()) + clockOffset,
     );
     try {
-      if (validationMode) {
+      if (offlineMode) {
+        offline = conversionInspectionMode
+          ? await openNativeReferenceConversionInspection(project)
+          : await openNativeReferenceOffline(project);
+        offlines.push(offline);
+      } else if (validationMode) {
         validation = await openNativeReferenceValidation(project);
         validations.push(validation);
       } else {
@@ -421,19 +516,26 @@ async function createFixture(
         runtimes.push(native);
         runtime = {
           execute: ownCaptureWork((input, signal) =>
-            native.execute(input, AbortSignal.any([signal, scope.signal])),
+            measure(input.operation, () =>
+              native.execute(input, AbortSignal.any([signal, scope.signal])),
+            ),
           ),
           recover: ownCaptureWork((input, signal) =>
-            native.recover(input, AbortSignal.any([signal, scope.signal])),
+            measure("recover", () =>
+              native.recover(input, AbortSignal.any([signal, scope.signal])),
+            ),
           ),
           ...(native.reference
             ? {
                 reference: ownCaptureWork((input, signal) => {
                   if (!native.reference)
                     throw new Error("Missing native reference facade");
-                  return native.reference(
-                    input,
-                    AbortSignal.any([signal, scope.signal]),
+                  return measure(input.operation, () =>
+                    required(native.reference).call(
+                      native,
+                      input,
+                      AbortSignal.any([signal, scope.signal]),
+                    ),
                   );
                 }),
               }
@@ -448,7 +550,7 @@ async function createFixture(
     }
     return { policy, store, runtime };
   };
-  const initialOwners = await open();
+  const initialOwners = await measure("fixture-open", () => open());
   const originalRequestId = "failed_request";
   const originalJobId = `capture_${canonicalDigest([project.projectId, project.principal.actorId, originalRequestId])}`;
   const url =
@@ -868,6 +970,19 @@ async function createFixture(
         await validation?.close();
       }
     },
+    async runOffline(
+      command: NativeReferenceOfflineInput,
+      signal = scope.signal,
+    ) {
+      await runtime.close();
+      await validation?.close();
+      await offline?.close();
+      offlineMode = true;
+      conversionInspectionMode =
+        command.operation === "reference-conversion-inspect";
+      await open();
+      return required(offline).execute(command, signal);
+    },
     raceBeforeCommit(nextOnly = false) {
       beforeCommit = () =>
         mutateOpenSyntheticCapture(
@@ -885,6 +1000,7 @@ async function createFixture(
       await validation?.close();
       await runtime.close();
       validationMode = false;
+      offlineMode = false;
       await open();
     },
     async record() {
@@ -1809,13 +1925,16 @@ it("keeps unsupported generation histories refused and accepts independent resou
   ).toBe("failed");
 });
 
-it.each([
+const predecessorFaults = [
   "valid",
   "diagnostic-valid",
   "diagnostic-retained-valid",
+  "diagnostic-retained-publication-unbound",
+  "diagnostic-retained-publication-provenance",
   "diagnostic-retained-coexisting-history",
   "diagnostic-retained-coexisting-current-only",
   "diagnostic-retained-successor-output",
+  "diagnostic-retained-successor-output-offline",
   "diagnostic-retained-successor-record",
   "diagnostic-retained-successor-receipt",
   "diagnostic-retained-successor-protection",
@@ -1839,190 +1958,387 @@ it.each([
   "unrelated-protection",
   "missing-protection",
   "timestamp-tie-unrelated",
-] as const)(
-  "authenticates retained predecessor stages after successor conversion and private exports: %s",
-  async (fault) => {
-    const retained = fault.startsWith("diagnostic-retained-");
-    const coexistence = fault === "diagnostic-retained-coexisting-history";
-    const successorCoexistence = fault.startsWith(
-      "diagnostic-retained-successor-",
+] as const;
+function publicationReadFault(
+  state: Parameters<typeof referencePublications.retainedReferenceInventory>[1],
+  proposal: Parameters<
+    typeof referencePublications.retainedReferenceInventory
+  >[2],
+  originalJobId: string,
+  unbound: boolean,
+) {
+  const changed = structuredClone(state);
+  const selected = required(
+    changed.jobs.find(
+      (record) => record.job.id === proposal.binding.originalJobId,
+    ),
+  );
+  let supplied = proposal;
+  if (unbound) {
+    delete selected.submission.captureRecovery;
+    supplied = {
+      ...proposal,
+      binding: {
+        ...proposal.binding,
+        originalRecordSha256: canonicalDigest(selected),
+      },
+    };
+  } else {
+    const pending = required(
+      changed.stages.find((item) => item.jobId === originalJobId),
     );
-    const validSuccessor = fault === "diagnostic-retained-successor-output";
-    const f = await fixture(true, undefined, {
-      repaired: true,
-      committedStageBytes: coexistence,
-      successorStageBytes: successorCoexistence,
-      fixedClock: true,
+    pending.requestId = "synthetic-wrong-request";
+  }
+  return { changed, supplied };
+}
+
+async function retainedPredecessorScenario(
+  fault: (typeof predecessorFaults)[number],
+  prepareOnly = false,
+) {
+  const retained = fault.startsWith("diagnostic-retained-");
+  const coexistence = fault === "diagnostic-retained-coexisting-history";
+  const successorCoexistence = fault.startsWith(
+    "diagnostic-retained-successor-",
+  );
+  const publicationCheckCase =
+    fault === "diagnostic-retained-publication-unbound" ||
+    fault === "diagnostic-retained-publication-provenance";
+  const offlinePublication =
+    fault === "diagnostic-retained-successor-output-offline" ||
+    publicationCheckCase;
+  const validSuccessor =
+    fault === "diagnostic-retained-successor-output" || offlinePublication;
+  const f = await fixture(true, undefined, {
+    repaired: true,
+    committedStageBytes: coexistence,
+    successorStageBytes: successorCoexistence,
+    fixedClock: true,
+    ...(publicationCheckCase ? { stageCount: 2 } : {}),
+  });
+  const beforeRecord = await f.record();
+  const beforeStages = await f.stages();
+  const stage = required(beforeStages[0]);
+  const directories = (await readdir(f.artifacts)).filter((name) =>
+    name.startsWith(".host-"),
+  );
+  const matching = (
+    await Promise.all(
+      directories.map(async (directory) =>
+        (
+          await readdir(path.join(f.artifacts, directory))
+        ).includes(stage.stagingId)
+          ? directory
+          : undefined,
+      ),
+    )
+  ).filter((entry) => entry !== undefined);
+  expect(matching).toHaveLength(1);
+  const stagePath = path.join(
+    f.artifacts,
+    required(matching[0]),
+    stage.stagingId,
+  );
+  const beforeBytes = await readFile(stagePath);
+  const committedPath = path.join(
+    f.artifacts,
+    ...stage.staged.artifact.path.split("/"),
+  );
+  const beforeStageIdentity = await lstat(stagePath);
+  const beforeCommittedIdentity = coexistence
+    ? await lstat(committedPath)
+    : undefined;
+  if (successorCoexistence)
+    await expect(lstat(committedPath)).rejects.toMatchObject({
+      code: "ENOENT",
     });
-    const beforeRecord = await f.record();
-    const beforeStages = await f.stages();
-    const stage = required(beforeStages[0]);
-    const directories = (await readdir(f.artifacts)).filter((name) =>
-      name.startsWith(".host-"),
-    );
-    const matching = (
-      await Promise.all(
-        directories.map(async (directory) =>
-          (
-            await readdir(path.join(f.artifacts, directory))
-          ).includes(stage.stagingId)
-            ? directory
-            : undefined,
-        ),
+  if (coexistence) {
+    expect(beforeStageIdentity.nlink).toBe(1);
+    expect(beforeCommittedIdentity?.nlink).toBe(1);
+    expect(beforeCommittedIdentity?.ino).not.toBe(beforeStageIdentity.ino);
+    expect(await readFile(committedPath)).toEqual(beforeBytes);
+  }
+  if (fault === "timestamp-tie-unrelated") {
+    const now = f.policy.clock.now();
+    vi.spyOn(f.policy.clock, "now").mockReturnValue(now);
+    value(await f.ordinaryReceipt("unrelated_before_grant"));
+  }
+  const proof = await f.propose();
+  expect(
+    (
+      await f.runtime.recover(
+        {
+          ...f.input,
+          expectedProof: proof.proofSha256,
+          confirmation: CAPTURE_RECOVERY_CONFIRMATION,
+        },
+        new AbortController().signal,
       )
-    ).filter((entry) => entry !== undefined);
-    expect(matching).toHaveLength(1);
-    const stagePath = path.join(
-      f.artifacts,
-      required(matching[0]),
-      stage.stagingId,
+    ).status,
+  ).toBe("complete");
+  f.allowCapture();
+  const origin = "https://figma-alpha-api.s3.us-west-2.amazonaws.com";
+  const api = vi
+    .spyOn(FigmaHttpsTransport.prototype, "api")
+    .mockImplementation(async (operation) => ({
+      status: 200,
+      mediaType: "application/json",
+      bytes: Buffer.from(
+        JSON.stringify(
+          operation === "metadata"
+            ? { file: { version: "v1" } }
+            : operation === "nodes"
+              ? {
+                  version: "v1",
+                  nodes: {
+                    "1:2": {
+                      document: {
+                        id: "1:2",
+                        type: "FRAME",
+                        name: "Synthetic recovered frame",
+                        absoluteBoundingBox: {
+                          x: 0,
+                          y: 0,
+                          width: 2,
+                          height: 2,
+                        },
+                        children: [],
+                      },
+                    },
+                  },
+                }
+              : {
+                  images: {
+                    "1:2": `${origin}/synthetic.png?private=synthetic`,
+                  },
+                },
+        ),
+      ),
+    }));
+  const requestId = f.input.nextRequestId;
+  const next = await f.runtime.execute(
+    { operation: "capture", requestId, url: f.url },
+    new AbortController().signal,
+  );
+  expect(next.status, JSON.stringify(next)).toBe("partial");
+  expect(next.value?.jobStatus).toBe("completed");
+  if (fault === "valid" || fault === "diagnostic-valid" || retained) {
+    const convert = figmaImport.convertFigmaStructure;
+    vi.spyOn(figmaImport, "convertFigmaStructure").mockImplementation(
+      (...args) => {
+        const result = convert(...args);
+        result.report.diagnostics.push({
+          schemaVersion: "1.0",
+          id: "synthetic_large_report",
+          code: "ACTION_REQUIRED",
+          severity: "warning",
+          message: "x".repeat(4500000),
+          operations: [],
+          nodeIds: [],
+          evidenceIds: [],
+          recovery: "Synthetic report-size regression only.",
+        });
+        return result;
+      },
     );
-    const beforeBytes = await readFile(stagePath);
-    const committedPath = path.join(
-      f.artifacts,
-      ...stage.staged.artifact.path.split("/"),
-    );
-    const beforeStageIdentity = await lstat(stagePath);
-    const beforeCommittedIdentity = coexistence
-      ? await lstat(committedPath)
-      : undefined;
-    if (successorCoexistence)
-      await expect(lstat(committedPath)).rejects.toMatchObject({
-        code: "ENOENT",
-      });
-    if (coexistence) {
-      expect(beforeStageIdentity.nlink).toBe(1);
-      expect(beforeCommittedIdentity?.nlink).toBe(1);
-      expect(beforeCommittedIdentity?.ino).not.toBe(beforeStageIdentity.ino);
-      expect(await readFile(committedPath)).toEqual(beforeBytes);
-    }
-    if (fault === "timestamp-tie-unrelated") {
-      const now = f.policy.clock.now();
-      vi.spyOn(f.policy.clock, "now").mockReturnValue(now);
-      value(await f.ordinaryReceipt("unrelated_before_grant"));
-    }
-    const proof = await f.propose();
+  }
+  const converted = await f.runtime.execute(
+    { operation: "convert", requestId },
+    new AbortController().signal,
+  );
+  expect(converted.status, JSON.stringify(converted)).toBe("partial");
+  const conversionEvidence = required(
+    converted.value?.artifacts.find(
+      (entry) => entry.role === "conversion-evidence",
+    ),
+  );
+  const currentProjection = validateContract(
+    "FigmaConversionEvidence",
+    JSON.parse(
+      await readFile(
+        path.join(f.artifacts, "blobs", conversionEvidence.artifact.sha256),
+        "utf8",
+      ),
+    ),
+  );
+  expect(currentProjection.success).toBe(true);
+  if (!currentProjection.success)
+    throw new Error("Invalid synthetic conversion evidence");
+  expect(currentProjection.value.adapter).toBe("figma-structure-fixed-v2");
+  if (fault === "valid" || fault === "diagnostic-valid" || retained)
+    expect(
+      converted.value?.artifacts.find((entry) => entry.role === "report")
+        ?.artifact.byteLength,
+    ).toBeGreaterThanOrEqual(4500000);
+  for (const role of ["nodes", "report"] as const)
     expect(
       (
-        await f.runtime.recover(
+        await f.runtime.execute(
           {
-            ...f.input,
-            expectedProof: proof.proofSha256,
-            confirmation: CAPTURE_RECOVERY_CONFIRMATION,
+            operation: "artifact",
+            requestId,
+            role,
+            outputRelative: `${role}.json`,
           },
           new AbortController().signal,
         )
       ).status,
-    ).toBe("complete");
-    f.allowCapture();
-    const origin = "https://figma-alpha-api.s3.us-west-2.amazonaws.com";
-    const api = vi
-      .spyOn(FigmaHttpsTransport.prototype, "api")
-      .mockImplementation(async (operation) => ({
-        status: 200,
-        mediaType: "application/json",
-        bytes: Buffer.from(
-          JSON.stringify(
-            operation === "metadata"
-              ? { file: { version: "v1" } }
-              : operation === "nodes"
-                ? {
-                    version: "v1",
-                    nodes: {
-                      "1:2": {
-                        document: {
-                          id: "1:2",
-                          type: "FRAME",
-                          name: "Synthetic recovered frame",
-                          absoluteBoundingBox: {
-                            x: 0,
-                            y: 0,
-                            width: 2,
-                            height: 2,
-                          },
-                          children: [],
-                        },
-                      },
-                    },
-                  }
-                : {
-                    images: {
-                      "1:2": `${origin}/synthetic.png?private=synthetic`,
-                    },
-                  },
-          ),
-        ),
-      }));
-    const requestId = f.input.nextRequestId;
-    const next = await f.runtime.execute(
-      { operation: "capture", requestId, url: f.url },
-      new AbortController().signal,
-    );
-    expect(next.status, JSON.stringify(next)).toBe("partial");
-    expect(next.value?.jobStatus).toBe("completed");
-    if (fault === "valid" || fault === "diagnostic-valid" || retained) {
-      const convert = figmaImport.convertFigmaStructure;
-      vi.spyOn(figmaImport, "convertFigmaStructure").mockImplementation(
-        (...args) => {
-          const result = convert(...args);
-          result.report.diagnostics.push({
-            schemaVersion: "1.0",
-            id: "synthetic_large_report",
-            code: "ACTION_REQUIRED",
-            severity: "warning",
-            message: "x".repeat(4500000),
-            operations: [],
-            nodeIds: [],
-            evidenceIds: [],
-            recovery: "Synthetic report-size regression only.",
-          });
-          return result;
-        },
-      );
-    }
-    const converted = await f.runtime.execute(
-      { operation: "convert", requestId },
-      new AbortController().signal,
-    );
-    expect(converted.status, JSON.stringify(converted)).toBe("partial");
-    const conversionEvidence = required(
-      converted.value?.artifacts.find(
-        (entry) => entry.role === "conversion-evidence",
-      ),
-    );
-    const currentProjection = validateContract(
-      "FigmaConversionEvidence",
-      JSON.parse(
-        await readFile(
-          path.join(f.artifacts, "blobs", conversionEvidence.artifact.sha256),
-          "utf8",
-        ),
-      ),
-    );
-    expect(currentProjection.success).toBe(true);
-    if (!currentProjection.success)
-      throw new Error("Invalid synthetic conversion evidence");
-    expect(currentProjection.value.adapter).toBe("figma-structure-fixed-v2");
-    if (fault === "valid" || fault === "diagnostic-valid" || retained)
-      expect(
-        converted.value?.artifacts.find((entry) => entry.role === "report")
-          ?.artifact.byteLength,
-      ).toBeGreaterThanOrEqual(4500000);
-    for (const role of ["nodes", "report"] as const)
-      expect(
-        (
-          await f.runtime.execute(
-            {
-              operation: "artifact",
-              requestId,
-              role,
-              outputRelative: `${role}.json`,
-            },
-            new AbortController().signal,
+    ).toBe("partial");
+  const priorFiles = await Promise.all(
+    (await readdir(path.join(f.artifacts, "blobs"))).map(
+      async (name) =>
+        [name, await readFile(path.join(f.artifacts, "blobs", name))] as const,
+    ),
+  );
+  const exports = await Promise.all(
+    ["nodes.json", "report.json"].map(
+      async (name) =>
+        [name, await readFile(path.join(f.outputs, name))] as const,
+    ),
+  );
+  f.ready.mockClear();
+  f.vault.mockClear();
+  api.mockClear();
+  // Any reference-time credential/recovery authority access is a regression.
+  required(seam.work).recoveryAuthority = async () => {
+    throw new Error("Reference must not inspect the credential journal");
+  };
+  const settlementFailures: string[] = [];
+  const update = f.store.jobs.update.bind(f.store.jobs);
+  const settlement =
+    fault === "diagnostic-reference-lease-expired"
+      ? vi.spyOn(f.store.jobs, "update").mockImplementation(async (...args) => {
+          const signal = args[3].signal;
+          const result = await update(...args);
+          expect(args[3].signal).toBe(signal);
+          if (
+            args[2].kind === "settle-usage" &&
+            result.status !== "complete" &&
+            result.status !== "partial"
           )
-        ).status,
-      ).toBe("partial");
-    const priorFiles = await Promise.all(
+            settlementFailures.push(result.error.code);
+          return result;
+        })
+      : undefined;
+  const image = vi
+    .spyOn(FigmaHttpsTransport.prototype, "image")
+    .mockImplementation(async (_url, budget) => {
+      budget.dnsQuery();
+      const bytes = png(true, 2, 2);
+      budget.receive(bytes.length);
+      budget.decoded(bytes.length);
+      if (fault === "diagnostic-reference-lease-expired") f.advanceClock(5001);
+      return { status: 200, mediaType: "image/png", bytes };
+    });
+  if (fault === "unknown-stage") {
+    const directory = path.join(
+      f.artifacts,
+      ".host-11111111-1111-4111-8111-111111111111",
+    );
+    await mkdir(directory);
+    await writeFile(
+      path.join(directory, "22222222-2222-4222-8222-222222222222"),
+      beforeBytes,
+    );
+  }
+  if (fault === "changed-stage")
+    await writeFile(stagePath, Buffer.from("synthetic changed"));
+  if (fault === "pair-link")
+    await link(stagePath, path.join(f.outputs, "paired.json"));
+  if (fault === "foreign-stage")
+    await f.mutateStage((entry) => {
+      entry.requestId = "foreign";
+    });
+  if (fault === "changed-original")
+    await f.mutate((record) => {
+      record.rowVersion++;
+    });
+  if (fault === "unrelated-protection") {
+    const context = await f.policy.issue({
+      jobId: "unrelated",
+      requestId: "unrelated",
+      signal: new AbortController().signal,
+    });
+    value(
+      await f.store.stage(Buffer.from("uncommitted private bytes"), context),
+    );
+  }
+  if (fault === "missing-protection")
+    removeSyntheticCaptureProtection(f.store, f.initial.job.id);
+  const run = required(f.runtime.reference).bind(f.runtime);
+  let closedProof: (() => unknown) | undefined;
+  if (successorCoexistence) {
+    expect(await readFile(committedPath)).toEqual(beforeBytes);
+    expect((await lstat(committedPath)).ino).not.toBe(beforeStageIdentity.ino);
+    expect((await lstat(committedPath)).nlink).toBe(1);
+  }
+  const planned = await run(
+    { operation: "reference-plan", requestId },
+    new AbortController().signal,
+  );
+  expect(planned.status, JSON.stringify(planned)).toBe("complete");
+  const approved = await run(
+    {
+      operation: "reference-approve",
+      requestId,
+      origin,
+      expectedProof: required(planned.value?.proposal?.proofSha256),
+      confirmation: REFERENCE_APPROVAL_CONFIRMATION,
+    },
+    new AbortController().signal,
+  );
+  const diagnostic = fault.startsWith("diagnostic-");
+  if (fault !== "valid" && !diagnostic) {
+    expect(approved.status, JSON.stringify(approved)).toBe("failed");
+    expect(image).not.toHaveBeenCalled();
+    return;
+  }
+  expect(approved.status, JSON.stringify(approved)).toBe("complete");
+  const legacy = diagnostic
+    ? vi
+        .spyOn(referenceDecoder, "decodeReference")
+        .mockRejectedValueOnce(
+          new HostBoundaryError(
+            "INVALID_INPUT",
+            "Synthetic legacy phase unknown.",
+          ),
+        )
+    : undefined;
+  const result = await run(
+    {
+      operation: "reference-download",
+      requestId,
+      expectedApproval: required(approved.value?.approval?.sha256),
+      confirmation: REFERENCE_DOWNLOAD_CONFIRMATION,
+    },
+    new AbortController().signal,
+  );
+  const decoderCalls = legacy?.mock.calls.length;
+  legacy?.mockRestore();
+  settlement?.mockRestore();
+  if (fault === "diagnostic-reference-lease-expired") {
+    expect(result.status).toBe("failed");
+    expect(result.value).toBeUndefined();
+    expect(result.inputAccounting).toMatchObject({
+      phase: "acquisition",
+      networkBytes: 87,
+    });
+    expect(settlementFailures).toEqual(["CONFLICT"]);
+    expect(decoderCalls).toBe(0);
+    expect(image).toHaveBeenCalledTimes(1);
+    expect(api).not.toHaveBeenCalled();
+    expect(f.vault).not.toHaveBeenCalled();
+    expect(await f.record()).toEqual(beforeRecord);
+    expect(await f.stages()).toEqual(beforeStages);
+    expect(await readFile(stagePath)).toEqual(beforeBytes);
+    return;
+  }
+  expect(result.status, JSON.stringify(result)).toBe(
+    diagnostic ? "unavailable" : "complete",
+  );
+  if (diagnostic) {
+    expect(result.value?.evidence?.referenceDiagnostic).toBeUndefined();
+    const originalReferenceFiles = await Promise.all(
       (await readdir(path.join(f.artifacts, "blobs"))).map(
         async (name) =>
           [
@@ -2031,168 +2347,7 @@ it.each([
           ] as const,
       ),
     );
-    const exports = await Promise.all(
-      ["nodes.json", "report.json"].map(
-        async (name) =>
-          [name, await readFile(path.join(f.outputs, name))] as const,
-      ),
-    );
-    f.ready.mockClear();
-    f.vault.mockClear();
-    api.mockClear();
-    // Any reference-time credential/recovery authority access is a regression.
-    required(seam.work).recoveryAuthority = async () => {
-      throw new Error("Reference must not inspect the credential journal");
-    };
-    const settlementFailures: string[] = [];
-    const update = f.store.jobs.update.bind(f.store.jobs);
-    const settlement =
-      fault === "diagnostic-reference-lease-expired"
-        ? vi
-            .spyOn(f.store.jobs, "update")
-            .mockImplementation(async (...args) => {
-              const signal = args[3].signal;
-              const result = await update(...args);
-              expect(args[3].signal).toBe(signal);
-              if (
-                args[2].kind === "settle-usage" &&
-                result.status !== "complete" &&
-                result.status !== "partial"
-              )
-                settlementFailures.push(result.error.code);
-              return result;
-            })
-        : undefined;
-    const image = vi
-      .spyOn(FigmaHttpsTransport.prototype, "image")
-      .mockImplementation(async (_url, budget) => {
-        budget.dnsQuery();
-        const bytes = png(true, 2, 2);
-        budget.receive(bytes.length);
-        budget.decoded(bytes.length);
-        if (fault === "diagnostic-reference-lease-expired")
-          f.advanceClock(5001);
-        return { status: 200, mediaType: "image/png", bytes };
-      });
-    if (fault === "unknown-stage") {
-      const directory = path.join(
-        f.artifacts,
-        ".host-11111111-1111-4111-8111-111111111111",
-      );
-      await mkdir(directory);
-      await writeFile(
-        path.join(directory, "22222222-2222-4222-8222-222222222222"),
-        beforeBytes,
-      );
-    }
-    if (fault === "changed-stage")
-      await writeFile(stagePath, Buffer.from("synthetic changed"));
-    if (fault === "pair-link")
-      await link(stagePath, path.join(f.outputs, "paired.json"));
-    if (fault === "foreign-stage")
-      await f.mutateStage((entry) => {
-        entry.requestId = "foreign";
-      });
-    if (fault === "changed-original")
-      await f.mutate((record) => {
-        record.rowVersion++;
-      });
-    if (fault === "unrelated-protection") {
-      const context = await f.policy.issue({
-        jobId: "unrelated",
-        requestId: "unrelated",
-        signal: new AbortController().signal,
-      });
-      value(
-        await f.store.stage(Buffer.from("uncommitted private bytes"), context),
-      );
-    }
-    if (fault === "missing-protection")
-      removeSyntheticCaptureProtection(f.store, f.initial.job.id);
-    const run = required(f.runtime.reference).bind(f.runtime);
-    let closedProof: (() => unknown) | undefined;
-    if (successorCoexistence) {
-      expect(await readFile(committedPath)).toEqual(beforeBytes);
-      expect((await lstat(committedPath)).ino).not.toBe(
-        beforeStageIdentity.ino,
-      );
-      expect((await lstat(committedPath)).nlink).toBe(1);
-    }
-    const planned = await run(
-      { operation: "reference-plan", requestId },
-      new AbortController().signal,
-    );
-    expect(planned.status, JSON.stringify(planned)).toBe("complete");
-    const approved = await run(
-      {
-        operation: "reference-approve",
-        requestId,
-        origin,
-        expectedProof: required(planned.value?.proposal?.proofSha256),
-        confirmation: REFERENCE_APPROVAL_CONFIRMATION,
-      },
-      new AbortController().signal,
-    );
-    const diagnostic = fault.startsWith("diagnostic-");
-    if (fault !== "valid" && !diagnostic) {
-      expect(approved.status, JSON.stringify(approved)).toBe("failed");
-      expect(image).not.toHaveBeenCalled();
-      return;
-    }
-    expect(approved.status, JSON.stringify(approved)).toBe("complete");
-    const legacy = diagnostic
-      ? vi
-          .spyOn(referenceDecoder, "decodeReference")
-          .mockRejectedValueOnce(
-            new HostBoundaryError(
-              "INVALID_INPUT",
-              "Synthetic legacy phase unknown.",
-            ),
-          )
-      : undefined;
-    const result = await run(
-      {
-        operation: "reference-download",
-        requestId,
-        expectedApproval: required(approved.value?.approval?.sha256),
-        confirmation: REFERENCE_DOWNLOAD_CONFIRMATION,
-      },
-      new AbortController().signal,
-    );
-    const decoderCalls = legacy?.mock.calls.length;
-    legacy?.mockRestore();
-    settlement?.mockRestore();
-    if (fault === "diagnostic-reference-lease-expired") {
-      expect(result.status).toBe("failed");
-      expect(result.value).toBeUndefined();
-      expect(result.inputAccounting).toMatchObject({
-        phase: "acquisition",
-        networkBytes: 87,
-      });
-      expect(settlementFailures).toEqual(["CONFLICT"]);
-      expect(decoderCalls).toBe(0);
-      expect(image).toHaveBeenCalledTimes(1);
-      expect(api).not.toHaveBeenCalled();
-      expect(f.vault).not.toHaveBeenCalled();
-      expect(await f.record()).toEqual(beforeRecord);
-      expect(await f.stages()).toEqual(beforeStages);
-      expect(await readFile(stagePath)).toEqual(beforeBytes);
-      return;
-    }
-    expect(result.status, JSON.stringify(result)).toBe(
-      diagnostic ? "unavailable" : "complete",
-    );
-    if (diagnostic) {
-      expect(result.value?.evidence?.referenceDiagnostic).toBeUndefined();
-      const originalReferenceFiles = await Promise.all(
-        (await readdir(path.join(f.artifacts, "blobs"))).map(
-          async (name) =>
-            [
-              name,
-              await readFile(path.join(f.artifacts, "blobs", name)),
-            ] as const,
-        ),
-      );
+    const finishDiagnostic = ownCaptureWork(async () => {
       if (fault === "diagnostic-unknown-stage") {
         const directory = path.join(
           f.artifacts,
@@ -2239,359 +2394,778 @@ it.each([
           expect(
             (await readFile(path.join(f.outputs, name))).equals(bytes),
           ).toBe(true);
-        return;
+        return undefined;
       }
-      expect(planned.status, JSON.stringify(planned)).toBe("complete");
-      const approved = await run(
+      return planned;
+    });
+    if (prepareOnly) {
+      if (
+        fault !== "diagnostic-missing-protection" &&
+        fault !== "diagnostic-receipt-mutation"
+      )
+        throw new Error("Only approved integrity preconditions may transfer.");
+      return async () => {
+        await finishDiagnostic();
+      };
+    }
+    const planned = await finishDiagnostic();
+    if (!planned) return;
+    expect(planned.status, JSON.stringify(planned)).toBe("complete");
+    const approved = await run(
+      {
+        operation: "reference-diagnostic-approve",
+        requestId,
+        origin,
+        expectedProof: required(planned.value?.proposal?.proofSha256),
+        confirmation: DIAGNOSTIC_APPROVAL_CONFIRMATION,
+      },
+      new AbortController().signal,
+    );
+    expect(approved.status, JSON.stringify(approved)).toBe("complete");
+    if (retained && !offlinePublication) f.setFault("job-after-artifacts");
+    const offlineStage = offlinePublication
+      ? vi
+          .spyOn(ProjectFileSystem.prototype, "publish")
+          .mockRejectedValueOnce(
+            new HostBoundaryError(
+              "INPUT_LIMIT",
+              "Synthetic retained stage-only publication",
+            ),
+          )
+      : undefined;
+    const downloaded = await run(
+      {
+        operation: "reference-diagnostic-download",
+        requestId,
+        expectedApproval: required(approved.value?.approval?.sha256),
+        confirmation: DIAGNOSTIC_DOWNLOAD_CONFIRMATION,
+      },
+      new AbortController().signal,
+    );
+    offlineStage?.mockRestore();
+    expect(downloaded.status, JSON.stringify(downloaded)).toBe(
+      retained ? "interrupted" : "complete",
+    );
+    if (retained) {
+      f.setFault(undefined);
+      if (fault === "diagnostic-retained-coexisting-current-only") {
+        value(
+          await f.ordinaryReceipt(
+            "later_unprotected_same_content",
+            beforeBytes,
+          ),
+        );
+        expect(await readFile(committedPath)).toEqual(beforeBytes);
+        expect((await lstat(committedPath)).ino).not.toBe(
+          (await lstat(stagePath)).ino,
+        );
+      }
+      f.advanceClock(40000);
+      const metadata = await run(
         {
-          operation: "reference-diagnostic-approve",
+          operation: "reference-diagnostic-inspect",
           requestId,
-          origin,
-          expectedProof: required(planned.value?.proposal?.proofSha256),
-          confirmation: DIAGNOSTIC_APPROVAL_CONFIRMATION,
+          inspection: "metadata-only",
         },
         new AbortController().signal,
       );
-      expect(approved.status, JSON.stringify(approved)).toBe("complete");
-      if (retained) f.setFault("job-after-artifacts");
-      const downloaded = await run(
-        {
-          operation: "reference-diagnostic-download",
-          requestId,
-          expectedApproval: required(approved.value?.approval?.sha256),
-          confirmation: DIAGNOSTIC_DOWNLOAD_CONFIRMATION,
-        },
-        new AbortController().signal,
-      );
-      expect(downloaded.status, JSON.stringify(downloaded)).toBe(
-        retained ? "interrupted" : "complete",
-      );
-      if (retained) {
-        f.setFault(undefined);
-        if (fault === "diagnostic-retained-coexisting-current-only") {
-          value(
-            await f.ordinaryReceipt(
-              "later_unprotected_same_content",
-              beforeBytes,
+      if (fault === "diagnostic-retained-unknown-stage") {
+        const extra = path.join(
+          f.artifacts,
+          ".host-11111111-1111-4111-8111-111111111111",
+        );
+        await mkdir(extra);
+        await writeFile(
+          path.join(extra, "22222222-2222-4222-8222-222222222222"),
+          beforeBytes,
+        );
+      }
+      if (fault === "diagnostic-retained-missing-protection")
+        removeSyntheticCaptureProtection(
+          f.store,
+          required(downloaded.value?.job?.id),
+        );
+      if (
+        fault === "diagnostic-retained-extra-input" ||
+        fault === "diagnostic-retained-extra-output"
+      )
+        addSyntheticCaptureProtection(
+          f.store,
+          required(downloaded.value?.job?.id),
+          fault === "diagnostic-retained-extra-input" ? "job-input" : "job",
+        );
+      if (successorCoexistence) {
+        const inventory = referencePublications.retainedReferenceInventory;
+        vi.spyOn(
+          referencePublications,
+          "retainedReferenceInventory",
+        ).mockImplementationOnce(async (reader, state, proposal, token) => {
+          expect(token).toBeDefined();
+          closedProof = () =>
+            reader.verifiedCaptureOutputs(required(token), proposal);
+          const originalBinding = structuredClone(proposal);
+          expect(() => reader.verifiedCaptureOutputs({}, proposal)).toThrow();
+          expect(() =>
+            reader.verifiedCaptureOutputs({ ...token }, proposal),
+          ).toThrow();
+          expect(() =>
+            reader.verifiedCaptureOutputs(
+              JSON.parse(JSON.stringify(token)),
+              proposal,
+            ),
+          ).toThrow();
+          const outputs = reader.verifiedCaptureOutputs(
+            required(token),
+            proposal,
+          );
+          outputs.artifacts.length = 0;
+          expect(
+            reader.verifiedCaptureOutputs(required(token), proposal).artifacts
+              .length,
+          ).toBeGreaterThan(0);
+          for (const field of [
+            "sourceVersion",
+            "originalJobId",
+            "originalRecordSha256",
+            "originalReceiptSha256",
+            "acquisitionId",
+          ] as const)
+            expect(() =>
+              reader.verifiedCaptureOutputs(required(token), {
+                ...proposal,
+                binding: { ...proposal.binding, [field]: "wrong" },
+              }),
+            ).toThrow();
+          const foreign = new ReferenceReader(
+            reader.work,
+            reader.store,
+            reader.files,
+            reader.context,
+            reader.input,
+            true,
+            true,
+          );
+          try {
+            expect(() =>
+              foreign.verifiedCaptureOutputs(required(token), proposal),
+            ).toThrow();
+          } finally {
+            await foreign.close();
+          }
+          expect(proposal).toEqual(originalBinding);
+          const current = vi
+            .spyOn(reader.work, "isCurrent")
+            .mockReturnValue(false);
+          try {
+            expect(() =>
+              reader.verifiedCaptureOutputs(required(token), proposal),
+            ).toThrow();
+          } finally {
+            current.mockRestore();
+          }
+          const altered = structuredClone(state);
+          const successor = required(
+            altered.jobs.find(
+              (r) => r.job.id === proposal.binding.originalJobId,
             ),
           );
-          expect(await readFile(committedPath)).toEqual(beforeBytes);
-          expect((await lstat(committedPath)).ino).not.toBe(
-            (await lstat(stagePath)).ino,
+          const receipt = required(
+            altered.receipts.find(
+              (entry) => entry.receipt.jobId === successor.job.id,
+            ),
           );
-        }
-        f.advanceClock(40000);
-        const metadata = await run(
-          {
-            operation: "reference-diagnostic-inspect",
-            requestId,
-            inspection: "metadata-only",
-          },
-          new AbortController().signal,
-        );
-        if (fault === "diagnostic-retained-unknown-stage") {
-          const extra = path.join(
-            f.artifacts,
-            ".host-11111111-1111-4111-8111-111111111111",
-          );
-          await mkdir(extra);
-          await writeFile(
-            path.join(extra, "22222222-2222-4222-8222-222222222222"),
-            beforeBytes,
-          );
-        }
-        if (fault === "diagnostic-retained-missing-protection")
-          removeSyntheticCaptureProtection(
-            f.store,
-            required(downloaded.value?.job?.id),
-          );
-        if (
-          fault === "diagnostic-retained-extra-input" ||
-          fault === "diagnostic-retained-extra-output"
-        )
-          addSyntheticCaptureProtection(
-            f.store,
-            required(downloaded.value?.job?.id),
-            fault === "diagnostic-retained-extra-input" ? "job-input" : "job",
-          );
-        if (successorCoexistence) {
-          const inventory = referencePublications.retainedReferenceInventory;
-          vi.spyOn(
-            referencePublications,
-            "retainedReferenceInventory",
-          ).mockImplementationOnce(async (reader, state, proposal, token) => {
-            expect(token).toBeDefined();
-            closedProof = () =>
-              reader.verifiedCaptureOutputs(required(token), proposal);
-            const originalBinding = structuredClone(proposal);
-            expect(() => reader.verifiedCaptureOutputs({}, proposal)).toThrow();
-            expect(() =>
-              reader.verifiedCaptureOutputs({ ...token }, proposal),
-            ).toThrow();
-            expect(() =>
-              reader.verifiedCaptureOutputs(
-                JSON.parse(JSON.stringify(token)),
-                proposal,
-              ),
-            ).toThrow();
-            const outputs = reader.verifiedCaptureOutputs(
-              required(token),
-              proposal,
+          if (fault === "diagnostic-retained-successor-record")
+            successor.rowVersion++;
+          if (fault === "diagnostic-retained-successor-receipt")
+            receipt.receipt.idempotency.payloadSha256 = "f".repeat(64);
+          if (fault === "diagnostic-retained-successor-protection")
+            altered.references = altered.references.filter(
+              (entry) =>
+                !(
+                  entry.kind === "job" &&
+                  entry.owner === receipt.receipt.id &&
+                  entry.artifactId === stage.staged.artifact.id
+                ),
             );
-            outputs.artifacts.length = 0;
-            expect(
-              reader.verifiedCaptureOutputs(required(token), proposal).artifacts
-                .length,
-            ).toBeGreaterThan(0);
-            for (const field of [
-              "sourceVersion",
-              "originalJobId",
-              "originalRecordSha256",
-              "originalReceiptSha256",
-              "acquisitionId",
-            ] as const)
-              expect(() =>
-                reader.verifiedCaptureOutputs(required(token), {
+          if (fault === "diagnostic-retained-successor-extra-output")
+            receipt.receipt.outputs.push(
+              structuredClone(stage.staged.artifact),
+            );
+          if (fault === "diagnostic-retained-successor-foreign-job")
+            successor.job.id = "foreign_capture";
+          const actualProposal =
+            fault === "diagnostic-retained-successor-version"
+              ? {
                   ...proposal,
-                  binding: { ...proposal.binding, [field]: "wrong" },
-                }),
-              ).toThrow();
-            const foreign = new ReferenceReader(
-              reader.work,
-              reader.store,
-              reader.files,
-              reader.context,
-              reader.input,
-              true,
-              true,
-            );
-            try {
-              expect(() =>
-                foreign.verifiedCaptureOutputs(required(token), proposal),
-              ).toThrow();
-            } finally {
-              await foreign.close();
-            }
-            expect(proposal).toEqual(originalBinding);
-            const current = vi
-              .spyOn(reader.work, "isCurrent")
-              .mockReturnValue(false);
-            try {
-              expect(() =>
-                reader.verifiedCaptureOutputs(required(token), proposal),
-              ).toThrow();
-            } finally {
-              current.mockRestore();
-            }
-            const altered = structuredClone(state);
-            const successor = required(
-              altered.jobs.find(
-                (r) => r.job.id === proposal.binding.originalJobId,
-              ),
-            );
-            const receipt = required(
-              altered.receipts.find(
-                (entry) => entry.receipt.jobId === successor.job.id,
-              ),
-            );
-            if (fault === "diagnostic-retained-successor-record")
-              successor.rowVersion++;
-            if (fault === "diagnostic-retained-successor-receipt")
-              receipt.receipt.idempotency.payloadSha256 = "f".repeat(64);
-            if (fault === "diagnostic-retained-successor-protection")
-              altered.references = altered.references.filter(
-                (entry) =>
-                  !(
-                    entry.kind === "job" &&
-                    entry.owner === receipt.receipt.id &&
-                    entry.artifactId === stage.staged.artifact.id
-                  ),
-              );
-            if (fault === "diagnostic-retained-successor-extra-output")
-              receipt.receipt.outputs.push(
-                structuredClone(stage.staged.artifact),
-              );
-            if (fault === "diagnostic-retained-successor-foreign-job")
-              successor.job.id = "foreign_capture";
-            const actualProposal =
-              fault === "diagnostic-retained-successor-version"
-                ? {
-                    ...proposal,
-                    binding: { ...proposal.binding, sourceVersion: "wrong" },
-                  }
-                : proposal;
-            if (fault === "diagnostic-retained-successor-authority") {
-              const beforeBytes = reader.bytes;
-              const revoked = vi
-                .spyOn(reader.work, "referenceValidationAuthority")
-                .mockRejectedValue(
-                  new HostBoundaryError(
-                    "FORBIDDEN",
-                    "Synthetic current async validation authority revoked.",
-                  ),
-                );
-              try {
-                await expect(
-                  inventory(reader, altered, actualProposal, token),
-                ).rejects.toThrow();
-                expect(reader.bytes).toBe(beforeBytes);
-                throw new HostBoundaryError(
+                  binding: { ...proposal.binding, sourceVersion: "wrong" },
+                }
+              : proposal;
+          if (fault === "diagnostic-retained-successor-authority") {
+            const beforeBytes = reader.bytes;
+            const revoked = vi
+              .spyOn(reader.work, "referenceValidationAuthority")
+              .mockRejectedValue(
+                new HostBoundaryError(
                   "FORBIDDEN",
                   "Synthetic current async validation authority revoked.",
-                );
-              } finally {
-                revoked.mockRestore();
-              }
+                ),
+              );
+            try {
+              await expect(
+                inventory(reader, altered, actualProposal, token),
+              ).rejects.toThrow();
+              expect(reader.bytes).toBe(beforeBytes);
+              throw new HostBoundaryError(
+                "FORBIDDEN",
+                "Synthetic current async validation authority revoked.",
+              );
+            } finally {
+              revoked.mockRestore();
             }
-            const inventoryResult = await inventory(
-              reader,
-              altered,
-              actualProposal,
-              token,
+          }
+          const inventoryResult = await inventory(
+            reader,
+            altered,
+            actualProposal,
+            token,
+          );
+          if (validSuccessor) {
+            expect(inventoryResult.committedHistoryArtifacts).toEqual([]);
+            expect(inventoryResult.successorCaptureHistoryArtifacts).toEqual([
+              stage.staged.artifact,
+            ]);
+            const providerArtifacts = reader
+              .verifiedCaptureOutputs(required(token), proposal)
+              .artifacts.filter((item) =>
+                ["metadata", "nodes", "render-map"].includes(item.role),
+              )
+              .map((item) => item.artifact);
+            expect(providerArtifacts).toContainEqual(stage.staged.artifact);
+          }
+          return inventoryResult;
+        });
+      }
+      const measured = coexistence || validSuccessor;
+      const charges: number[] = [];
+      const reserve = ReferenceInput.prototype.reserveRead;
+      const meter = measured
+        ? vi
+            .spyOn(ReferenceInput.prototype, "reserveRead")
+            .mockImplementation(function (this: ReferenceInput, count) {
+              reserve.call(this, count);
+              charges.push(count);
+            })
+        : undefined;
+      seam.physicalReads = 0;
+      seam.measureReads = measured;
+      if (publicationCheckCase) {
+        const inventory = referencePublications.retainedReferenceInventory;
+        const legacy = vi
+          .spyOn(referencePublications, "retainedReferenceInventory")
+          .mockImplementation((reader, state, proposal, verified) => {
+            const { changed, supplied } = publicationReadFault(
+              state,
+              proposal,
+              f.initial.job.id,
+              fault === "diagnostic-retained-publication-unbound",
             );
-            if (validSuccessor) {
-              expect(inventoryResult.committedHistoryArtifacts).toEqual([]);
-              expect(inventoryResult.successorCaptureHistoryArtifacts).toEqual([
-                stage.staged.artifact,
-              ]);
-              const providerArtifacts = reader
-                .verifiedCaptureOutputs(required(token), proposal)
-                .artifacts.filter((item) =>
-                  ["metadata", "nodes", "render-map"].includes(item.role),
-                )
-                .map((item) => item.artifact);
-              expect(providerArtifacts).toContainEqual(stage.staged.artifact);
-            }
-            return inventoryResult;
+            return inventory(reader, changed, supplied, verified);
           });
-        }
-        const measured = coexistence || validSuccessor;
-        const charges: number[] = [];
-        const reserve = ReferenceInput.prototype.reserveRead;
-        const meter = measured
-          ? vi
-              .spyOn(ReferenceInput.prototype, "reserveRead")
-              .mockImplementation(function (this: ReferenceInput, count) {
-                reserve.call(this, count);
-                charges.push(count);
-              })
-          : undefined;
-        seam.physicalReads = 0;
-        seam.measureReads = measured;
-        const recovered = await f
-          .validateRetained(required(metadata.value?.metadata?.jobSha256))
-          .finally(() => {
-            seam.measureReads = false;
-            meter?.mockRestore();
-          });
-        if (closedProof) expect(closedProof).toThrow();
-        expect(recovered.status, JSON.stringify(recovered)).toBe(
-          fault === "diagnostic-retained-valid" || coexistence || validSuccessor
-            ? "complete"
-            : "failed",
-        );
-        if (fault === "diagnostic-retained-coexisting-current-only")
-          expect(recovered).toMatchObject({
+        try {
+          const denied = await f.validateRetained(
+            required(metadata.value?.metadata?.jobSha256),
+          );
+          expect(denied).toMatchObject({
             status: "failed",
             reason: "inventory-invalid",
-            error: { code: "ARTIFACT_INTEGRITY" },
-            inventoryFailure: {
-              check: "publication-shape",
-              category: "history-stage",
-              detail: "unproven-history-coexistence",
-            },
+            error: { code: "ACTION_REQUIRED" },
           });
-        if (
-          fault === "diagnostic-retained-valid" ||
-          coexistence ||
-          validSuccessor
-        ) {
-          expect(recovered.value).toMatchObject({
-            historicalStatus: "interrupted",
-            eligibility: "eligible-for-recovery-review",
-          });
-          expect(recovered.inputAccounting?.privateBytes).toBeLessThan(
-            26214400,
+          expect(denied.value).toBeUndefined();
+          expect(denied.inventoryFailure).toBeUndefined();
+          expect(JSON.stringify(denied)).not.toMatch(
+            /publicationCheck|synthetic-wrong-request/,
           );
-          expect(recovered.inputAccounting?.networkBytes).toBe(0);
-          expect(recovered.inventoryFailure).toBeUndefined();
-          if (measured) {
-            const charged = charges.reduce((sum, count) => sum + count, 0);
-            const eof = charges.filter((count) => count === 1).length;
-            expect(recovered.inputAccounting?.privateBytes).toBe(charged);
-            expect(charged).toBe(seam.physicalReads + eof);
-            expect(
-              charges.filter((count) => count === beforeBytes.length).length,
-            ).toBeGreaterThanOrEqual(2);
-            const measurement = {
-              physical: seam.physicalReads,
-              eof,
-              charged,
-              network: recovered.inputAccounting?.networkBytes,
-            };
-            if (coexistence)
-              expect(measurement).toEqual({
-                physical: 54713,
-                eof: 32,
-                charged: 54745,
-                network: 0,
-              });
-            else
-              expect(measurement).toEqual({
-                physical: 53879,
-                eof: 32,
-                charged: 53911,
-                network: 0,
-              });
-            expect(await readFile(committedPath)).toEqual(beforeBytes);
-            if (beforeCommittedIdentity)
-              expect((await lstat(committedPath)).ino).toBe(
-                beforeCommittedIdentity.ino,
-              );
-            expect((await lstat(stagePath)).ino).toBe(beforeStageIdentity.ino);
-            expect((await lstat(committedPath)).nlink).toBe(1);
-            expect((await lstat(stagePath)).nlink).toBe(1);
-          }
+        } finally {
+          legacy.mockRestore();
         }
       }
-      await f.reopen();
-      const inspect = required(f.runtime.reference).bind(f.runtime);
-      if (!retained)
-        expect(
-          (
-            await inspect(
-              { operation: "reference-diagnostic-inspect", requestId },
-              new AbortController().signal,
-            )
-          ).value?.receipt,
-        ).toEqual(downloaded.value?.receipt);
-      const original = await inspect(
-        { operation: "reference-inspect", requestId },
-        new AbortController().signal,
+      const recovered = await f
+        .validateRetained(required(metadata.value?.metadata?.jobSha256))
+        .finally(() => {
+          seam.measureReads = false;
+          meter?.mockRestore();
+        });
+      if (closedProof) expect(closedProof).toThrow();
+      expect(recovered.status, JSON.stringify(recovered)).toBe(
+        fault === "diagnostic-retained-valid" || coexistence || validSuccessor
+          ? "complete"
+          : "failed",
       );
-      expect(original.value?.job).toEqual(result.value?.job);
-      expect(original.value?.receipt).toEqual(result.value?.receipt);
-      expect(original.value?.evidence).toEqual(result.value?.evidence);
-      for (const [name, bytes] of originalReferenceFiles)
-        expect(
-          (await readFile(path.join(f.artifacts, "blobs", name))).equals(bytes),
-        ).toBe(true);
-      expect(image).toHaveBeenCalledTimes(2);
-    } else expect(image).toHaveBeenCalledTimes(1);
-    expect(f.ready).not.toHaveBeenCalled();
-    expect(f.vault).not.toHaveBeenCalled();
-    expect(api).not.toHaveBeenCalled();
-    expect(await f.record()).toEqual(beforeRecord);
-    expect(await f.stages()).toEqual(beforeStages);
-    expect(await readFile(stagePath)).toEqual(beforeBytes);
-    for (const [name, bytes] of priorFiles)
+      if (fault === "diagnostic-retained-coexisting-current-only")
+        expect(recovered).toMatchObject({
+          status: "failed",
+          reason: "inventory-invalid",
+          error: { code: "ARTIFACT_INTEGRITY" },
+          inventoryFailure: {
+            check: "publication-shape",
+            category: "history-stage",
+            detail: "unproven-history-coexistence",
+          },
+        });
+      if (
+        fault === "diagnostic-retained-valid" ||
+        coexistence ||
+        validSuccessor
+      ) {
+        expect(recovered.value).toMatchObject({
+          historicalStatus: "interrupted",
+          eligibility: "eligible-for-recovery-review",
+        });
+        expect(recovered.inputAccounting?.privateBytes).toBeLessThan(26214400);
+        expect(recovered.inputAccounting?.networkBytes).toBe(0);
+        expect(recovered.inventoryFailure).toBeUndefined();
+        if (measured && !offlinePublication) {
+          const charged = charges.reduce((sum, count) => sum + count, 0);
+          const eof = charges.filter((count) => count === 1).length;
+          expect(recovered.inputAccounting?.privateBytes).toBe(charged);
+          expect(charged).toBe(seam.physicalReads + eof);
+          expect(
+            charges.filter((count) => count === beforeBytes.length).length,
+          ).toBeGreaterThanOrEqual(2);
+          const measurement = {
+            physical: seam.physicalReads,
+            eof,
+            charged,
+            network: recovered.inputAccounting?.networkBytes,
+          };
+          if (coexistence)
+            expect(measurement).toEqual({
+              physical: 54713,
+              eof: 32,
+              charged: 54745,
+              network: 0,
+            });
+          else
+            expect(measurement).toEqual({
+              physical: 53879,
+              eof: 32,
+              charged: 53911,
+              network: 0,
+            });
+          expect(await readFile(committedPath)).toEqual(beforeBytes);
+          if (beforeCommittedIdentity)
+            expect((await lstat(committedPath)).ino).toBe(
+              beforeCommittedIdentity.ino,
+            );
+          expect((await lstat(stagePath)).ino).toBe(beforeStageIdentity.ino);
+          expect((await lstat(committedPath)).nlink).toBe(1);
+          expect((await lstat(stagePath)).nlink).toBe(1);
+        }
+        if (offlinePublication) {
+          const command = {
+            requestId,
+            expectedJob: required(metadata.value?.metadata?.jobSha256),
+          };
+          const plan = await f.runOffline({
+            ...command,
+            operation: "reference-recovery-apply-plan",
+          });
+          expect(plan.status, JSON.stringify(plan)).toBe("complete");
+          const recovered = await f.runOffline({
+            ...command,
+            operation: "reference-recovery-apply",
+            expectedProof: required(plan.plan?.proofSha256),
+            confirmation: "RECOVER-VERIFIED-REFERENCE-OFFLINE",
+          });
+          expect(recovered.status, JSON.stringify(recovered)).toBe("complete");
+          if (publicationCheckCase) {
+            const inventory = referencePublications.retainedReferenceInventory;
+            let marked: unknown;
+            let markedReader: ReferenceReader | undefined;
+            let behavior:
+              | "fresh"
+              | "prior-error"
+              | "cancel"
+              | "deadline"
+              | "current"
+              | "cleanup" = "fresh";
+            const cancellation = new AbortController();
+            const snapshot = async () => {
+              const entries: object[] = [];
+              const walk = async (directory: string) => {
+                for (const name of (await readdir(directory)).sort()) {
+                  const filename = path.join(directory, name);
+                  const stat = await lstat(filename, { bigint: true });
+                  if (stat.isDirectory()) await walk(filename);
+                  else
+                    entries.push({
+                      name: path.relative(f.project.paths.temp, filename),
+                      ino: String(stat.ino),
+                      size: String(stat.size),
+                      mtime: String(stat.mtimeNs),
+                      nlink: String(stat.nlink),
+                      sha256: hashBytes(await readFile(filename)),
+                    });
+                }
+              };
+              await walk(f.project.paths.temp);
+              return entries;
+            };
+            const beforeInspection = await snapshot();
+            const noWrites = vi.spyOn(
+              LocalStore.prototype,
+              "beginReferenceConversion",
+            );
+            const inspection = vi
+              .spyOn(referencePublications, "retainedReferenceInventory")
+              .mockImplementation(async (reader, state, proposal, verified) => {
+                if (behavior === "prior-error") {
+                  expect(reader).not.toBe(markedReader);
+                  expect(
+                    referencePublications.retainedPublicationCheck(
+                      marked,
+                      reader,
+                    ),
+                  ).toBeUndefined();
+                  throw marked;
+                }
+                const { changed, supplied } = publicationReadFault(
+                  state,
+                  proposal,
+                  f.initial.job.id,
+                  fault === "diagnostic-retained-publication-unbound",
+                );
+                // These are explicit read-result seams; durable authentic fixture records are unchanged.
+                let error: unknown;
+                try {
+                  await inventory(reader, changed, supplied, verified);
+                } catch (caught) {
+                  error = caught;
+                }
+                const publicationCheck =
+                  fault === "diagnostic-retained-publication-unbound"
+                    ? "pending-stages-without-capture-recovery-binding"
+                    : "pending-stage-provenance-mismatch";
+                expect(error).toMatchObject({
+                  code: "ACTION_REQUIRED",
+                  httpStatus: 400,
+                  message: "ACTION_REQUIRED",
+                });
+                expect(error).toBeInstanceOf(ApplicationError);
+                if (!(error instanceof ApplicationError))
+                  throw new Error("Expected original application refusal");
+                expect(Object.keys(error)).toEqual(
+                  Object.keys(new ApplicationError("ACTION_REQUIRED")),
+                );
+                expect(safeError(error)).toBe(error);
+                marked = error;
+                markedReader = reader;
+                expect(
+                  referencePublications.retainedPublicationCheck(error, reader),
+                ).toBe(publicationCheck);
+                expect(
+                  referencePublications.retainedPublicationCheck(
+                    { code: "ACTION_REQUIRED", publicationCheck },
+                    reader,
+                  ),
+                ).toBeUndefined();
+                expect(
+                  referencePublications.retainedPublicationCheck(
+                    Object.assign(new ApplicationError("ACTION_REQUIRED"), {
+                      publicationCheck,
+                    }),
+                    reader,
+                  ),
+                ).toBeUndefined();
+                expect(
+                  referencePublications.retainedPublicationCheck(
+                    structuredClone(error),
+                    reader,
+                  ),
+                ).toBeUndefined();
+                expect(
+                  referencePublications.retainedPublicationCheck(
+                    new Error("wrapped", { cause: error }),
+                    reader,
+                  ),
+                ).toBeUndefined();
+                expect(
+                  referencePublications.retainedPublicationCheck(
+                    error,
+                    undefined,
+                  ),
+                ).toBeUndefined();
+                const other = new ReferenceReader(
+                  reader.work,
+                  reader.store,
+                  reader.files,
+                  reader.context,
+                  reader.input,
+                  true,
+                  true,
+                );
+                try {
+                  expect(
+                    referencePublications.retainedPublicationCheck(
+                      error,
+                      other,
+                    ),
+                  ).toBeUndefined();
+                } finally {
+                  await other.close();
+                }
+                if (fault === "diagnostic-retained-publication-provenance") {
+                  for (const field of [
+                    "jobId",
+                    "requestId",
+                    "artifactRootId",
+                    "attempt",
+                    "fencingToken",
+                    "disposition",
+                    "leaseId",
+                    "hostInstanceId",
+                  ] as const) {
+                    const altered = structuredClone(state);
+                    const stages = altered.stages.filter(
+                      (item) => item.jobId === f.initial.job.id,
+                    );
+                    expect(stages).toHaveLength(2);
+                    const item = required(
+                      stages[
+                        field === "leaseId" || field === "hostInstanceId"
+                          ? 1
+                          : 0
+                      ],
+                    );
+                    if (field === "attempt" || field === "fencingToken")
+                      item[field] = 7;
+                    else if (field === "disposition")
+                      item.disposition = "retained";
+                    else item[field] = "synthetic-mismatch";
+                    let mismatch: unknown;
+                    try {
+                      await inventory(reader, altered, proposal, verified);
+                    } catch (caught) {
+                      mismatch = caught;
+                    }
+                    expect(mismatch).toMatchObject({
+                      code: "ACTION_REQUIRED",
+                      httpStatus: 400,
+                      message: "ACTION_REQUIRED",
+                    });
+                    expect(
+                      referencePublications.retainedPublicationCheck(
+                        mismatch,
+                        reader,
+                      ),
+                    ).toBe("pending-stage-provenance-mismatch");
+                  }
+                }
+                const charged = reader.bytes;
+                referencePublications.retainedPublicationCheck(error, reader);
+                expect(reader.bytes).toBe(charged);
+                if (behavior === "cancel") cancellation.abort();
+                if (behavior === "deadline") f.advanceClock(30001);
+                if (behavior === "current")
+                  vi.spyOn(reader.work, "isCurrent").mockReturnValue(false);
+                if (behavior === "cleanup")
+                  vi.spyOn(
+                    LocalStore.prototype,
+                    "close",
+                  ).mockImplementationOnce(() => {
+                    throw new HostBoundaryError(
+                      "INTERRUPTED",
+                      "Synthetic original close remains owned",
+                    );
+                  });
+                throw error;
+              });
+            try {
+              const result = await f.runOffline({
+                ...command,
+                operation: "reference-conversion-inspect",
+                expectedRecovery: required(recovered.receiptSha256),
+              });
+              expect(result).toMatchObject({
+                status: "failed",
+                reason: "integrity",
+                error: { code: "ACTION_REQUIRED" },
+                inspection: {
+                  state: "blocked",
+                  detail: "verification-incomplete",
+                  diagnostic: {
+                    stage: "inventory-invalid",
+                    publicationCheck:
+                      fault === "diagnostic-retained-publication-unbound"
+                        ? "pending-stages-without-capture-recovery-binding"
+                        : "pending-stage-provenance-mismatch",
+                  },
+                },
+              });
+              expect(
+                result.inspection?.diagnostic?.inventoryFailure,
+              ).toBeUndefined();
+              expect(result.inspection?.proof).toBeUndefined();
+              expect(result.inspection?.conversion).toBeUndefined();
+              expect(JSON.stringify(result)).not.toContain(
+                "synthetic-wrong-request",
+              );
+              expect(result.inputAccounting?.networkBytes).toBe(0);
+              expect(noWrites).not.toHaveBeenCalled();
+              expect(await snapshot()).toEqual(beforeInspection);
+              behavior = "prior-error";
+              const stale = await f.runOffline({
+                ...command,
+                operation: "reference-conversion-inspect",
+                expectedRecovery: required(recovered.receiptSha256),
+              });
+              expect(stale.inspection?.diagnostic).toEqual({
+                stage: "inventory-invalid",
+              });
+              expect(stale.error?.code).toBe("ACTION_REQUIRED");
+              expect(await snapshot()).toEqual(beforeInspection);
+              if (fault === "diagnostic-retained-publication-unbound") {
+                for (const change of [
+                  "cancel",
+                  "deadline",
+                  "current",
+                  "cleanup",
+                ] as const) {
+                  behavior = change;
+                  const observed = await f
+                    .runOffline(
+                      {
+                        ...command,
+                        operation: "reference-conversion-inspect",
+                        expectedRecovery: required(recovered.receiptSha256),
+                      },
+                      change === "cancel" ? cancellation.signal : undefined,
+                    )
+                    .catch((error: unknown) => error);
+                  if (change === "cleanup") {
+                    expect(observed).toBeInstanceOf(
+                      NativeCaptureCleanupRequired,
+                    );
+                    if (!(observed instanceof NativeCaptureCleanupRequired))
+                      throw new Error("Missing original cleanup owner");
+                    expect(Reflect.get(observed, "inspection")).toBeUndefined();
+                    await observed.close();
+                    expect(await snapshot()).toEqual(beforeInspection);
+                    continue;
+                  }
+                  const suppressed = parseContract(
+                    "NativeReferenceOfflineEnvelope",
+                    JSON.stringify(observed),
+                    "json",
+                  );
+                  expect(suppressed.inspection?.diagnostic).toBeUndefined();
+                  expect(suppressed.inspection?.proof).toBeUndefined();
+                  expect(suppressed.inspection?.conversion).toBeUndefined();
+                  expect(suppressed.status).toBe("failed");
+                  expect(await snapshot()).toEqual(beforeInspection);
+                }
+              }
+            } finally {
+              inspection.mockRestore();
+              noWrites.mockRestore();
+            }
+          }
+          const converted = await f.runOffline({
+            ...command,
+            operation: "convert-reference",
+            expectedRecovery: required(recovered.receiptSha256),
+            confirmation: "CONVERT-WITH-RECOVERED-REFERENCE",
+          });
+          expect(converted.status, JSON.stringify(converted)).toBe("complete");
+          expect(converted.conversion?.readiness).not.toBe("ready");
+        }
+      }
+    }
+    await f.reopen();
+    const inspect = required(f.runtime.reference).bind(f.runtime);
+    if (!retained)
+      expect(
+        (
+          await inspect(
+            { operation: "reference-diagnostic-inspect", requestId },
+            new AbortController().signal,
+          )
+        ).value?.receipt,
+      ).toEqual(downloaded.value?.receipt);
+    const original = await inspect(
+      { operation: "reference-inspect", requestId },
+      new AbortController().signal,
+    );
+    expect(original.value?.job).toEqual(result.value?.job);
+    expect(original.value?.receipt).toEqual(result.value?.receipt);
+    expect(original.value?.evidence).toEqual(result.value?.evidence);
+    for (const [name, bytes] of originalReferenceFiles)
       expect(
         (await readFile(path.join(f.artifacts, "blobs", name))).equals(bytes),
       ).toBe(true);
-    for (const [name, bytes] of exports)
-      expect((await readFile(path.join(f.outputs, name))).equals(bytes)).toBe(
-        true,
-      );
+    expect(image).toHaveBeenCalledTimes(2);
+  } else expect(image).toHaveBeenCalledTimes(1);
+  expect(f.ready).not.toHaveBeenCalled();
+  expect(f.vault).not.toHaveBeenCalled();
+  expect(api).not.toHaveBeenCalled();
+  expect(await f.record()).toEqual(beforeRecord);
+  expect(await f.stages()).toEqual(beforeStages);
+  expect(await readFile(stagePath)).toEqual(beforeBytes);
+  for (const [name, bytes] of priorFiles)
+    expect(
+      (await readFile(path.join(f.artifacts, "blobs", name))).equals(bytes),
+    ).toBe(true);
+  for (const [name, bytes] of exports)
+    expect((await readFile(path.join(f.outputs, name))).equals(bytes)).toBe(
+      true,
+    );
+}
+
+it.each(
+  predecessorFaults.filter(
+    (fault) =>
+      fault !== "diagnostic-missing-protection" &&
+      fault !== "diagnostic-receipt-mutation",
+  ),
+)(
+  "authenticates retained predecessor stages after successor conversion and private exports: %s",
+  async (fault) => {
+    await retainedPredecessorScenario(fault);
   },
   60000,
 );
+
+describe.each([
+  "diagnostic-missing-protection",
+  "diagnostic-receipt-mutation",
+] as const)("independent retained integrity fixture: %s", (fault) => {
+  let prepared:
+    | { finish: () => Promise<void>; signal: AbortSignal }
+    | undefined;
+  beforeEach(async ({ signal }) => {
+    prepared = undefined;
+    await ownCaptureWork(async () => {
+      await required(integrityTelemetry.get(captureTestScope())).measure(
+        "setup",
+        async () => {
+          const finish = required(
+            await retainedPredecessorScenario(fault, true),
+          );
+          captureTestScope().signal.throwIfAborted();
+          prepared = { finish, signal };
+        },
+      );
+    })();
+  }, 60000);
+  it(`authenticates retained predecessor stages after successor conversion and private exports: ${fault}`, async ({
+    signal,
+  }) => {
+    const owned = required(prepared);
+    expect(owned.signal).toBe(signal);
+    captureTestScope().signal.throwIfAborted();
+    await required(integrityTelemetry.get(captureTestScope())).measure(
+      "body",
+      owned.finish,
+    );
+  }, 60000);
+});

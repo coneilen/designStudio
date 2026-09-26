@@ -15,10 +15,16 @@ import {
   describe,
   expect,
   onTestFinished,
-  test,
   vi,
+  test as vitestTest,
 } from "vitest";
 import { AsyncTestScope } from "../../jobs/tests/async-scope.js";
+import {
+  inTestScope,
+  ownTests,
+  ownTestWork,
+  testScope,
+} from "../../jobs/tests/test-scope.js";
 import {
   decodeBackup,
   encodeBackup,
@@ -42,8 +48,106 @@ import { bytes, context, diskFixture, hash, revision } from "./support.js";
 
 const roots: string[] = [];
 const stores: LocalStore[] = [];
+const rawDatabases = new Set<Database.Database>();
 const seedScopes: AsyncTestScope[] = [];
-aroundEach((run, context) => inStorageTest(context.signal, run));
+type CancelScenario = "restore-control" | "aggregate-control";
+type CancelPhase =
+  | "prepare-source"
+  | "prepare-destination"
+  | "prepare-oversized-row"
+  | "tamper"
+  | "restore-reject"
+  | "verify-empty"
+  | "aggregate-reject"
+  | "cleanup";
+type CancelPhaseEvent = {
+  scope: "synthetic-storage-cancellation";
+  scenario: CancelScenario;
+  event: "start" | "settled" | "rejected" | "runner-abort";
+  phase: CancelPhase | null;
+  elapsedMs: number;
+  durationMs?: number;
+  runnerAborted: boolean;
+};
+function cancellationTelemetry(
+  scenario: CancelScenario | undefined,
+  original: AbortSignal,
+  sink: (event: CancelPhaseEvent) => void = (event) =>
+    console.log(JSON.stringify(event)),
+) {
+  const started = performance.now();
+  let pending: CancelPhase | null = null;
+  let reported = false;
+  const emit = (
+    event: CancelPhaseEvent["event"],
+    phase: CancelPhase | null,
+    durationMs?: number,
+  ) => {
+    if (scenario)
+      sink({
+        scope: "synthetic-storage-cancellation",
+        scenario,
+        event,
+        phase,
+        elapsedMs: Math.round(performance.now() - started),
+        runnerAborted: original.aborted,
+        ...(durationMs === undefined ? {} : { durationMs }),
+      });
+  };
+  const abort = () => {
+    if (!reported) {
+      reported = true;
+      emit("runner-abort", pending);
+    }
+  };
+  original.addEventListener("abort", abort, { once: true });
+  if (original.aborted) abort();
+  return {
+    async measure<T>(phase: CancelPhase, run: () => Promise<T>): Promise<T> {
+      const previous = pending;
+      pending = phase;
+      const start = performance.now();
+      emit("start", phase);
+      try {
+        const result = await run();
+        emit("settled", phase, Math.round(performance.now() - start));
+        return result;
+      } catch (error) {
+        emit("rejected", phase, Math.round(performance.now() - start));
+        throw error;
+      } finally {
+        pending = previous;
+      }
+    },
+    close() {
+      original.removeEventListener("abort", abort);
+    },
+  };
+}
+const telemetry = new WeakMap<
+  AsyncTestScope,
+  ReturnType<typeof cancellationTelemetry>
+>();
+const phase = <T>(name: CancelPhase, work: () => Promise<T>) =>
+  required(telemetry.get(testScope())).measure(name, work);
+const test = ownTests(vitestTest);
+aroundEach((run, context) => {
+  const scope = new AsyncTestScope(context.signal);
+  const name = context.task.name;
+  telemetry.set(
+    scope,
+    cancellationTelemetry(
+      name.startsWith("restore rejects cancellation-control")
+        ? "restore-control"
+        : name ===
+            "aggregate cancellation metadata is bounded before idempotency lookup materializes rows"
+          ? "aggregate-control"
+          : undefined,
+      context.signal,
+    ),
+  );
+  return inTestScope(scope, () => inStorageTest(scope.signal, run));
+});
 const nativeBinding = resolve(
   ".tools\\sqlite-prebuild\\build\\Release\\better_sqlite3.node",
 );
@@ -54,12 +158,25 @@ const error = {
   diagnosticIds: [],
 };
 afterEach(async () => {
-  for (const scope of seedScopes) await scope.close();
-  seedScopes.length = 0;
-  await closeSettledStores(stores);
-  for (const root of roots.splice(0))
-    await rm(root, { recursive: true, force: true });
+  await phase("cleanup", async () => {
+    await testScope().close();
+    for (const scope of seedScopes) await scope.close();
+    seedScopes.length = 0;
+    await closeFixtureResources();
+    required(telemetry.get(testScope())).close();
+  });
 });
+async function closeFixtureResources() {
+  await closeSettledStores(stores);
+  for (const database of rawDatabases) {
+    database.close();
+    rawDatabases.delete(database);
+  }
+  for (const root of [...roots]) {
+    await rm(root, { recursive: true, force: true });
+    roots.splice(roots.indexOf(root), 1);
+  }
+}
 function value<T>(outcome: Outcome<T>): T {
   expect(outcome.status, JSON.stringify(outcome)).toBe("complete");
   if (outcome.status !== "complete") throw new Error("Expected complete.");
@@ -82,15 +199,21 @@ function fence(record: StoredJob): JobWorkerExpected {
     resources: record.resources,
   };
 }
-async function setup(
+function setup(...args: Parameters<typeof setupOriginal>) {
+  return ownTestWork(setupOriginal)(...args);
+}
+async function setupOriginal(
   maxWorkers = 1,
   discovery: JobStorageOptions["discovery"] | null = {
     authorizeOwner: async () => {},
   },
 ) {
+  storageTestSignal().throwIfAborted();
   const root = await mkdtemp(join(tmpdir(), "job transactions "));
   roots.push(root);
+  storageTestSignal().throwIfAborted();
   const disk = await diskFixture(root);
+  storageTestSignal().throwIfAborted();
   let now = Date.parse("2026-09-17T00:00:00.000Z");
   let fault: string | undefined;
   let beforeCommit: (() => void) | undefined;
@@ -134,6 +257,7 @@ async function setup(
   };
   let store = await LocalStore.open(options);
   stores.push(store);
+  storageTestSignal().throwIfAborted();
   function ctx(id = "work"): OperationContext {
     return { ...context(id), clock };
   }
@@ -187,9 +311,11 @@ async function setup(
       verifier = callback;
     },
     async reopen() {
+      storageTestSignal().throwIfAborted();
       store.close();
       store = await LocalStore.open(options);
       stores.push(store);
+      storageTestSignal().throwIfAborted();
     },
   };
 }
@@ -992,62 +1118,74 @@ test("interrupted workers without resource keys also retain their global slot", 
   ).toMatchObject({ error: { code: "CONFLICT" } });
 });
 
-test("conditional cancellation replays a durable control key after response loss and restart", async () => {
-  const f = await setup();
-  const running = await claim(f, ["resource-a"]);
-  f.fault("after-commit");
-  const accepted = value(
-    await f.store.jobs.cancelWithReceipt(
-      running.job.id,
-      running.rowVersion,
-      f.ctx("cancel-key"),
-    ),
-  );
-  f.fault();
-  expect(accepted.record.job.status).toBe("cancel-requested");
-  expect(accepted.record.rowVersion).toBe(running.rowVersion + 1);
-  expect(accepted.record.job.lease).toEqual(running.job.lease);
-  expect(accepted.record.resources).toEqual(running.resources);
-  expect(accepted.record.job.idempotency).toEqual(running.job.idempotency);
-  expect(accepted.record.requestId).toBe("work");
-  expect(accepted.control).toMatchObject({
-    version: 1,
-    operation: "job-cancel",
-    jobId: running.job.id,
-    actorId: "actor1",
-    projectId: "project1",
-    key: "cancel-key",
-    expectedVersion: running.rowVersion,
-    resultVersion: accepted.record.rowVersion,
-    resultStatus: "cancel-requested",
+describe("cancel-control replay from an independently prepared running job", () => {
+  let prepared:
+    | { f: Awaited<ReturnType<typeof setup>>; running: StoredJob }
+    | undefined;
+  beforeEach(async () => {
+    prepared = undefined;
+    prepared = await ownTestWork(async () => {
+      const f = await setup();
+      const running = await claim(f, ["resource-a"]);
+      return { f, running };
+    })();
   });
-  await f.reopen();
-  expect(
-    value(
+  test("conditional cancellation replays a durable control key after response loss and restart", async () => {
+    const { f, running } = required(prepared);
+    f.fault("after-commit");
+    const accepted = value(
       await f.store.jobs.cancelWithReceipt(
         running.job.id,
         running.rowVersion,
         f.ctx("cancel-key"),
       ),
-    ),
-  ).toEqual(accepted);
-  const settled = value(
-    await f.store.jobs.update(
-      running.job.id,
-      fence(accepted.record),
-      { kind: "acknowledge-cancel" },
-      f.ctx(),
-    ),
-  );
-  const replay = value(
-    await f.store.jobs.cancelWithReceipt(
-      running.job.id,
-      running.rowVersion,
-      f.ctx("cancel-key"),
-    ),
-  );
-  expect(replay.control).toEqual(accepted.control);
-  expect(replay.record).toEqual(settled);
+    );
+    f.fault();
+    expect(accepted.record.job.status).toBe("cancel-requested");
+    expect(accepted.record.rowVersion).toBe(running.rowVersion + 1);
+    expect(accepted.record.job.lease).toEqual(running.job.lease);
+    expect(accepted.record.resources).toEqual(running.resources);
+    expect(accepted.record.job.idempotency).toEqual(running.job.idempotency);
+    expect(accepted.record.requestId).toBe("work");
+    expect(accepted.control).toMatchObject({
+      version: 1,
+      operation: "job-cancel",
+      jobId: running.job.id,
+      actorId: "actor1",
+      projectId: "project1",
+      key: "cancel-key",
+      expectedVersion: running.rowVersion,
+      resultVersion: accepted.record.rowVersion,
+      resultStatus: "cancel-requested",
+    });
+    await f.reopen();
+    expect(
+      value(
+        await f.store.jobs.cancelWithReceipt(
+          running.job.id,
+          running.rowVersion,
+          f.ctx("cancel-key"),
+        ),
+      ),
+    ).toEqual(accepted);
+    const settled = value(
+      await f.store.jobs.update(
+        running.job.id,
+        fence(accepted.record),
+        { kind: "acknowledge-cancel" },
+        f.ctx(),
+      ),
+    );
+    const replay = value(
+      await f.store.jobs.cancelWithReceipt(
+        running.job.id,
+        running.rowVersion,
+        f.ctx("cancel-key"),
+      ),
+    );
+    expect(replay.control).toEqual(accepted.control);
+    expect(replay.record).toEqual(settled);
+  });
 });
 
 test("cancel-control key conflicts on changed precondition or target even when target completed", async () => {
@@ -1481,16 +1619,10 @@ test("fixture cancellation stays bound to its original async scope and cleanup j
   expect(next.signal.aborted).toBe(false);
 });
 
-test.each([
-  "digest",
-  "target",
-  "version",
-  "status",
-  "duplicate-scope",
-] as const)(
-  "restore rejects cancellation-control %s graph tampering",
-  async (kind) => {
+async function prepareCancellationRestore() {
+  const source = await phase("prepare-source", async () => {
     const f = await setup();
+    storageTestSignal().throwIfAborted();
     const first = value(await f.store.jobs.create(f.submission(), f.ctx()));
     value(
       await f.store.jobs.cancelWithReceipt(
@@ -1511,87 +1643,333 @@ test.each([
     );
     const backup = value(await f.store.backup(f.ctx("backup")));
     if (backup.metadata.storageVersion !== 4) throw new Error("Expected v4.");
-    const record = required(
-      backup.metadata.jobs.find((r) => r.job.id === first.job.id),
-    );
-    const control = required(record.cancelControls?.[0]);
-    if (kind === "digest") control.payloadSha256 = "a".repeat(64);
-    else if (kind === "target") control.jobId = second.job.id;
-    else if (kind === "version") control.resultVersion = record.rowVersion + 1;
-    else if (kind === "status") control.resultStatus = "completed";
-    else {
-      const other = required(
-        backup.metadata.jobs.find((r) => r.job.id === second.job.id),
-      );
-      other.cancelControls = [
-        {
-          ...control,
-          jobId: second.job.id,
-          payloadSha256: hash(
-            f.options.canonicalBytes({
-              jobId: second.job.id,
-              expectedVersion: control.expectedVersion,
-            }),
-          ),
-        },
-      ];
-    }
-    backup.sha256 = hash(f.options.canonicalBytes(backup.metadata));
+    storageTestSignal().throwIfAborted();
+    return { f, first, second, backup };
+  });
+  return phase("prepare-destination", async () => {
+    storageTestSignal().throwIfAborted();
     const destination = await mkdtemp(
       join(tmpdir(), "invalid cancel control "),
     );
     roots.push(destination);
+    storageTestSignal().throwIfAborted();
     const disk = await diskFixture(destination);
+    storageTestSignal().throwIfAborted();
     const store = await LocalStore.open({
-      ...f.options,
+      ...source.f.options,
       databasePath: join(destination, "state.sqlite"),
       fileSystem: disk.fs,
       maintenance: disk.maintenance,
     });
     stores.push(store);
-    expect(await store.restore(backup, f.ctx("restore"))).toMatchObject({
-      error: { code: "ARTIFACT_INTEGRITY" },
+    storageTestSignal().throwIfAborted();
+    return { ...source, store, disk, destination };
+  });
+}
+describe("cancellation-control restore from independently prepared fixtures", () => {
+  let prepared:
+    | Awaited<ReturnType<typeof prepareCancellationRestore>>
+    | undefined;
+  beforeEach(async () => {
+    prepared = undefined;
+    prepared = await ownTestWork(prepareCancellationRestore)();
+  });
+  test.each([
+    "digest",
+    "target",
+    "version",
+    "status",
+    "duplicate-scope",
+  ] as const)(
+    "restore rejects cancellation-control %s graph tampering",
+    async (kind) => {
+      const { f, first, second, backup, store } = required(prepared);
+      await phase("tamper", async () => {
+        if (backup.metadata.storageVersion !== 4)
+          throw new Error("Expected v4.");
+        const record = required(
+          backup.metadata.jobs.find((r) => r.job.id === first.job.id),
+        );
+        const control = required(record.cancelControls?.[0]);
+        if (kind === "digest") control.payloadSha256 = "a".repeat(64);
+        else if (kind === "target") control.jobId = second.job.id;
+        else if (kind === "version")
+          control.resultVersion = record.rowVersion + 1;
+        else if (kind === "status") control.resultStatus = "completed";
+        else {
+          const other = required(
+            backup.metadata.jobs.find((r) => r.job.id === second.job.id),
+          );
+          other.cancelControls = [
+            {
+              ...control,
+              jobId: second.job.id,
+              payloadSha256: hash(
+                f.options.canonicalBytes({
+                  jobId: second.job.id,
+                  expectedVersion: control.expectedVersion,
+                }),
+              ),
+            },
+          ];
+        }
+        backup.sha256 = hash(f.options.canonicalBytes(backup.metadata));
+      });
+      expect(
+        await phase("restore-reject", () =>
+          store.restore(backup, f.ctx("restore")),
+        ),
+      ).toMatchObject({
+        error: { code: "ARTIFACT_INTEGRITY" },
+      });
+      expect(
+        value(await phase("verify-empty", () => store.backup(f.ctx("backup"))))
+          .metadata.artifacts,
+      ).toEqual([]);
+    },
+  );
+});
+
+describe("aggregate cancellation metadata from independently prepared fixture", () => {
+  let prepared:
+    | { f: Awaited<ReturnType<typeof setup>>; queued: StoredJob }
+    | undefined;
+  beforeEach(async () => {
+    prepared = undefined;
+    prepared = await ownTestWork(async () => {
+      const source = await phase("prepare-source", async () => {
+        const f = await setup();
+        const queued = value(
+          await f.store.jobs.create(f.submission(), f.ctx()),
+        );
+        value(
+          await f.store.jobs.cancelWithReceipt(
+            queued.job.id,
+            queued.rowVersion,
+            f.ctx("cancel"),
+          ),
+        );
+        return { f, queued };
+      });
+      await phase("prepare-oversized-row", async () => {
+        const { f, queued } = source;
+        storageTestSignal().throwIfAborted();
+        f.store.close();
+        const db = new Database(f.options.databasePath, { nativeBinding });
+        rawDatabases.add(db);
+        const errors: unknown[] = [];
+        try {
+          // Precondition only: the unchanged timed request below must reject before JSON lookup.
+          db.prepare("INSERT INTO jobs VALUES (?,?,?,?,?,?)").run(
+            "capacity",
+            "capacity",
+            "cancelled",
+            queued.createdAt,
+            null,
+            JSON.stringify({ evidence: "x".repeat(26214400) }),
+          );
+        } catch (error) {
+          errors.push(error);
+        }
+        try {
+          db.close();
+          rawDatabases.delete(db);
+        } catch (error) {
+          errors.push(error);
+        }
+        if (errors.length)
+          throw new AggregateError(
+            errors,
+            "Oversized-row fixture preparation or close failed.",
+          );
+        await f.reopen();
+        storageTestSignal().throwIfAborted();
+      });
+      return source;
+    })();
+  });
+  test("aggregate cancellation metadata is bounded before idempotency lookup materializes rows", async () => {
+    const { f, queued } = required(prepared);
+    const preparing = vi.spyOn(Database.prototype, "prepare");
+    try {
+      expect(
+        await phase("aggregate-reject", () =>
+          f.store.jobs.cancelWithReceipt(
+            queued.job.id,
+            queued.rowVersion,
+            f.ctx("cancel"),
+          ),
+        ),
+      ).toMatchObject({ error: { code: "INPUT_LIMIT" } });
+      const queries = preparing.mock.calls.map(([sql]) => sql);
+      expect(
+        queries.some((sql) => sql.includes("sum(length(cast(data AS BLOB)))")),
+      ).toBe(true);
+      expect(
+        queries.some((sql) => /json_each|json_array_length/.test(sql)),
+      ).toBe(false);
+    } finally {
+      preparing.mockRestore();
+    }
+  });
+});
+
+test.each(["setup-hook", "restore-body"] as const)(
+  "runner abort joins original %s and real SQLite ownership before teardown",
+  async (kind) => {
+    const original = new AbortController();
+    const scope = new AsyncTestScope(original.signal);
+    const events: string[] = [];
+    const observed: CancelPhaseEvent[] = [];
+    const trace = cancellationTelemetry(
+      "restore-control",
+      original.signal,
+      (event) => observed.push(event),
+    );
+    telemetry.set(scope, trace);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
     });
-    expect(
-      value(await store.backup(f.ctx("backup"))).metadata.artifacts,
-    ).toEqual([]);
+    let entered!: () => void;
+    const entry = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    testScope().releaseOnEnd(() => {
+      original.abort();
+      release();
+    });
+    let database: LocalStore | undefined;
+    let directory: string | undefined;
+    let bodySettled = false;
+    let queueSettled = false;
+    let queueJoined: Promise<void> | undefined;
+    let closeStarted: Promise<void> | undefined;
+    const open = LocalStore.open.bind(LocalStore);
+    const opening = vi.spyOn(LocalStore, "open");
+    if (kind === "setup-hook") {
+      opening.mockImplementationOnce(async (options) => {
+        database = await open(options);
+        directory = dirname(options.databasePath);
+        events.push("setup-database-open");
+        entered();
+        await gate;
+        return database;
+      });
+    }
+    const close = LocalStore.prototype.close;
+    const closing = vi
+      .spyOn(LocalStore.prototype, "close")
+      .mockImplementation(function (this: LocalStore) {
+        close.call(this);
+        if (this === database) events.push("database-closed");
+      });
+    const own = <T>(work: () => Promise<T>) =>
+      inTestScope(scope, () =>
+        inStorageTest(scope.signal, () => ownTestWork(work)()),
+      );
+    const pending = own(async () => {
+      try {
+        if (kind === "setup-hook") {
+          await phase("prepare-source", () => setup());
+          throw new Error("Aborted setup unexpectedly admitted its body.");
+        }
+        const prepared = await prepareCancellationRestore();
+        database = prepared.store;
+        directory = prepared.destination;
+        const stage = prepared.disk.fs.stage;
+        prepared.disk.fs.stage = async (...args) => {
+          const result = await stage(...args);
+          events.push("restore-stage-owned");
+          entered();
+          await gate;
+          return result;
+        };
+        const outcome = await phase("restore-reject", () =>
+          prepared.store.restore(prepared.backup, prepared.f.ctx("restore")),
+        );
+        expect(outcome.status).toBe("cancelled");
+        events.push("restore-returned");
+      } finally {
+        bodySettled = true;
+        events.push("original-body-settled");
+      }
+    }).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    try {
+      await Promise.race([
+        entry,
+        pending.then(() => {
+          throw new Error("Original work settled before the owned gate.");
+        }),
+      ]);
+      expect(database).toBeDefined();
+      expect(directory).toBeDefined();
+      expect(bodySettled).toBe(false);
+      expect((await lstat(required(directory))).isDirectory()).toBe(true);
+      if (kind === "restore-body") {
+        const queue: unknown = Reflect.get(required(database), "queue");
+        expect(queue).toBeInstanceOf(Promise);
+        if (!(queue instanceof Promise))
+          throw new Error("Missing actual SQLite work queue.");
+        queueJoined = queue.then(() => {
+          queueSettled = true;
+        });
+      }
+      original.abort();
+      expect(
+        observed.filter((event) => event.event === "runner-abort"),
+      ).toMatchObject([
+        {
+          phase: kind === "setup-hook" ? "prepare-source" : "restore-reject",
+          runnerAborted: true,
+        },
+      ]);
+      closeStarted = (async () => {
+        await scope.close();
+        events.push("scope-joined");
+        await closeFixtureResources();
+        events.push("root-removed");
+        trace.close();
+      })();
+      await Promise.resolve();
+      expect(bodySettled).toBe(false);
+      if (kind === "restore-body") expect(queueSettled).toBe(false);
+      expect(events).not.toContain("database-closed");
+      expect(events).not.toContain("root-removed");
+      expect(vi.isMockFunction(LocalStore.open)).toBe(true);
+      await expect(own(() => setup())).rejects.toThrow(/cancelled/i);
+    } finally {
+      release();
+      original.abort();
+      await pending;
+      await queueJoined;
+      await (closeStarted ?? scope.close().then(closeFixtureResources));
+      trace.close();
+      opening.mockRestore();
+      closing.mockRestore();
+    }
+    expect(events.indexOf("original-body-settled")).toBeLessThan(
+      events.indexOf("database-closed"),
+    );
+    expect(events.indexOf("database-closed")).toBeLessThan(
+      events.indexOf("root-removed"),
+    );
+    await expect(lstat(required(directory))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    if (kind === "setup-hook") expect(await pending).toBeInstanceOf(Error);
+    else {
+      expect(events).toContain("restore-returned");
+      expect(queueSettled).toBe(true);
+    }
+    const count = observed.length;
+    original.signal.dispatchEvent(new Event("abort"));
+    expect(observed).toHaveLength(count);
   },
 );
-
-test("aggregate cancellation metadata is bounded before idempotency lookup materializes rows", async () => {
-  const f = await setup();
-  const queued = value(await f.store.jobs.create(f.submission(), f.ctx()));
-  value(
-    await f.store.jobs.cancelWithReceipt(
-      queued.job.id,
-      queued.rowVersion,
-      f.ctx("cancel"),
-    ),
-  );
-  f.store.close();
-  const db = new Database(f.options.databasePath, { nativeBinding });
-  try {
-    // Deliberately oversized trusted-fixture row: request must reject aggregate size before JSON lookup.
-    db.prepare("INSERT INTO jobs VALUES (?,?,?,?,?,?)").run(
-      "capacity",
-      "capacity",
-      "cancelled",
-      queued.createdAt,
-      null,
-      JSON.stringify({ evidence: "x".repeat(26214400) }),
-    );
-  } finally {
-    db.close();
-  }
-  await f.reopen();
-  expect(
-    await f.store.jobs.cancelWithReceipt(
-      queued.job.id,
-      queued.rowVersion,
-      f.ctx("cancel"),
-    ),
-  ).toMatchObject({ error: { code: "INPUT_LIMIT" } });
-});
 
 test("global cancellation-control admission cap rejects additional evidence without truncation", async () => {
   const f = await setup();

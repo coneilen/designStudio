@@ -12,20 +12,652 @@ import {
   writeFile,
 } from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { syntheticContext } from "@design-studio/contracts/testing";
 import {
   HostBoundaryError,
   ProjectFileSystem,
   WINDOWS_PUBLICATION_PROFILE,
 } from "@design-studio/host";
-import { expect, test, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  test,
+  vi,
+} from "vitest";
 import { loadNative, type ReadLease } from "../src/native.js";
+import { pinReferenceBackupFile } from "../src/reference-backup.js";
+import { referenceForkCreation } from "../src/reference-fork-creation.js";
 import { pinImmutableReferenceDatabase } from "../src/reference-validation-database.js";
 import { pinRetainedReferenceEntry } from "../src/reference-validation-entry.js";
-import { withOwnedProbe } from "./owned-probe.js";
+import {
+  prepareOwnedProbeFixture,
+  startProbe,
+  withOwnedProbe,
+} from "./owned-probe.js";
 import { createRetainedOwnerFixture } from "./retained-owner-fixture.js";
 import { retainedSecurityFixture } from "./retained-security-fixture.js";
 import { ownedTest, weakenTestAcl } from "./support.js";
+
+test("reserved fork creation uses current owner at creation and cannot adopt existing children", async () => {
+  await ownedTest(async (root, _own, beforeCleanup) => {
+    const native = await loadNative(),
+      sid = native.principal();
+    const owner = await createRetainedOwnerFixture(root);
+    beforeCleanup(() => owner.close());
+    await owner.declareTree("artifacts");
+    const artifacts = path.join(root, "artifacts");
+    native.createDirectory(artifacts, sid);
+    const creation = referenceForkCreation({
+      root: artifacts,
+      sid,
+      authorize: async () => {},
+    });
+    beforeCleanup(() => creation.close());
+    const ctx = syntheticContext(),
+      bytes = Buffer.alloc(70000, 61);
+    const parent = native.pinRetainedRoot(artifacts, sid);
+    try {
+      expect(() =>
+        native.createRetainedChild({ ...parent }, "blobs", true),
+      ).toThrow(/branded/);
+      expect(() =>
+        native.createRetainedChild(parent, "../escape", true),
+      ).toThrow(/bounded/);
+    } finally {
+      parent.close();
+    }
+    const hash = createHash("sha256").update(bytes).digest("hex");
+    const stage = {
+      hostId: "00000000-0000-4000-8000-000000000001",
+      stagingId: "00000000-0000-4000-8000-000000000002",
+      artifact: {
+        id: `sha256_${hash}`,
+        sha256: hash,
+        path: `blobs/${hash}`,
+        mediaType: "application/octet-stream",
+        byteLength: bytes.length,
+      },
+    };
+    await creation.create(stage, bytes, ctx);
+    const observed = await owner.inspect();
+    expect(observed.every((entry) => entry.owner === sid)).toBe(true);
+    for (const entry of observed.filter((e) => e.relative !== "artifacts")) {
+      expect(entry.control & 0x1004).toBe(4);
+      inheritedAcl(entry.dacl, entry.directory, sid);
+    }
+    const pins = new Set<ReadLease>();
+    const pin = await pinRetainedReferenceEntry({
+      root: artifacts,
+      relative: `.host-${stage.hostId}/${stage.stagingId}`,
+      directory: false,
+      sid,
+      retainedPins: pins,
+      authorize: async () => {},
+    });
+    await pin.check();
+    pin.close();
+    expect(pins.size).toBe(0);
+    await expect(creation.create(stage, bytes, ctx)).rejects.toThrow();
+    expect(await owner.inspect()).toEqual(observed);
+    console.log(
+      JSON.stringify({
+        scope: "native-reserved-fork-owner",
+        currentOwner: true,
+        ownerMutations: 0,
+        inheritedAcl: true,
+        exclusiveExistingRefused: true,
+      }),
+    );
+  });
+});
+for (const boundary of [
+  "before-create",
+  "write",
+  "flush",
+  "close",
+  "cancel",
+  "deadline",
+] as const)
+  test(`reserved fork creation retains and joins native ownership at ${boundary}`, async () => {
+    await ownedTest(async (root, _own, beforeCleanup) => {
+      const native = await loadNative(),
+        sid = native.principal();
+      const artifacts = path.join(root, "artifacts");
+      native.createDirectory(artifacts, sid);
+      let active = true,
+        failed = false,
+        writeCalls = 0,
+        closeCalls = 0;
+      const abort = new AbortController();
+      const ctx = syntheticContext();
+      const now = ctx.clock.now();
+      let elapsed = 0;
+      const context = {
+        ...ctx,
+        signal: abort.signal,
+        clock: { ...ctx.clock, now: () => now + elapsed },
+      };
+      const original = native.createRetainedChild;
+      const spy = vi
+        .spyOn(native, "createRetainedChild")
+        .mockImplementation((parent, name, directory) => {
+          if (!directory && boundary === "before-create" && active) {
+            failed = true;
+            throw new Error("Synthetic before create");
+          }
+          const entry = original(parent, name, directory);
+          if (directory) return entry;
+          return {
+            ...entry,
+            write: (bytes) => {
+              entry.write(bytes);
+              writeCalls++;
+              if (active && boundary === "write") {
+                failed = true;
+                throw new Error("Synthetic after partial write");
+              }
+              if (active && boundary === "cancel") abort.abort();
+              if (active && boundary === "deadline") elapsed = 30001;
+            },
+            flush: () => {
+              entry.flush();
+              if (active && boundary === "flush") {
+                failed = true;
+                throw new Error("Synthetic after flush");
+              }
+            },
+            close: () => {
+              closeCalls++;
+              if (active && boundary === "close") {
+                failed = true;
+                throw new Error("Synthetic native close pending");
+              }
+              entry.close();
+            },
+          };
+        });
+      beforeCleanup(() => spy.mockRestore());
+      const creation = referenceForkCreation({
+        root: artifacts,
+        sid,
+        authorize: async () => {},
+      });
+      beforeCleanup(() => {
+        active = false;
+        creation.close();
+      });
+      const bytes = Buffer.alloc(70000, 41),
+        hash = createHash("sha256").update(bytes).digest("hex");
+      const stage = {
+        hostId: "00000000-0000-4000-8000-000000000003",
+        stagingId: "00000000-0000-4000-8000-000000000004",
+        artifact: {
+          id: `sha256_${hash}`,
+          sha256: hash,
+          path: `blobs/${hash}`,
+          mediaType: "application/octet-stream",
+          byteLength: bytes.length,
+        },
+      };
+      await expect(creation.create(stage, bytes, context)).rejects.toThrow();
+      if (boundary !== "cancel" && boundary !== "deadline")
+        expect(failed).toBe(true);
+      await expect(creation.create(stage, bytes, context)).rejects.toThrow(
+        /cleanup/,
+      );
+      active = false;
+      creation.close();
+      if (boundary !== "before-create") expect(closeCalls).toBeGreaterThan(0);
+      if (
+        boundary === "write" ||
+        boundary === "cancel" ||
+        boundary === "deadline"
+      )
+        expect(writeCalls).toBe(1);
+    });
+  });
+
+describe("pinned v7 conversion compatibility", () => {
+  let materialized: {
+    root: string;
+    inventory: {
+      sourceFiles: number;
+      sourceBytes: number;
+      physicalFiles: number;
+      physicalBytes: number;
+      inventorySha256: string;
+    };
+  };
+  let setup: Promise<void> | undefined;
+  const controller = new AbortController();
+  let release!: () => void;
+  const stopped = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  beforeAll(async () => {
+    let ready!: () => void;
+    let failed!: (error: unknown) => void;
+    const preparation = new Promise<void>((resolve, reject) => {
+      ready = resolve;
+      failed = reject;
+    });
+    setup = ownedTest(async (root) => {
+      const probe = startProbe(
+        [
+          path.resolve(
+            "packages\\project-host\\tests\\materialize-v7-writer.mjs",
+          ),
+          root,
+        ],
+        { signal: controller.signal, timeout: 60000 },
+      );
+      const prepared = await probe.finished;
+      materialized = { root, inventory: JSON.parse(prepared.stdout) };
+      ready();
+      await stopped;
+    });
+    void setup.catch(failed);
+    await preparation;
+  }, 60000);
+  afterAll(async () => {
+    controller.abort();
+    release();
+    await setup;
+  }, 60000);
+  for (const mode of [
+    "complete",
+    "postcommit-deadline",
+    "fork-stage-deadline",
+    "fork-source-tamper",
+    "fork-close",
+    "fork-close-cancel",
+    "fork-close-deadline",
+    "partial-stage",
+    "ineligible-job",
+    "unknown-stage",
+    "unknown-blob",
+    "unknown-root",
+    "history-coexistence",
+    "output-tamper",
+  ] as const)
+    describe(mode, () => {
+      const makeFixture = (signal: AbortSignal) =>
+        prepareOwnedProbeFixture(mode, signal, async (root, run, phase) => {
+          const { inventory } = materialized;
+          expect(inventory.sourceFiles).toBeLessThanOrEqual(1200);
+          expect(inventory.physicalFiles).toBeLessThanOrEqual(6500);
+          expect(inventory.physicalBytes).toBeLessThanOrEqual(
+            256 * 1024 * 1024,
+          );
+          const oldSource = path.join(materialized.root, "v7-source");
+          const verifySource = async () => {
+            const manifestBytes = await readFile(
+              path.join(materialized.root, "v7-source-inventory.json"),
+            );
+            expect(
+              createHash("sha256").update(manifestBytes).digest("hex"),
+            ).toBe(inventory.inventorySha256);
+            const manifest = JSON.parse(manifestBytes.toString("utf8"));
+            expect(manifest.commit).toBe(
+              "9bcfbaadca45ac6f4ffb4fcd55e8abd5569fad9a",
+            );
+            for (const entry of manifest.physical) {
+              expect(
+                entry.path
+                  .split("/")
+                  .some((part: string) => part === ".." || !part),
+              ).toBe(false);
+              const filename = path.join(oldSource, ...entry.path.split("/"));
+              const stat = await lstat(filename);
+              expect(stat.isSymbolicLink()).toBe(false);
+              expect(stat.nlink).toBe(1);
+              const bytes = await readFile(filename);
+              expect(bytes.length).toBe(entry.byteLength);
+              expect(createHash("sha256").update(bytes).digest("hex")).toBe(
+                entry.sha256,
+              );
+            }
+          };
+          await phase("sourceverify-before", verifySource);
+          const handoff = path.join(root, "v7-generated-handoff.json");
+          const environment = {
+            SystemRoot: process.env.SystemRoot,
+            WINDIR: process.env.WINDIR,
+            PATH: path.dirname(process.execPath),
+            TEMP: root,
+            TMP: root,
+            DESIGN_STUDIO_SYNTHETIC_RETAINED_NATIVE: "1",
+            DESIGN_STUDIO_V7_HANDOFF: handoff,
+            DESIGN_STUDIO_V7_DEADLINE:
+              mode === "postcommit-deadline"
+                ? "1"
+                : mode === "fork-stage-deadline" ||
+                    mode === "fork-source-tamper" ||
+                    mode === "fork-close" ||
+                    mode === "fork-close-cancel" ||
+                    mode === "fork-close-deadline"
+                  ? "stage-deadline"
+                  : mode === "partial-stage"
+                    ? "partial-stage"
+                    : "0",
+            DESIGN_STUDIO_V7_LOADED: path.join(root, "loaded-v7-modules.json"),
+            DESIGN_STUDIO_EGRESS_LEDGER: path.join(root, "writer-egress.json"),
+          };
+          await phase("oldwriter", async () => {
+            const writing = run(
+              [
+                "--import",
+                pathToFileURL(
+                  path.resolve(
+                    "packages\\project-host\\tests\\crossrelease-egress-deny.mjs",
+                  ),
+                ).href,
+                path.resolve("node_modules\\vitest\\vitest.mjs"),
+                "run",
+                "--config",
+                path.join(oldSource, "crossrelease.config.mjs"),
+                "--configLoader",
+                "native",
+                "-t",
+                "^authentic pinned v7 crossrelease writer$",
+                "--reporter=dot",
+              ],
+              { cwd: oldSource, timeout: 60000, env: environment },
+            );
+            if (mode === "partial-stage")
+              await expect(writing).rejects.toThrow();
+            else {
+              const writer = await writing;
+              expect(writer.stderr).toBe("");
+              expect(writer.stdout).toContain("1 passed");
+            }
+          });
+          const { checkEgress, loaded, transfer } = await phase(
+            "sourceverify-after",
+            async () => {
+              await verifySource();
+              const checkEgress = async (prefix: string) => {
+                const names = (await readdir(root)).filter((name) =>
+                  name.startsWith(prefix),
+                );
+                expect(names.length).toBeGreaterThan(0);
+                for (const name of names)
+                  expect(
+                    JSON.parse(await readFile(path.join(root, name), "utf8")),
+                  ).toMatchObject({
+                    denialControlPassed: true,
+                    unmockedAttempts: 0,
+                  });
+              };
+              await checkEgress("writer-egress.json.");
+              const loaded: string[] = JSON.parse(
+                await readFile(
+                  path.join(root, "loaded-v7-modules.json"),
+                  "utf8",
+                ),
+              );
+              expect(loaded.length).toBeGreaterThan(20);
+              expect(
+                loaded.every((file) =>
+                  file
+                    .replaceAll("\\", "/")
+                    .startsWith(oldSource.replaceAll("\\", "/")),
+                ),
+              ).toBe(true);
+              const transfer = JSON.parse(await readFile(handoff, "utf8"));
+              expect(transfer.writerCommit).toBe(
+                "9bcfbaadca45ac6f4ffb4fcd55e8abd5569fad9a",
+              );
+              expect(transfer.writerOutcome).toBe(
+                mode === "postcommit-deadline" ||
+                  mode === "fork-stage-deadline" ||
+                  mode === "fork-source-tamper" ||
+                  mode === "fork-close" ||
+                  mode === "fork-close-cancel" ||
+                  mode === "fork-close-deadline"
+                  ? "failed"
+                  : mode === "partial-stage"
+                    ? "abrupt-after-stage"
+                    : "complete",
+              );
+              if (mode === "partial-stage")
+                expect(transfer.stageObserved).toBe(true);
+              expect(path.dirname(transfer.root)).toBe(root);
+              expect(path.basename(transfer.root)).toMatch(/^ds-ph-reference-/);
+              if (
+                [
+                  "unknown-stage",
+                  "unknown-blob",
+                  "unknown-root",
+                  "history-coexistence",
+                  "output-tamper",
+                ].includes(mode)
+              ) {
+                expect(transfer.conversionEvidence.sha256).toMatch(
+                  /^[a-f0-9]{64}$/,
+                );
+                const blob = path.join(
+                  transfer.root,
+                  "artifacts",
+                  "blobs",
+                  transfer.conversionEvidence.sha256,
+                );
+                if (mode === "unknown-blob")
+                  await writeFile(
+                    path.join(
+                      transfer.root,
+                      "artifacts",
+                      "blobs",
+                      "f".repeat(64),
+                    ),
+                    Buffer.of(99),
+                    { flag: "wx" },
+                  );
+                else if (mode === "unknown-root")
+                  await writeFile(
+                    path.join(transfer.root, "artifacts", "unclassified"),
+                    Buffer.of(99),
+                    { flag: "wx" },
+                  );
+                else if (mode === "output-tamper")
+                  await writeFile(blob, "synthetic changed conversion output");
+                else {
+                  const directory = (
+                    await readdir(path.join(transfer.root, "artifacts"))
+                  ).find((name) => /^\.host-[0-9a-f-]{36}$/.test(name));
+                  expect(directory).toBeDefined();
+                  await writeFile(
+                    path.join(
+                      transfer.root,
+                      "artifacts",
+                      directory ?? "",
+                      "00000000-0000-0000-0000-000000000001",
+                    ),
+                    await readFile(blob),
+                    { flag: "wx" },
+                  );
+                }
+              }
+              return { checkEgress, loaded, transfer };
+            },
+          );
+          const snapshot = async () => {
+            const rows: object[] = [];
+            let bytes = 0;
+            const walk = async (directory: string) => {
+              for (const name of (await readdir(directory)).sort()) {
+                const filename = path.join(directory, name);
+                const stat = await lstat(filename, { bigint: true });
+                expect(stat.isSymbolicLink()).toBe(false);
+                if (stat.isDirectory()) await walk(filename);
+                else {
+                  expect(stat.isFile()).toBe(true);
+                  expect(stat.nlink).toBe(1n);
+                  bytes += Number(stat.size);
+                  expect(bytes).toBeLessThanOrEqual(40 * 1024 * 1024);
+                  rows.push({
+                    name: path.relative(transfer.root, filename),
+                    dev: String(stat.dev),
+                    ino: String(stat.ino),
+                    size: String(stat.size),
+                    mtime: String(stat.mtimeNs),
+                    links: String(stat.nlink),
+                    sha256: createHash("sha256")
+                      .update(await readFile(filename))
+                      .digest("hex"),
+                  });
+                  expect(rows.length).toBeLessThanOrEqual(20000);
+                }
+              }
+            };
+            await walk(transfer.root);
+            return rows;
+          };
+          const before = await phase("snapshot-before", snapshot);
+          return {
+            root,
+            inventory,
+            environment,
+            checkEgress,
+            loaded,
+            transfer,
+            snapshot,
+            before,
+          };
+        });
+      let prepared: ReturnType<typeof makeFixture> | undefined;
+      beforeEach(async ({ signal }) => {
+        prepared = makeFixture(signal);
+        await prepared.ready;
+      }, 60000);
+      afterEach(async () => {
+        await prepared?.close();
+        prepared = undefined;
+      }, 60000);
+      test(`authentic v7 writer is readable without mutation by v8 conversion inspection: ${mode}`, async ({
+        signal,
+      }) => {
+        if (!prepared) throw new Error("Missing owned crossrelease fixture");
+        await prepared.use(
+          signal,
+          async (
+            {
+              root,
+              inventory,
+              environment,
+              checkEgress,
+              loaded,
+              transfer,
+              snapshot,
+              before,
+            },
+            run,
+            phase,
+          ) => {
+            const reader = await phase("newreader", () =>
+              run(
+                [
+                  "--import",
+                  pathToFileURL(
+                    path.resolve(
+                      "packages\\project-host\\tests\\crossrelease-egress-deny.mjs",
+                    ),
+                  ).href,
+                  path.resolve("node_modules\\vitest\\vitest.mjs"),
+                  "run",
+                  "--project",
+                  "unit",
+                  "--config",
+                  path.join(materialized.root, "reader.config.mjs"),
+                  "packages\\application\\tests\\reference-acquisition.test.ts",
+                  "-t",
+                  "^cold readonly v8 inspects transferred authentic v7 conversion$",
+                  "--reporter=dot",
+                ],
+                {
+                  timeout: 60000,
+                  env: {
+                    ...environment,
+                    DESIGN_STUDIO_INSPECTION_FAULT: mode,
+                    DESIGN_STUDIO_EGRESS_LEDGER: path.join(
+                      root,
+                      "reader-egress.json",
+                    ),
+                  },
+                },
+              ),
+            );
+            if (mode === "fork-stage-deadline") {
+              const consumer = await run(
+                [
+                  "--import",
+                  pathToFileURL(
+                    path.resolve(
+                      "packages\\project-host\\tests\\crossrelease-egress-deny.mjs",
+                    ),
+                  ).href,
+                  path.resolve("node_modules\\vitest\\vitest.mjs"),
+                  "run",
+                  "--project",
+                  "unit",
+                  "--config",
+                  path.join(materialized.root, "reader.config.mjs"),
+                  "packages\\application\\tests\\reference-acquisition.test.ts",
+                  "-t",
+                  "^cold readonly application consumes committed fork outputs$",
+                  "--reporter=dot",
+                ],
+                {
+                  timeout: 60000,
+                  env: {
+                    ...environment,
+                    DESIGN_STUDIO_FORK_RESULT_HANDOFF: path.join(
+                      root,
+                      "fork-result-handoff.json",
+                    ),
+                    DESIGN_STUDIO_EGRESS_LEDGER: path.join(
+                      root,
+                      "consumer-egress.json",
+                    ),
+                  },
+                },
+              );
+              expect(consumer.stderr).toBe("");
+              expect(consumer.stdout).toContain("1 passed");
+              expect(consumer.stdout).toContain('"verifiedBytesConsumed":true');
+              await checkEgress("consumer-egress.json.");
+            }
+            await phase("snapshot-after", async () => {
+              expect(reader.stderr).toBe("");
+              expect(reader.stdout).toContain("1 passed");
+              await checkEgress("reader-egress.json.");
+              expect(await snapshot()).toEqual(before);
+              console.log(
+                JSON.stringify({
+                  scope: "authentic-crossrelease",
+                  mode,
+                  writer: transfer.writerCommit,
+                  sourceFiles: inventory.sourceFiles,
+                  sourceBytes: inventory.sourceBytes,
+                  materializedFiles: inventory.physicalFiles,
+                  materializedBytes: inventory.physicalBytes,
+                  loadedOldModules: loaded.length,
+                  unchangedProjectFiles: before.length,
+                  currentAuthority: "explicit-synthetic-seam",
+                  realPinsDatabaseAndOutputs: true,
+                }),
+              );
+            });
+          },
+        );
+      }, 60000);
+    });
+});
 
 const historyReads = vi.hoisted(() => ({ active: false, physical: 0 }));
 vi.mock("node:fs/promises", async (original) => {
@@ -639,7 +1271,7 @@ test("cold-native explicit current-owner fixture uses host history and productio
         "packages\\application\\tests\\reference-acquisition.test.ts",
         "-t",
         "^validates stage-only realistic source and PNG under the unchanged physical read budget including closure \\[native\\]$",
-        "--reporter=verbose",
+        "--reporter=dot",
       ],
       {
         timeout: 60000,
@@ -670,6 +1302,260 @@ test("cold-native explicit current-owner fixture uses host history and productio
     console.log(ownerMarker?.[0]);
   });
 }, 60000);
+
+test("cold-native offline recovery publishes with real immutable DB pins and write-through durability", async ({
+  signal,
+}) => {
+  await withOwnedProbe(signal, async (root, run) => {
+    const result = await run(
+      [
+        path.resolve("node_modules\\vitest\\vitest.mjs"),
+        "run",
+        "--project",
+        "unit",
+        "packages\\application\\tests\\reference-acquisition.test.ts",
+        "-t",
+        "^publishes realistic offline reference within one physical budget \\[native\\]$",
+        "--reporter=dot",
+      ],
+      {
+        timeout: 60000,
+        env: {
+          SystemRoot: process.env.SystemRoot,
+          WINDIR: process.env.WINDIR,
+          PATH: path.dirname(process.execPath),
+          TEMP: root,
+          TMP: root,
+          DESIGN_STUDIO_SYNTHETIC_RETAINED_NATIVE: "1",
+        },
+      },
+    );
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("1 passed");
+    expect(result.stdout).toMatch(
+      /offline-reference-budget: private=\d+; eof=\d+; network=0; pins=0/,
+    );
+    expect(result.stdout).toContain(
+      "offline-backup-paths: source=240; pending=305; final=297; raw-preimage=equal; native-callbacks=ordinary",
+    );
+    console.log(result.stdout.match(/offline-backup-paths: [^\n]+/)?.[0]);
+    console.log(
+      result.stdout.match(
+        /offline-reference-budget: private=\d+; eof=\d+; network=0; pins=0/,
+      )?.[0],
+    );
+    const applyWall = result.stdout.match(
+      /offline-reference-wall: applyMs=(\d+); fixtureClock=real-plus-expiry-offset/,
+    );
+    const convert = result.stdout.match(
+      /offline-reference-conversion: private=(\d+); network=0; pins=0; convertMs=(\d+); eof=(\d+)/,
+    );
+    expect(applyWall).not.toBeNull();
+    expect(convert).not.toBeNull();
+    expect(Number(applyWall?.[1])).toBeLessThan(30000);
+    expect(Number(convert?.[2])).toBeLessThan(30000);
+    for (const operation of ["apply", "convert"]) {
+      const line = result.stdout.match(
+        new RegExp(`offline-${operation}-ledger: (\\{[^\\n]+\\})`),
+      );
+      expect(line).not.toBeNull();
+      const ledger: Record<string, { bytes: number; eof: number }> = JSON.parse(
+        line?.[1] ?? "{}",
+      );
+      for (const [phase, value] of Object.entries(ledger)) {
+        expect([
+          "proof",
+          "history",
+          "admission",
+          "commit",
+          "inspection",
+        ]).toContain(phase);
+        expect(Number.isSafeInteger(value.bytes) && value.bytes >= 0).toBe(
+          true,
+        );
+        expect(Number.isSafeInteger(value.eof) && value.eof >= 0).toBe(true);
+      }
+      console.log(
+        `native-offline-${operation}-ledger: ${JSON.stringify(ledger)}`,
+      );
+    }
+    console.log(
+      `native-offline-wall: applyMs=${applyWall?.[1]}; convertMs=${convert?.[2]}; real-clock-with-expiry-offset`,
+    );
+  });
+}, 60000);
+
+for (const point of [
+  "reference-after-reserve",
+  "reference-after-stage",
+  "reference-before-receipt",
+  "after-commit",
+]) {
+  test(`cold offline crash at ${point} retains sidecars and denies read-only continuation`, async ({
+    signal,
+  }) => {
+    await withOwnedProbe(signal, async (root, run) => {
+      let failure: unknown;
+      try {
+        await run(
+          [
+            path.resolve("node_modules\\vitest\\vitest.mjs"),
+            "run",
+            "--project",
+            "unit",
+            "packages\\application\\tests\\reference-acquisition.test.ts",
+            "-t",
+            "^cold offline recovery crash fixture$",
+            "--reporter=dot",
+            "--pool=forks",
+            "--maxWorkers=1",
+          ],
+          {
+            timeout: 60000,
+            env: {
+              SystemRoot: process.env.SystemRoot,
+              WINDIR: process.env.WINDIR,
+              PATH: path.dirname(process.execPath),
+              TEMP: root,
+              TMP: root,
+              DESIGN_STUDIO_SYNTHETIC_RETAINED_NATIVE: "1",
+              DESIGN_STUDIO_SYNTHETIC_OFFLINE_CRASH: point,
+            },
+          },
+        );
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(Error);
+      const fixtures = (await readdir(root)).filter((name) =>
+        name.startsWith("ds-ph-reference-"),
+      );
+      expect(
+        fixtures,
+        failure instanceof Error ? failure.message : "No child failure",
+      ).toHaveLength(1);
+      const fixture = path.join(root, fixtures[0] ?? "");
+      const witness: {
+        point: string;
+        pid: number;
+        parentPid: number;
+        execution: string;
+      } = JSON.parse(
+        await readFile(
+          path.join(fixture, "offline-crash-witness.json"),
+          "utf8",
+        ),
+      );
+      expect(witness).toMatchObject({ point, execution: "forked-process" });
+      expect(witness.pid).not.toBe(process.pid);
+      expect(witness.parentPid).not.toBe(process.pid);
+      let ended = false;
+      try {
+        process.kill(witness.pid, 0);
+      } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "ESRCH")
+          ended = true;
+        else throw error;
+      }
+      expect(ended).toBe(true);
+      const inspected = await run(
+        [
+          path.resolve(
+            "packages\\project-host\\tests\\offline-crash-inspect.mjs",
+          ),
+          fixture,
+        ],
+        { timeout: 10000 },
+      );
+      expect(inspected.stderr).toBe("");
+      expect(JSON.parse(inspected.stdout)).toEqual({
+        denied: true,
+        unchanged: true,
+        pins: 0,
+      });
+    });
+  }, 60000);
+}
+
+for (const gap of ["same-bytes-new-inode", "same-length-different-bytes"]) {
+  test(`cold native migration backup rejects ${gap}`, async ({ signal }) => {
+    await withOwnedProbe(signal, async (root, run) => {
+      const result = await run(
+        [
+          path.resolve("node_modules\\vitest\\vitest.mjs"),
+          "run",
+          "--project",
+          "unit",
+          "packages\\application\\tests\\reference-acquisition.test.ts",
+          "-t",
+          `^native migration backup rejects ${gap}$`,
+          "--reporter=dot",
+        ],
+        {
+          timeout: 60000,
+          env: {
+            SystemRoot: process.env.SystemRoot,
+            WINDIR: process.env.WINDIR,
+            PATH: path.dirname(process.execPath),
+            TEMP: root,
+            TMP: root,
+            DESIGN_STUDIO_SYNTHETIC_RETAINED_NATIVE: "1",
+          },
+        },
+      );
+      expect(result.stderr).toBe("");
+      expect(result.stdout).toContain("1 passed");
+    });
+  }, 60000);
+}
+
+test("retains a failed fresh backup pin close for explicit ownership cleanup", async () => {
+  await ownedTest(async (root) => {
+    const native = await loadNative();
+    const filename = path.join(root, "backup.sqlite.pending");
+    native.createFile(
+      filename,
+      native.principal(),
+      Buffer.from("synthetic backup"),
+    );
+    const pins = new Set<ReadLease>();
+    const original = native.pinRead.bind(native);
+    let calls = 0;
+    const spy = vi.spyOn(native, "pinRead").mockImplementation((...args) => {
+      const lease = original(...args);
+      if (++calls !== 2) return lease;
+      let failed = false;
+      return {
+        ...lease,
+        close() {
+          if (!failed) {
+            failed = true;
+            throw new Error("Synthetic fresh backup close failure.");
+          }
+          lease.close();
+        },
+      };
+    });
+    try {
+      await expect(
+        pinReferenceBackupFile(filename, {
+          owner: {},
+          sid: native.principal(),
+          retainedPins: pins,
+          current: async () => {},
+        }),
+      ).rejects.toThrow("Synthetic fresh backup close failure");
+      expect(pins.size).toBe(1);
+    } finally {
+      spy.mockRestore();
+      for (const lease of [...pins]) {
+        lease.close();
+        pins.delete(lease);
+      }
+    }
+    expect(pins.size).toBe(0);
+  });
+});
 
 test("explicit current-owner fixture reads host stage and publication without changing DACLs, bytes or identities", async () => {
   await ownedTest(async (root, _own, beforeCleanup) => {

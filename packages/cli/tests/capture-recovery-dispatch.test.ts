@@ -1,8 +1,17 @@
 import { expect, it, vi } from "vitest";
-import { runCaptureCommand } from "../src/capture-main.js";
+import {
+  NativeCaptureCommandCleanupRequired,
+  runCaptureCommand,
+} from "../src/capture-main.js";
 
 const seam = vi.hoisted(() => ({
+  inspectionAdmitted: false,
+  inspectionResult: {} as object,
+  inspectionExecute: vi.fn(async () => seam.inspectionResult),
+  inspectionClose: vi.fn(async () => {}),
+  projectClose: vi.fn(async () => {}),
   project: vi.fn(async () => {
+    if (seam.inspectionAdmitted) return { close: seam.projectClose };
     throw new Error("Recovery must not open an unadmitted project");
   }),
   close: vi.fn(async () => {}),
@@ -20,6 +29,19 @@ vi.mock("@design-studio/project-host", async (original) => ({
   }),
   registerCaptureInstallationGuards: () => ({ close: seam.guard }),
   openCaptureProject: seam.project,
+  assertReferenceOfflineInstallation: () => {
+    if (!seam.inspectionAdmitted) throw new Error("Not admitted");
+  },
+  assertReferenceConversionInspectionInstallation: () => {
+    if (!seam.inspectionAdmitted) throw new Error("Not admitted");
+  },
+}));
+vi.mock("@design-studio/application/capture", async (original) => ({
+  ...(await original<typeof import("@design-studio/application/capture")>()),
+  openNativeReferenceConversionInspection: async () => ({
+    execute: seam.inspectionExecute,
+    close: seam.inspectionClose,
+  }),
 }));
 
 it("rejects an old or structural installation before project/runtime/vault effects", async () => {
@@ -91,7 +113,70 @@ it("denies retained validation before project/database effects for a legacy or s
     status: "failed",
     error: { code: "ACTION_REQUIRED" },
   });
+
   expect(seam.project).not.toHaveBeenCalled();
   expect(seam.close).toHaveBeenCalledTimes(1);
   expect(seam.guard).toHaveBeenCalledTimes(1);
+});
+
+it("preserves closed blocked inspection diagnostics only when CLI owner release succeeds", async () => {
+  seam.inspectionAdmitted = true;
+  const result = {
+    schemaVersion: "1.0",
+    operation: "reference-conversion-inspect",
+    projectId: "capture_11111111-1111-4111-8111-111111111111",
+    requestId: "original",
+    status: "failed",
+    reason: "integrity",
+    error: {
+      code: "ACTION_REQUIRED",
+      message: "Closed failure.",
+      retryable: false,
+      diagnosticIds: [],
+    },
+    inspection: {
+      verification: "conversion-readonly-v1",
+      state: "blocked",
+      detail: "verification-incomplete",
+      diagnostic: { stage: "inventory-invalid" },
+    },
+  };
+  seam.inspectionResult = result;
+  const args = [
+    "figma",
+    "reference-conversion-inspect",
+    "--project",
+    result.projectId,
+    "--request-id",
+    "original",
+    "--expected-job",
+    "a".repeat(64),
+    "--expected-recovery",
+    "b".repeat(64),
+  ];
+  try {
+    expect(await runCaptureCommand(args)).toEqual(result);
+    seam.inspectionClose.mockRejectedValueOnce(
+      new Error("Synthetic private close failure"),
+    );
+    const failed = await runCaptureCommand(args).catch(
+      (error: unknown) => error,
+    );
+    if (!(failed instanceof NativeCaptureCommandCleanupRequired))
+      throw new Error("Expected owned CLI cleanup failure.");
+    expect(failed.result).toMatchObject({
+      status: "interrupted",
+      inspection: {
+        verification: "conversion-readonly-v1",
+        state: "blocked",
+        detail: "verification-incomplete",
+      },
+    });
+    expect(JSON.stringify(failed.result)).not.toMatch(
+      /diagnostic"|private close/,
+    );
+    await failed.close();
+  } finally {
+    seam.inspectionAdmitted = false;
+  }
 });

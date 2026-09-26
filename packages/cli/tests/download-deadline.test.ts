@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { setTimeout as delay } from "node:timers/promises";
-import { success } from "@design-studio/application";
+import { type CommandOperation, success } from "@design-studio/application";
 import type { Artifact } from "@design-studio/contracts";
 import { expect, it, vi } from "vitest";
+import { deferred } from "../../host/tests/deferred.js";
 import { parseArguments } from "../src/arguments.js";
 import {
   type CommandConnection,
@@ -38,33 +39,84 @@ const args = (timeout: number) =>
     "--json",
   ]);
 function connection(metadataDelay = 0, contentDelay = 0): CommandConnection {
+  const metadata = success("download", {
+    kind: "artifact",
+    artifact: source,
+    warnings: [],
+  });
   return {
     async json() {
-      await delay(metadataDelay);
-      return success("download", {
-        kind: "artifact",
-        artifact: source,
-        warnings: [],
-      });
+      if (metadataDelay) await delay(metadataDelay);
+      return structuredClone(metadata);
     },
     async receive(_path, _method, _timeout, _body, _headers, _media, parse) {
-      await delay(contentDelay);
+      if (contentDelay) await delay(contentDelay);
       return parse(bytes);
     },
   };
 }
-it("awaits late publisher quiescence but never turns an unproven delayed callback into success", async () => {
+it("awaits admitted publisher quiescence at the deterministic synthetic deadline", async ({
+  signal,
+}) => {
+  const command = args(40);
+  const connections = connection();
+  const entered = deferred<CommandOperation>();
+  const finish = deferred<void>();
   let settled = false;
-  const publish = vi.fn(async () => {
-    await delay(100);
-    settled = true;
-    return output;
+  let returned = false;
+  const publish = vi.fn(
+    async (
+      _artifact: Artifact,
+      _bytes: Uint8Array,
+      _relative: string,
+      operation: CommandOperation,
+    ) => {
+      entered.resolve(operation);
+      await finish.promise;
+      settled = true;
+      return output;
+    },
+  );
+  const cancel = () => finish.resolve();
+  signal.addEventListener("abort", cancel, { once: true });
+  vi.useFakeTimers({
+    toFake: ["Date", "performance", "setTimeout", "clearTimeout"],
   });
-  await expect(
-    dispatchCommand(args(40), connection(), publish),
-  ).rejects.toMatchObject({ code: "DEADLINE_EXCEEDED" });
-  expect(settled).toBe(true);
-  expect(publish).toHaveBeenCalledOnce();
+  const pending = dispatchCommand(command, connections, publish, signal).then(
+    (value) => {
+      returned = true;
+      return { value };
+    },
+    (error: unknown) => {
+      returned = true;
+      return { error };
+    },
+  );
+  try {
+    const operation = await Promise.race([
+      entered.promise,
+      pending.then((outcome) => {
+        throw "error" in outcome
+          ? outcome.error
+          : new Error("Publisher was not admitted.");
+      }),
+    ]);
+    expect(operation.signal.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(40);
+    expect(operation.signal.aborted).toBe(true);
+    expect(returned).toBe(false);
+    expect(settled).toBe(false);
+    finish.resolve();
+    const outcome = await pending;
+    expect(outcome).toMatchObject({ error: { code: "DEADLINE_EXCEEDED" } });
+    expect(settled).toBe(true);
+    expect(publish).toHaveBeenCalledOnce();
+  } finally {
+    finish.resolve();
+    await pending;
+    signal.removeEventListener("abort", cancel);
+    vi.useRealTimers();
+  }
 });
 it("does not start publication after a late content callback exhausts the original command budget", async () => {
   const publish = vi.fn(async () => output);

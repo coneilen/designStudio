@@ -14,6 +14,13 @@ export {
   NativeCaptureStartupCleanupRequired,
 } from "./capture-runtime-internal.js";
 export {
+  type NativeReferenceOfflineInput,
+  openNativeReferenceConversionInspection,
+  openNativeReferenceOffline,
+  REFERENCE_CONVERSION_CONFIRMATION,
+  REFERENCE_RECOVERY_CONFIRMATION,
+} from "./reference-offline.js";
+export {
   DIAGNOSTIC_APPROVAL_CONFIRMATION,
   DIAGNOSTIC_DOWNLOAD_CONFIRMATION,
   type NativeReferenceInput,
@@ -29,3 +36,14 @@ export {
 export function openNativeCapture(project: CaptureProject) {
   return assembleNativeCapture(project);
 }
+export {
+  type NativeReferenceForkInput,
+  openNativeReferenceFork,
+  REFERENCE_FORK_CONFIRMATION,
+} from "./reference-fork.js";
+export {
+  type NativeReferenceForkResultInput,
+  openNativeReferenceForkResult,
+  type ReferenceForkConsumer,
+  type ReferenceForkRole,
+} from "./reference-fork-result.js";

@@ -17,6 +17,308 @@ const identity = {
     actorId: "actor_test",
   },
 };
+it("keeps readonly conversion inspection states closed and readiness non-renderable", () => {
+  const proof = {
+    inspectionPolicySha256: "a".repeat(64),
+    recoveryPolicySha256: "b".repeat(64),
+    recoveryId: "recovery",
+    recoveryReceiptSha256: "c".repeat(64),
+    originalJobSha256: "d".repeat(64),
+    originalStateSha256: "e".repeat(64),
+    identitySha256: "f".repeat(64),
+    controlSha256: "0".repeat(64),
+    proofSha256: "1".repeat(64),
+  };
+  const conversion = {
+    operationId: "conversion",
+    receiptSha256: "2".repeat(64),
+    evidence: { id: "evidence", sha256: "3".repeat(64) },
+    readiness: "needs-review",
+  };
+  for (const value of [
+    {
+      verification: "conversion-readonly-v1",
+      state: "blocked",
+      detail: "verification-incomplete",
+    },
+    {
+      verification: "conversion-readonly-v1",
+      state: "incomplete",
+      detail: "no-conversion-intent-observed",
+      proof,
+    },
+    {
+      verification: "conversion-readonly-v1",
+      state: "incomplete",
+      detail: "conversion-intent-without-committed-receipt",
+      proof,
+    },
+    {
+      verification: "conversion-readonly-v1",
+      state: "committed",
+      proof,
+      conversion,
+    },
+  ])
+    expect(
+      validateContract("ReferenceConversionInspection", value).success,
+    ).toBe(true);
+  for (const value of [
+    {
+      verification: "conversion-readonly-v1",
+      state: "blocked",
+      detail: "verification-incomplete",
+      proof,
+    },
+    {
+      verification: "conversion-readonly-v1",
+      state: "incomplete",
+      detail: "no-conversion-intent-observed",
+      proof,
+      conversion,
+    },
+    { verification: "conversion-readonly-v1", state: "committed", proof },
+    {
+      verification: "conversion-readonly-v1",
+      state: "committed",
+      proof,
+      conversion: { ...conversion, readiness: "ready" },
+    },
+    {
+      verification: "conversion-readonly-v1",
+      state: "committed",
+      proof,
+      conversion,
+      privateText: "forbidden",
+    },
+  ])
+    expect(
+      validateContract("ReferenceConversionInspection", value).success,
+    ).toBe(false);
+});
+
+it("limits retained proof diagnostics to failed blocked inspection and existing closed fields", () => {
+  const base = {
+    schemaVersion: "1.0",
+    operation: "reference-conversion-inspect",
+    projectId: "synthetic",
+    requestId: "original",
+    status: "failed",
+    reason: "integrity",
+    error: {
+      code: "ACTION_REQUIRED",
+      message: "Closed failure.",
+      retryable: false,
+      diagnosticIds: [],
+    },
+    inspection: {
+      verification: "conversion-readonly-v1",
+      state: "blocked",
+      detail: "verification-incomplete",
+    },
+  };
+  for (const diagnostic of [
+    { stage: "ineligible-job" },
+    { stage: "inventory-invalid" },
+    {
+      stage: "inventory-invalid",
+      inventoryFailure: {
+        check: "publication-shape",
+        category: "history-stage",
+        detail: "unproven-history-coexistence",
+      },
+    },
+    {
+      stage: "inventory-invalid",
+      inventoryFailure: {
+        check: "committed-size",
+        category: "committed-inventory",
+      },
+    },
+  ]) {
+    const value = {
+      ...base,
+      inspection: { ...base.inspection, diagnostic },
+    };
+    expect(
+      validateContract("NativeReferenceOfflineEnvelope", value).success,
+    ).toBe(true);
+    for (const status of ["complete", "cancelled", "interrupted"])
+      expect(
+        validateContract("NativeReferenceOfflineEnvelope", { ...value, status })
+          .success,
+      ).toBe(false);
+    for (const code of [
+      "CANCELLED",
+      "DEADLINE_EXCEEDED",
+      "FORBIDDEN",
+      "INTERRUPTED",
+    ])
+      expect(
+        validateContract("NativeReferenceOfflineEnvelope", {
+          ...value,
+          error: { ...value.error, code },
+        }).success,
+      ).toBe(false);
+    for (const operation of ["reference-recovery-inspect", "convert-reference"])
+      expect(
+        validateContract("NativeReferenceOfflineEnvelope", {
+          ...value,
+          operation,
+        }).success,
+      ).toBe(false);
+  }
+  for (const diagnostic of [
+    { stage: "private-path" },
+    { stage: "inventory-invalid", path: "private" },
+    { stage: "inventory-invalid", message: "private" },
+    {
+      stage: "ineligible-job",
+      inventoryFailure: { check: "body-hash", category: "retained-target" },
+    },
+    {
+      stage: "inventory-invalid",
+      inventoryFailure: {
+        check: "publication-shape",
+        category: "namespace",
+        detail: "orphan-stage",
+      },
+    },
+  ])
+    expect(
+      validateContract("NativeReferenceOfflineEnvelope", {
+        ...base,
+        inspection: { ...base.inspection, diagnostic },
+      }).success,
+    ).toBe(false);
+  expect(validateContract("NativeReferenceOfflineEnvelope", base).success).toBe(
+    true,
+  );
+  expect(
+    validateContract("NativeReferenceOfflineEnvelope", {
+      schemaVersion: "1.0",
+      operation: "reference-recovery-apply-plan",
+      projectId: "synthetic",
+      requestId: "original",
+      status: "complete",
+    }).success,
+  ).toBe(true);
+});
+
+it("closes five direct refusal tags without accepting application/host conflation or stale diagnostics", () => {
+  const envelope = (diagnostic: object) => ({
+    schemaVersion: "1.0",
+    operation: "reference-conversion-inspect",
+    projectId: "synthetic",
+    requestId: "original",
+    status: "failed",
+    reason: "integrity",
+    error: {
+      code: "ACTION_REQUIRED",
+      message: "Closed failure.",
+      retryable: false,
+      diagnosticIds: [],
+    },
+    inspection: {
+      verification: "conversion-readonly-v1",
+      state: "blocked",
+      detail: "verification-incomplete",
+      diagnostic,
+    },
+  });
+  for (const check of [
+    "scan-blob-classification",
+    "scan-stage-classification",
+    "scan-root-entry-classification",
+  ]) {
+    const inventoryFailure = { check, category: "namespace" };
+    expect(
+      validateContract("RetainedInventoryFailure", inventoryFailure).success,
+    ).toBe(true);
+    expect(
+      validateContract(
+        "NativeReferenceOfflineEnvelope",
+        envelope({ stage: "inventory-invalid", inventoryFailure }),
+      ).success,
+    ).toBe(true);
+    for (const extra of [
+      { category: "committed-inventory" },
+      { detail: "missing-stage-or-entry" },
+      { path: "private" },
+    ])
+      expect(
+        validateContract("RetainedInventoryFailure", {
+          ...inventoryFailure,
+          ...extra,
+        }).success,
+      ).toBe(false);
+    expect(
+      validateContract("NativeReferenceRecoveryPlanEnvelope", {
+        schemaVersion: "1.0",
+        operation: "reference-recovery-plan",
+        projectId: "synthetic",
+        requestId: "original",
+        status: "failed",
+        reason: "inventory-invalid",
+        error: envelope({}).error,
+        inventoryFailure,
+      }).success,
+    ).toBe(true);
+  }
+  for (const publicationCheck of [
+    "pending-stages-without-capture-recovery-binding",
+    "pending-stage-provenance-mismatch",
+  ]) {
+    const diagnostic = { stage: "inventory-invalid", publicationCheck };
+    expect(
+      validateContract("RetainedPublicationCheck", publicationCheck).success,
+    ).toBe(true);
+    const value = envelope(diagnostic);
+    expect(
+      validateContract("NativeReferenceOfflineEnvelope", value).success,
+    ).toBe(true);
+    for (const status of ["complete", "cancelled", "interrupted"])
+      expect(
+        validateContract("NativeReferenceOfflineEnvelope", { ...value, status })
+          .success,
+      ).toBe(false);
+    for (const code of [
+      "ARTIFACT_INTEGRITY",
+      "CANCELLED",
+      "DEADLINE_EXCEEDED",
+      "FORBIDDEN",
+      "INTERRUPTED",
+    ])
+      expect(
+        validateContract("NativeReferenceOfflineEnvelope", {
+          ...value,
+          error: { ...value.error, code },
+        }).success,
+      ).toBe(false);
+    for (const invalid of [
+      { ...diagnostic, stage: "source-proof-invalid" },
+      {
+        ...diagnostic,
+        inventoryFailure: {
+          check: "scan-stage-classification",
+          category: "namespace",
+        },
+      },
+      { ...diagnostic, message: "private" },
+      { ...diagnostic, publicationCheck: "specific-private-field" },
+    ])
+      expect(
+        validateContract("NativeReferenceOfflineEnvelope", envelope(invalid))
+          .success,
+      ).toBe(false);
+    expect(
+      validateContract("NativeReferenceOfflineEnvelope", {
+        ...value,
+        reason: "cleanup-required",
+      }).success,
+    ).toBe(false);
+  }
+});
 
 it.each([
   "figma-offline-fixed-v1",

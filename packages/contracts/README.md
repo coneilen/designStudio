@@ -1,5 +1,13 @@
 # @design-studio/contracts
 
+Named runtime validation registers the authoritative definitions with their
+original schema ID and dialect, without compiling the document-root union as
+an unrelated entry point. `validateContract` still accepts only catalog names
+and resolves the same definition fragments with unchanged AJV options and
+boundary checks. The exported foundation schema and public schema files retain
+their root union unchanged. Tests guard against whole-root, external or
+scope-changing references that would invalidate this registration strategy.
+
 Version 1.4.0; artifact schema version 1.0; JSON Schema draft-07.
 
 Validation reuses compiled immutable schema functions, not payloads, acceptance
@@ -7,6 +15,37 @@ results or authority. Every input is checked again, including mutations after a
 successful validation, accessors, cycles, depth and non-finite/non-JSON values.
 
 ## Native capture integration (package 1.4.0)
+
+`ReferenceConversionInspection` is the closed result of the release-v8
+native-only `reference-conversion-inspect` command. `committed` includes a
+conversion receipt/evidence/readiness only after the original recovery graph,
+deterministic fixed-v2 outputs and every physical output are verified.
+`incomplete` reports a fully validated no-intent or intent-only control state;
+`blocked` means verification did not finish and carries no proof or conversion.
+Neither result grants permission to retry or mutate. Current inspection-policy
+and historical recovery-policy hashes are distinct proof fields. Readiness
+remains `blocked` or `needs-review`, never render-ready.
+
+Failed blocked inspection may include an enum-only `diagnostic.stage` from the
+existing retained-proof reasons, plus a validated `RetainedInventoryFailure`
+when the inventory guard supplied one. The three namespace-only
+`scan-blob-classification`, `scan-stage-classification` and
+`scan-root-entry-classification` checks identify existing scan refusal branches,
+not which arm of their OR predicates failed or whether an entry is an orphan.
+Alternatively, `publicationCheck` identifies one of two direct application
+refusals: `pending-stages-without-capture-recovery-binding` or
+`pending-stage-provenance-mismatch`. It requires `ACTION_REQUIRED` and
+`inventory-invalid` and cannot coexist with `inventoryFailure`. Application
+markers require the original error and exact current reader identity.
+These annotations do not change the outer status or reason. Propagated
+unclassified failures can still report only `inventory-invalid`.
+Diagnostics carry no paths, IDs, messages or data;
+they are omitted after a successful retained proof and on cancellation,
+deadline, authority or cleanup uncertainty. No additional reads or grants are
+used, and the v8 inspection supplement and six historical policies are unchanged.
+Older strict schemas/drivers reject the new enum values or field fail-closed;
+they must not strip unknown fields or infer a private cause. New executable
+and schema bytes require independently reviewed release and driver bindings.
 
 `NativeReferenceRecoveryPlanEnvelope` and `ReferenceRecoveryPlan` describe the
 separate read-only retained-byte validator. Successful verification means

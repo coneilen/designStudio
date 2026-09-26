@@ -1,5 +1,77 @@
 # @design-studio/application
 
+## Offline reference publication and derived conversion
+
+`openNativeReferenceOffline(project)` is a separate v7 native composition.
+`reference-recovery-apply-plan` recomputes the physical source/history/approval,
+expired diagnostic, settled effect, quarantine, exact retained bytes and current
+native identities. `reference-recovery-apply` additionally requires the current
+plan digest, original Job digest and `RECOVER-VERIFIED-REFERENCE-OFFLINE`.
+The v6 plan digest is historical evidence, not this write grant.
+The plan explicitly advertises `single-recovery-and-bound-conversion-only`:
+schema 5 seals this project against unrelated mutations. New ordinary captures,
+staging/commits, revisions, pin changes, private exports and maintenance deletion
+are blocked before effects; a second recovery slot is not supported. Historical
+reads, existing receipt replay and backup remain available. This initial
+capability is not general editable-project support.
+
+The first write path supports two verified single-link **stage-only** outputs.
+It copies their bytes into new current-owned stages and commits a separate
+receipt protecting the original evidence, PNG and new recovery evidence. It
+never changes the original jobs, resources, leases, effects, stage records,
+source manifests, conversion receipts or exports, nor adopts/unlinks an old
+stage. Published-only orphans, mixed copies and multiply linked files are not
+promoted. No provider, DNS, source-download, credential journal or vault
+capability is created.
+
+An immutable unique original-diagnostic reservation and append-only events
+record intent before filesystem effects. Only a clean reservation with no file
+intent can resume across processes, with fresh proof and explicit confirmation.
+Completed replay returns the same verified receipt. Stage/publication uncertainty,
+unclosed conversion intent, retained SQLite sidecars and missing native
+durability proof remain blocked; ordinary inspection never repairs them.
+
+The schema-4/5 immutable read phase closes its connection and native pins before
+opening a separately admitted writer under the same project owner. Raw metadata,
+control journal, schema and native preimage CAS bind this transition. The
+artifact inventory identity is compared again before reservation. Original
+identities are rechecked around native publication and before the receipt;
+only exact journaled stages and intended content-addressed outputs may extend
+the namespace. Releasing read pins for an exclusive native rename does not
+authorize changed source bytes, identities or authority.
+
+`reference-recovery-inspect` uses the shared receipt/source/PNG resolver and
+labels the result `offline-recovered-reference`, while retaining historical
+status `interrupted`. Old diagnostic stages may coexist with new blobs only
+through that exact recovery receipt, protected graph and two distinct
+single-link identities. A current same-hash blob alone is insufficient.
+
+`convert-reference` requires the expected recovery receipt digest and
+`CONVERT-WITH-RECOVERED-REFERENCE`. It derives a new fixed-v2 composition identity,
+source-image provenance and `ReferenceConversionEvidence`, binding the original
+structure projection, source, reference and recovery receipt. Ordinary
+`convert` identities and results are unchanged. Reference availability does not
+clear unsupported-feature, asset/font-rights or fidelity diagnostics and does
+not claim render readiness. The conversion intent binds all expected output
+descriptors before staging and is not a generic retry permission.
+
+One `ReferenceInput` meters physical artifact reads plus EOF probes across
+both proof phases, staging verification, native durability and final inspection:
+25 MiB, 30 seconds, zero network, unchanged raster/worker bounds. DB size and
+metadata/backup limits are separate. A committed receipt is not undone when
+final inspection or response closure fails. Responses are closed projections,
+not images, URLs, paths, design text or historical failure reconstructions.
+
+Backup format 5 preserves recovery records/events and protects their outputs.
+Restore retains the existing job fencing behavior: changed historical job
+preimages or absent original stages make restored recovery archival, not
+automatically executable or usable by the native resolver.
+Restoration records a separate closed archive marker tied to the origin backup
+and the new fenced snapshot. Repeated restore does not rewrite immutable
+evidence/events or promote the archive. Missing/changed markers and mismatched
+raw-row/reference graphs are rejected before use; a marker is not proof of
+fresh native provenance.
+
 ## Read-only retained-reference validation
 
 `openNativeReferenceValidation(project)` is a separate native facade for
@@ -782,3 +854,64 @@ or the root cause/elimination of the historical 26/56-second outliers. No fourth
 run, automatic retry, new optimization, release candidate or production install
 was authorized by these results. Final integrated-code release packaging and
 exact user bootstrap/payload approval remain separate review gates.
+# Offline verified-input fork
+
+The release-9 `reference-fork` capability is a separate, explicitly confirmed
+offline operation. It freshly verifies a schema-5 source's recorded capture,
+approval, recovered reference, and receipt/control bindings using an immutable
+database and native-pinned recorded blob reads. It does not inventory, read,
+adopt, delete, or reconcile unrecorded source stages. The historical global
+retained-inventory checks remain unchanged for their existing commands.
+
+Only after source verification does the composition create a fresh owned
+destination. `ReferenceForkOrigin` preserves original receipts as **origin
+evidence, not destination authority**. Conversion uses destination-specific
+operation/design identifiers and a new destination receipt. Returned artifacts
+identify the design/resources/source-map/evidence/provenance/report; readiness
+remains `blocked` or `needs-review`, never render-ready.
+
+One 30-second deadline and one 25-MiB physical-read ledger span source proof,
+selected input reads, repeated source verification, destination publication,
+durability, final inspection, and EOF probes. No provider, DNS, PAT, or credential
+object is instantiated. Original projects are never opened for writes.
+
+Destination schema 6 durably records the host UUID and every stage UUID and
+descriptor before file creation. Fork-only native creation sets the current
+principal as owner **at creation**, inheriting the exact parent DACL through
+branded pinned parents. This avoids Administrators-owned descendants from an
+elevated process default owner. Existing files/directories are never adopted,
+normalized or ACL-repaired. Writes use bounded chunks and flush; original native
+handles remain owned after errors until actual closure. Historical staging and
+cold-reader ownership predicates are unchanged. Stage progress and the final receipt are
+recorded separately; a fault can leave reserved partial bytes or published
+outputs, never a claim of completed conversion. Existing schema-6 destinations
+are explicitly blocked from writable reopening/replay. Partial destinations
+are also blocked from result reads. There is no resume, automatic adoption,
+generic mutation, or legacy-command read/export path. A failure after
+destination creation returns its logical ID and `blocked-no-replay`; a new
+attempt requires a new explicit authorization, not reuse of the old gate.
+
+### Consuming completed outputs
+
+The supported `@design-studio/application/capture` entrypoint
+`openNativeReferenceForkResult(project)` accepts an authenticated native
+`CaptureProject`. `execute({ operation: "reference-fork-result", requestId,
+expectedReceipt }, signal, consumer?)` opens only an immutable schema-6 database
+whose completed journal matches that exact destination receipt. It validates the
+receipt protection graph, origin/result manifest bindings and every recorded
+output's native-pinned bytes. It never opens the original source project.
+
+An optional consumer `{ role, reference, async consume(bytes, artifact, signal) }`
+selects the exact receipt member for `design`, `report`, `reference`, or another
+reported conversion role. `bytes` is borrowed: complete all processing before
+the callback resolves; the buffer is then zeroed. Do not retain the view or treat
+callback delivery as final success. Final byte/identity/database rechecks and
+actual owner closure must finish and `execute` must resolve `complete` before
+the caller presents a successful result. Cancellation/deadline during callback
+or successful cleanup withholds conversion metadata without undoing committed
+data. Pending callbacks retain the original owner until settlement.
+
+The CLI `figma reference-fork-result --project <DESTINATION> --request-id <ID>
+--expected-receipt <SHA256>` returns bounded verified metadata only. Actual
+design/report/reference byte consumption is through the supported application
+consumer above; CLI file export and inline private bodies are not provided.

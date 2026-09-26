@@ -47,6 +47,29 @@ export interface ProjectRoot {
 }
 export interface ProjectFileSystemOptions {
   reserveRead?(bytes: number, context: OperationContext): void;
+  recordedRead?: {
+    authorize(input: FileRequest, context: OperationContext): Promise<void>;
+    pin(
+      rootId: string,
+      relative: string,
+      directory: boolean,
+    ): Promise<{
+      identity: { path: string; volume: number; file: string };
+      check(): Promise<void>;
+      close(): void;
+    }>;
+  };
+  reservedStaging?: {
+    create?(
+      reservation: ReservedStage,
+      bytes: Uint8Array,
+      context: OperationContext,
+    ): Promise<{ dev: number; ino: number }>;
+    authorize(
+      reservation: ReservedStage,
+      context: OperationContext,
+    ): Promise<void>;
+  };
   retainedReferenceInspection?: {
     artifactRootId: string;
     outputRootId: string;
@@ -99,6 +122,11 @@ export interface ProjectFileSystemOptions {
     context: OperationContext,
   ) => Promise<void>;
 }
+export interface ReservedStage {
+  hostId: string;
+  stagingId: string;
+  artifact: Artifact;
+}
 type RetainedReadPin = Awaited<
   ReturnType<
     NonNullable<ProjectFileSystemOptions["retainedReferenceInspection"]>["pin"]
@@ -122,6 +150,8 @@ export interface RetainedReferenceInput {
   committedHistoryArtifacts?: readonly Artifact[];
   /** Separately verified provider outputs of the grant's exact successor capture. */
   successorCaptureHistoryArtifacts?: readonly Artifact[];
+  /** Exact target outputs of a separately authenticated offline recovery receipt. */
+  recoveredTargetArtifacts?: readonly Artifact[];
 }
 export interface RetainedReferenceInspection {
   identitySha256: string;
@@ -130,10 +160,16 @@ export interface RetainedReferenceInspection {
     publication:
       | "stage-only"
       | "published-only"
+      | "recovered-stage-and-blob"
       | "known-pair-native-read-blocked";
     bytes?: Uint8Array;
   }[];
   check(): Promise<void>;
+  checkOriginals(additions?: {
+    stages: readonly CaptureRecoveryStage[];
+    artifacts: readonly Artifact[];
+  }): Promise<void>;
+  pauseOriginalPins(): void;
   close(): void;
 }
 export type RetainedReferenceOutcome = Outcome<RetainedReferenceInspection> & {
@@ -618,12 +654,11 @@ export class ProjectFileSystem implements FileSystemBoundary {
       );
       return this.serial(async () => {
         guard.check();
+        await this.options.recordedRead?.authorize(request, context);
         const absolute = await this.resolve(root, request.path);
-        const pin = await this.options.retainedReferenceInspection?.pin(
-          request.artifactRootId,
-          request.path,
-          false,
-        );
+        const pin = await (
+          this.options.recordedRead ?? this.options.retainedReferenceInspection
+        )?.pin(request.artifactRootId, request.path, false);
         const closePin = () => {
           pin?.close();
           this.retainedClosures.delete(closePin);
@@ -694,6 +729,120 @@ export class ProjectFileSystem implements FileSystemBoundary {
     bytes: Uint8Array,
     context: OperationContext,
   ): Promise<Outcome<StagedArtifact>> {
+    return this.stageInternal(input, bytes, context);
+  }
+  stageReserved(
+    reservation: ReservedStage,
+    artifactRootId: string,
+    bytes: Uint8Array,
+    context: OperationContext,
+  ): Promise<Outcome<StagedArtifact>> {
+    return this.stageInternal(
+      { artifactRootId, path: reservation.artifact.path },
+      bytes,
+      context,
+      structuredClone(reservation),
+    );
+  }
+  checkReservedNamespace(
+    artifactRootId: string,
+    reservations: readonly ReservedStage[],
+    context: OperationContext,
+  ): Promise<Outcome<null>> {
+    return this.execute(context, async (context) => {
+      const config = this.options.reservedStaging;
+      if (
+        !config ||
+        !reservations.length ||
+        reservations.length > 16 ||
+        new Set(reservations.map((s) => s.hostId)).size !== 1 ||
+        new Set(reservations.map((s) => s.stagingId)).size !==
+          reservations.length ||
+        new Set(reservations.map((s) => s.artifact.sha256)).size !==
+          reservations.length ||
+        reservations.some(
+          (s) =>
+            !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+              s.hostId,
+            ) ||
+            !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+              s.stagingId,
+            ) ||
+            !validateContract("Artifact", s.artifact).success ||
+            !/^[a-f0-9]{64}$/.test(s.artifact.sha256),
+        )
+      )
+        throw new HostBoundaryError("FORBIDDEN", "Invalid reserved namespace.");
+      for (const reservation of reservations)
+        await config.authorize(reservation, context);
+      const { root, guard } = this.guard(artifactRootId, context, "write");
+      await this.checkRoot(root);
+      const hostName = `.host-${reservations[0]?.hostId}`;
+      for (const name of await boundedEntries(root.path, 3, guard)) {
+        if (name !== "blobs" && name !== hostName)
+          throw new HostBoundaryError(
+            "ACTION_REQUIRED",
+            "Unreserved destination entry.",
+          );
+        const directory = path.join(root.path, name);
+        const stat = await io(() => lstat(directory));
+        if (
+          !stat.isDirectory() ||
+          stat.isSymbolicLink() ||
+          (await io(() => realpath(directory))) !== directory
+        )
+          throw new HostBoundaryError(
+            "PATH_FORBIDDEN",
+            "Reserved directory changed.",
+          );
+        for (const entry of await boundedEntries(directory, 17, guard)) {
+          const expected = reservations.find(
+            (s) =>
+              (name === "blobs" ? s.artifact.sha256 : s.stagingId) === entry,
+          );
+          if (!expected)
+            throw new HostBoundaryError(
+              "ACTION_REQUIRED",
+              "Unreserved destination file.",
+            );
+          const file = path.join(directory, entry);
+          const actual = await io(() => lstat(file));
+          if (
+            !actual.isFile() ||
+            actual.isSymbolicLink() ||
+            (await io(() => realpath(file))) !== file ||
+            actual.nlink !== 1 ||
+            actual.size !== expected.artifact.byteLength
+          )
+            throw new HostBoundaryError(
+              "ARTIFACT_INTEGRITY",
+              "Reserved destination file changed.",
+            );
+          if (name === hostName) {
+            const owned = this.pending.get(expected.stagingId);
+            if (
+              !owned ||
+              owned.path !== file ||
+              !sameFile(owned.identity, actual)
+            )
+              throw new HostBoundaryError(
+                "ARTIFACT_INTEGRITY",
+                "Reserved stage is not the created instance.",
+              );
+          }
+        }
+      }
+      await this.checkRoot(root);
+      guard.check();
+      return null;
+    });
+  }
+  private stageInternal(
+    input: FileRequest,
+    bytes: Uint8Array,
+    context: OperationContext,
+    reservation?: ReservedStage,
+  ): Promise<Outcome<StagedArtifact>> {
     return boundary(context, async (context) => {
       if (!validateContract("FileRequest", input).success)
         throw new HostBoundaryError("PATH_FORBIDDEN", "Invalid file request.");
@@ -708,20 +857,65 @@ export class ProjectFileSystem implements FileSystemBoundary {
       const owned = Uint8Array.from(bytes);
       return this.serial(async () => {
         guard.check();
+        if (reservation) {
+          const uuid =
+            /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+          if (
+            !this.options.reservedStaging ||
+            !uuid.test(reservation.hostId) ||
+            !uuid.test(reservation.stagingId) ||
+            !validateContract("Artifact", reservation.artifact).success ||
+            reservation.artifact.sha256 !== sha256(owned) ||
+            reservation.artifact.id !== `sha256_${sha256(owned)}` ||
+            reservation.artifact.byteLength !== owned.length ||
+            reservation.artifact.path !== request.path ||
+            reservation.artifact.mediaType !== "application/octet-stream"
+          )
+            throw new HostBoundaryError("FORBIDDEN", "Unbound reserved stage.");
+          await this.options.reservedStaging.authorize(reservation, context);
+          guard.check();
+        }
         if (root.managedBlobs && request.path !== `blobs/${sha256(owned)}`)
           throw new HostBoundaryError(
             "ARTIFACT_INTEGRITY",
             "Managed blob path must match the exact bytes hash.",
           );
-        await this.resolve(root, request.path, true);
+        const nativeCreate =
+          reservation && this.options.reservedStaging?.create;
+        let createdIdentity: { dev: number; ino: number } | undefined;
+        if (nativeCreate) {
+          createdIdentity = await nativeCreate(reservation, owned, context);
+          if (!root.staging) {
+            const directory = path.join(
+              root.path,
+              `.host-${reservation.hostId}`,
+            );
+            root.staging = {
+              path: directory,
+              identity: await lstat(directory),
+            };
+          }
+        }
+        await this.resolve(root, request.path, !nativeCreate);
         guard.check();
         if (!root.staging) {
-          const directory = path.join(root.path, `.host-${randomUUID()}`);
+          const directory = path.join(
+            root.path,
+            `.host-${reservation?.hostId ?? randomUUID()}`,
+          );
           await io(() => mkdir(directory, { mode: 0o700 }));
           root.staging = { path: directory, identity: await lstat(directory) };
         }
+        if (
+          reservation &&
+          path.basename(root.staging.path) !== `.host-${reservation.hostId}`
+        )
+          throw new HostBoundaryError(
+            "FORBIDDEN",
+            "Reserved stage belongs to another host.",
+          );
         await this.checkStaging(root);
-        const stagingId = randomUUID();
+        const stagingId = reservation?.stagingId ?? randomUUID();
         const absolute = path.join(root.staging.path, stagingId);
         const artifact: Artifact = {
           id: `sha256_${sha256(owned)}`,
@@ -735,18 +929,35 @@ export class ProjectFileSystem implements FileSystemBoundary {
             "INVALID_INPUT",
             "Invalid artifact metadata.",
           );
-        const handle = await io(() => open(absolute, "wx", 0o600));
         let identity: Stats;
-        try {
-          await io(() => handle.writeFile(owned));
-          await io(() => handle.sync());
-          identity = await handle.stat();
-        } catch (error) {
+        if (nativeCreate) {
+          identity = await io(() => lstat(absolute));
+          if (
+            !createdIdentity ||
+            identity.dev !== createdIdentity.dev ||
+            identity.ino !== createdIdentity.ino ||
+            !identity.isFile() ||
+            identity.isSymbolicLink() ||
+            identity.nlink !== 1 ||
+            identity.size !== owned.length
+          )
+            throw new HostBoundaryError(
+              "ARTIFACT_INTEGRITY",
+              "Native reserved creation changed file shape.",
+            );
+        } else {
+          const handle = await io(() => open(absolute, "wx", 0o600));
+          try {
+            await io(() => handle.writeFile(owned));
+            await io(() => handle.sync());
+            identity = await handle.stat();
+          } catch (error) {
+            await handle.close();
+            if (!reservation) await io(() => unlink(absolute));
+            throw error;
+          }
           await handle.close();
-          await io(() => unlink(absolute));
-          throw error;
         }
-        await handle.close();
         const staged = { stagingId, artifact };
         this.pending.set(stagingId, {
           root,
@@ -764,8 +975,10 @@ export class ProjectFileSystem implements FileSystemBoundary {
         try {
           guard.check();
         } catch (error) {
-          await io(() => unlink(absolute));
-          this.pending.delete(stagingId);
+          if (!reservation) {
+            await io(() => unlink(absolute));
+            this.pending.delete(stagingId);
+          }
           throw error;
         }
         return staged;
@@ -1430,6 +1643,7 @@ export class ProjectFileSystem implements FileSystemBoundary {
         input.history.length > 128 ||
         (input.committedHistoryArtifacts?.length ?? 0) > 128 ||
         (input.successorCaptureHistoryArtifacts?.length ?? 0) > 128 ||
+        (input.recoveredTargetArtifacts?.length ?? 0) > 2 ||
         input.artifacts.length > 20000
       )
         throw new HostBoundaryError(
@@ -1482,6 +1696,21 @@ export class ProjectFileSystem implements FileSystemBoundary {
         a.path === b.path &&
         a.byteLength === b.byteLength &&
         a.mediaType === b.mediaType;
+      const recovered = new Map(
+        (input.recoveredTargetArtifacts ?? []).map((a) => [a.sha256, a]),
+      );
+      if (
+        recovered.size !== (input.recoveredTargetArtifacts?.length ?? 0) ||
+        [...recovered.values()].some(
+          (a) =>
+            !input.targets.some((s) => sameArtifact(s.artifact, a)) ||
+            !input.artifacts.some((b) => sameArtifact(a, b)),
+        )
+      )
+        throw new HostBoundaryError(
+          "FORBIDDEN",
+          "Recovered coexistence lacks exact protected target descriptors.",
+        );
       const committedHistory = new Map(
         (input.committedHistoryArtifacts ?? []).map((artifact) => [
           artifact.sha256,
@@ -1519,9 +1748,7 @@ export class ProjectFileSystem implements FileSystemBoundary {
       const pins: RetainedReadPin[] = [];
       const targets: RetainedReferenceInspection["targets"] = [];
       let closed = false;
-      const close = () => {
-        if (closed) return;
-        for (const target of targets) target.bytes?.fill(0);
+      const releasePins = () => {
         const errors: unknown[] = [];
         for (const pin of [...pins].reverse()) {
           try {
@@ -1538,6 +1765,11 @@ export class ProjectFileSystem implements FileSystemBoundary {
             false,
             { cause: new AggregateError(errors) },
           );
+      };
+      const close = () => {
+        if (closed) return;
+        for (const target of targets) target.bytes?.fill(0);
+        releasePins();
         closed = true;
         this.retainedClosures.delete(close);
       };
@@ -1549,7 +1781,10 @@ export class ProjectFileSystem implements FileSystemBoundary {
         stat: Stats;
         directory: boolean;
       };
-      const scan = async (): Promise<Entry[]> => {
+      const scan = async (additions?: {
+        stages: readonly CaptureRecoveryStage[];
+        artifacts: readonly Artifact[];
+      }): Promise<Entry[]> => {
         const entries: Entry[] = [];
         let remaining = 20000;
         const seenStages = new Set<string>();
@@ -1604,12 +1839,18 @@ export class ProjectFileSystem implements FileSystemBoundary {
                 if (
                   !/^[0-9a-f]{64}$/.test(hash) ||
                   (!artifacts.has(hash) &&
+                    !additions?.artifacts.some((a) => a.sha256 === hash) &&
                     !input.targets.some((s) => s.artifact.sha256 === hash))
-                )
+                ) {
+                  inventoryFailure ??= {
+                    check: "scan-blob-classification",
+                    category: "namespace",
+                  };
                   throw new HostBoundaryError(
                     "ACTION_REQUIRED",
                     "Unclassified retained blob.",
                   );
+                }
                 seenBlobs.add(hash);
                 await add(
                   rootId,
@@ -1623,13 +1864,19 @@ export class ProjectFileSystem implements FileSystemBoundary {
               for (const id of await list(directory)) {
                 if (
                   rootId !== config.artifactRootId ||
-                  !expected.has(id) ||
+                  (!expected.has(id) &&
+                    !additions?.stages.some((s) => s.stagingId === id)) ||
                   seenStages.has(id)
-                )
+                ) {
+                  inventoryFailure ??= {
+                    check: "scan-stage-classification",
+                    category: "namespace",
+                  };
                   throw new HostBoundaryError(
                     "ACTION_REQUIRED",
                     "Unclassified or duplicate retained stage.",
                   );
+                }
                 seenStages.add(id);
                 await add(
                   rootId,
@@ -1644,6 +1891,10 @@ export class ProjectFileSystem implements FileSystemBoundary {
             ) {
               await add(rootId, name, directory, false);
             } else {
+              inventoryFailure ??= {
+                check: "scan-root-entry-classification",
+                category: "namespace",
+              };
               throw new HostBoundaryError(
                 "ACTION_REQUIRED",
                 "Unclassified retained namespace.",
@@ -1724,7 +1975,33 @@ export class ProjectFileSystem implements FileSystemBoundary {
             blob.stat.nlink === 1 &&
             stage.stat.size === descriptor.artifact.byteLength &&
             blob.stat.size === descriptor.artifact.byteLength;
-          if (stage && blob && isTarget) {
+          const recoveredCoexists =
+            isTarget &&
+            stage &&
+            blob &&
+            sameArtifact(
+              descriptor.artifact,
+              recovered.get(descriptor.artifact.sha256),
+            ) &&
+            !sameFile(stage.stat, blob.stat) &&
+            stage.stat.nlink === 1 &&
+            blob.stat.nlink === 1 &&
+            stage.stat.size === descriptor.artifact.byteLength &&
+            blob.stat.size === descriptor.artifact.byteLength;
+          if (
+            isTarget &&
+            recovered.has(descriptor.artifact.sha256) &&
+            !recoveredCoexists
+          )
+            reject(
+              "publication-shape",
+              "retained-target",
+              "Recovered target requires its unchanged independent historical stage and protected blob.",
+              !stage || !blob
+                ? "missing-stage-or-entry"
+                : "link-count-or-shared-identity",
+            );
+          if (stage && blob && isTarget && !recoveredCoexists) {
             if (
               !sameFile(stage.stat, blob.stat) ||
               stage.stat.nlink !== 2 ||
@@ -1753,7 +2030,7 @@ export class ProjectFileSystem implements FileSystemBoundary {
           const entry = stage ?? (isTarget ? blob : undefined);
           if (
             !entry ||
-            (stage && blob && !historyCoexists) ||
+            (stage && blob && !historyCoexists && !recoveredCoexists) ||
             entry.stat.nlink !== 1 ||
             entry.stat.size !== descriptor.artifact.byteLength
           )
@@ -1783,14 +2060,16 @@ export class ProjectFileSystem implements FileSystemBoundary {
           const target = isTarget
             ? {
                 descriptor,
-                publication: stage
-                  ? ("stage-only" as const)
-                  : ("published-only" as const),
+                publication: recoveredCoexists
+                  ? ("recovered-stage-and-blob" as const)
+                  : stage
+                    ? ("stage-only" as const)
+                    : ("published-only" as const),
               }
             : undefined;
           if (target) targets.push(target);
           reads.push({ descriptor, entry, ...(target ? { target } : {}) });
-          if (historyCoexists) {
+          if (historyCoexists || recoveredCoexists) {
             independentHistory.push({ stage, blob });
             reads.push({ descriptor, entry: blob });
           }
@@ -1936,6 +2215,78 @@ export class ProjectFileSystem implements FileSystemBoundary {
           }
           await config.authorize(input, context);
         };
+        const checkOriginals = async (additions?: {
+          stages: readonly CaptureRecoveryStage[];
+          artifacts: readonly Artifact[];
+        }) => {
+          if (closed || paired.size)
+            throw new HostBoundaryError(
+              "FORBIDDEN",
+              "Original retained pins are not usable for publication.",
+            );
+          await config.authorize(input, context);
+          if (
+            additions &&
+            (additions.stages.length > 10 ||
+              additions.artifacts.length > 10 ||
+              additions.artifacts.some(
+                (a) =>
+                  !validateContract("Artifact", a).success ||
+                  a.id !== `sha256_${a.sha256}` ||
+                  a.path !== `blobs/${a.sha256}`,
+              ) ||
+              additions.stages.some(
+                (s) =>
+                  !/^[0-9a-f-]{36}$/.test(s.stagingId) ||
+                  expected.has(s.stagingId) ||
+                  !additions.artifacts.some((a) => sameArtifact(a, s.artifact)),
+              ))
+          )
+            throw new HostBoundaryError(
+              "FORBIDDEN",
+              "Publication additions are not exact bounded owned outputs.",
+            );
+          await scan(additions);
+          for (const entry of entries) {
+            let held = pins.find((p) => p.identity.path === entry.absolute);
+            if (!held) {
+              held = await config.pin(
+                entry.rootId,
+                entry.relative,
+                entry.directory,
+              );
+              pins.push(held);
+            }
+            const original = entryIdentities.get(entry);
+            if (
+              !original ||
+              held.identity.path !== original.path ||
+              held.identity.file !== original.file ||
+              held.identity.volume !== original.volume
+            )
+              throw new HostBoundaryError(
+                "ARTIFACT_INTEGRITY",
+                "Original native identity changed across publication.",
+              );
+            await held.check();
+            const current = await io(() => lstat(entry.absolute));
+            if (
+              !sameFile(entry.stat, current) ||
+              current.isSymbolicLink() ||
+              current.isDirectory() !== entry.directory ||
+              (!entry.directory &&
+                (current.nlink !== entry.stat.nlink ||
+                  current.size !== entry.stat.size ||
+                  current.mtimeMs !== entry.stat.mtimeMs ||
+                  current.ctimeMs !== entry.stat.ctimeMs))
+            )
+              throw new HostBoundaryError(
+                "ARTIFACT_INTEGRITY",
+                "Original retained identity changed during publication.",
+              );
+          }
+          await config.authorize(input, context);
+        };
         if (
           !targets.some(
             (t) => t.publication === "known-pair-native-read-blocked",
@@ -2005,6 +2356,8 @@ export class ProjectFileSystem implements FileSystemBoundary {
           ),
           targets,
           check,
+          checkOriginals,
+          pauseOriginalPins: releasePins,
           close,
         };
       } catch (error) {

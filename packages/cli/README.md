@@ -1,5 +1,31 @@
 # @design-studio/cli
 
+## Explicit offline recovery (native v7)
+
+```text
+figma reference-recovery-apply-plan --project <ID> --request-id <original request> --expected-job <Job SHA256>
+figma reference-recovery-apply --project <ID> --request-id <original request> --expected-job <Job SHA256> --expected-proof <current apply-plan SHA256> --confirm RECOVER-VERIFIED-REFERENCE-OFFLINE
+figma reference-recovery-inspect --project <ID> --request-id <original request> --expected-job <Job SHA256>
+figma convert-reference --project <ID> --request-id <original request> --expected-job <Job SHA256> --expected-recovery <recovery receipt SHA256> --confirm CONVERT-WITH-RECOVERED-REFERENCE
+```
+
+These commands derive identities and paths from the original request. They
+accept no URLs, caller artifact/job IDs, filesystem paths or serialized proofs.
+The new apply plan must come from the current v7 installation; an older v6
+validation proof cannot authorize writes. Confirming recovery authorizes an
+offline copy/publication, never another download or an original-job retry.
+**Applying seals the project:** schema 5 permits one offline recovery and its
+explicit reference-bound conversion, not unrelated capture/edit/export/metadata
+mutations. The apply plan reports this restriction. Use a separate project for
+unrelated work until version-aware continuation is separately reviewed.
+Maintenance may inspect the sealed project but cannot delete or discard data.
+
+Recovery preserves the consumed interrupted diagnostic and creates a distinct
+receipt. Inspect is nonmutating. A pending effect, unknown publication or retained
+SQLite sidecar is blocked, not automatically reconciled. Conversion uses a new
+receipt-bound identity and still reports `blocked` or `needs-review`, never
+render-ready merely because a reference image is available.
+
 ## Offline retained-reference validation
 
 ```text
@@ -414,3 +440,26 @@ HTTP client reads actual accepted revisions/jobs from the owned native facade.
 The installed functional passes used real F08 entries with only disclosed copied
 KnownFolder/diagnostic instrumentation, not a user-approved release. No live
 installation or performance pass is claimed.
+# Offline reference fork
+
+With an independently approved release-9 fork supplement:
+
+```text
+figma reference-fork --project <SOURCE ID> --request-id <original capture request> --expected-job <Job SHA256> --expected-recovery <recovery receipt SHA256> --confirm FORK-VERIFIED-INPUTS-AND-CONVERT-OFFLINE
+```
+
+The destination is always newly allocated, never caller-selected. This one
+operation verifies selected recorded source inputs, preserves original receipts
+as origin evidence, and commits a fresh destination-bound conversion offline.
+It never retries or repairs the source conversion. A partial destination is
+reported as `blocked-no-replay`; do not reuse the invocation or assume that
+failure means no bytes were written. Schema-6 destinations have no
+legacy read/export or resume command. Output is bounded references and readiness,
+not private design bodies or a render-ready claim.
+
+Completed destinations support `figma reference-fork-result --project <ID>
+--request-id <ID> --expected-receipt <SHA256>` for immutable receipt-bound result
+validation and metadata. Consumers needing actual bytes use
+`openNativeReferenceForkResult` from `@design-studio/application/capture` with
+the documented role/reference consumer callback. This CLI does not export files
+or emit inline private bodies.

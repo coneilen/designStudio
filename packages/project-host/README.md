@@ -1,5 +1,104 @@
 # @design-studio/project-host
 
+## Release-v9 verified-input fork supplement
+
+The independent `reference-fork-policy.json` adds only `figma-reference-fork`
+(`figma reference-fork` in the CLI). All seven preceding policy byte sequences
+and hashes remain unchanged. Release v9 binds the eighth policy hash within
+the unchanged 1024-byte bootstrap release-policy bound; releases v1–v8 retain
+their exact canonical parsing and capability rules. Both bootstrap install and
+launch delegate release-policy admission to the same verified installation API.
+
+The dedicated issuer never forwards to the offline writer. Source proof reads
+are read-only; destination writes require the exact `fork_reference_<64 hex>`
+job namespace and cannot write historical jobs. A write request ID must equal
+its own job ID. Grants deny egress and contain no credential or provider
+authority. The source immutable database pin and
+selected retained-body pins are rooted in current native project, principal and
+v9 installation authority. Acquiring fork authority selects that supplement for
+subsequent retained-entry pins without weakening the underlying pin checks.
+Application/storage enforce schema-5 recorded inputs, a newly created schema-6
+destination, the 16-output/publication bounds, and blocked destination replay.
+No historical stage adoption, source recovery, sidecar repair, or broad source
+inventory capability is introduced. Policy/issuer unit fixtures are synthetic;
+they do not attest a candidate, installed release, or private project.
+
+## Release-v8 read-only conversion inspection
+
+The exact `reference-conversion-inspection-policy.json` supplement adds only
+`figma-reference-conversion-inspect`. All six earlier policy files and hashes,
+including the v7 offline write policy, remain unchanged. Canonical release
+policy v8 includes the new supplement hash; v7 cannot acquire this capability.
+The current verifier continues accepting releases 2–7 under their original
+contracts. Older verifiers reject the unknown v8 policy rather than silently
+authorizing the new command.
+
+The dedicated issuer has no write option and rejects extra fields. It issues
+only read grants, binds a separate immutable DB pin to current installation
+and inspection authority, and preserves the original recovery policy in
+stored evidence and conversion ID derivation. No history is rewritten.
+The application uses one 30-second deadline and physical 25-MiB/EOF meter,
+with the existing native file/sidecar/current-authority guards. The response
+is bounded to 8192 canonical bytes and the release policy to 1024 bytes.
+Inspection cannot become a writer or export private output bodies.
+
+Cross-release native tests materialize the exact pinned `9bcfbaa` Git objects
+into an owned, bounded source fixture and run its v7 writer before the new
+read-only reader. CI checks out full source history for these objects; tests
+never fetch missing history or install dependencies as a fallback. Workspace
+exports resolve only to that pinned materialization, with loaded-file hashes
+and explicit process-wide synthetic network-denial controls. Native files,
+SQLite and publication are real; installation/current-work seams are labeled.
+The complete and post-commit-deadline fixtures preserve ten genuine events;
+an abruptly terminated partial-stage writer must remain blocked by the
+reader's ordinary sidecar/namespace rules, not be reconciled by the test.
+Synthetic negative readers also exercise retained-job eligibility, untagged
+staging, history coexistence and output-size guards. Existing closed diagnostics
+identify only the reached proof stage and, where available, the inventory
+guard category/detail. A stage-only denial cannot identify a private orphan
+or establish absence. Fixture faults and synthetic authority seams are not
+evidence of any particular live failure.
+The retained scan now labels its existing blob, stage and root-entry
+classification refusals with closed namespace checks, without examining the
+rejected entry. Application pending-stage refusals use a separate reader-bound
+`publicationCheck`; neither form changes admission, I/O, error code or policies.
+Unknown propagated errors remain stage-only. Fresh generated native tests
+cover all three scan branches with unchanged project snapshots and no writer.
+
+Each cross-release mode now has a fresh owned fixture with a 60-second setup
+hook, a separate 60-second reader/assertion body, and a 60-second cleanup
+hook. Setup owns the genuine old writer, both source inventories, loaded-module
+and writer-egress checks, and the initial project snapshot. The body retains
+the actual new reader, all result/diagnostic/no-write checks, reader-egress
+verification and final snapshot equality. This separation increases the
+possible aggregate fixture wall time; it is not an unchanged total test
+duration or a production deadline increase. Native operations remain bounded
+to 30 seconds/25 MiB, child probes to 60 seconds, and workers and CI watchdog
+are unchanged. One original test-context signal covers hook and body; original
+work and child closure remain owned across the handoff and are joined before
+root deletion. Closed phase telemetry is armed before root allocation, and
+deterministic setup/reader-abort tests gate real SQLite children and cleanup.
+
+## Offline reference write supplement
+
+Release policy v7 adds the exact `reference-offline-policy.json` supplement.
+All five preceding policy byte sequences and digests remain unchanged.
+Only a currently verified v7 installation can issue offline recovery or
+reference-backed conversion grants. The v6 read-only plan entry does not gain
+write authority. New schema-4/5 inspection uses its own admitted reader.
+
+Recovery holds the existing exclusive project owner across immutable-read
+closure and separately admitted writer opening. The new grant has no credential,
+provider, DNS or network operations and grants no write to the historical
+diagnostic. Server-derived migration backup names are current-owner-created and
+published with the normal NTFS write-through adapter before schema changes.
+Read-only DB pins never become write handles.
+
+Retained SQLite sidecars, changed native identity, foreign owner, unsupported
+link state and unknown publication remain denials. No ACL repair, historical
+stage adoption or generic SQL/path endpoint is provided. Synthetic owner
+preparation exists only in tests and is not installed as a recovery capability.
+
 ## Version-6 retained-validation supplement
 
 `reference-validation-policy.json` is separately inventory-bound by release

@@ -52,7 +52,12 @@ ajv.addFormat("date-time", {
     );
   },
 });
-ajv.addSchema(foundationSchema);
+// Public lookups address named definitions, not the unrelated document-root union.
+ajv.addSchema({
+  $schema: foundationSchema.$schema,
+  $id: foundationSchema.$id,
+  definitions: foundationSchema.definitions,
+});
 const validators = new Map<string, ValidateFunction<unknown>>();
 
 function issue(

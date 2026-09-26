@@ -2,6 +2,23 @@
 import type * as Types from "./generated.js";
 
 export interface ContractTypes {
+  ReferenceForkArtifacts: Types.ReferenceForkArtifacts;
+  ReferenceForkConversion: Types.ReferenceForkConversion;
+  ReferenceForkResultManifest: Types.ReferenceForkResultManifest;
+  NativeReferenceForkResultEnvelope: Types.NativeReferenceForkResultEnvelope;
+  ReferenceForkReservation: Types.ReferenceForkReservation;
+  ReferenceForkOrigin: Types.ReferenceForkOrigin;
+  NativeReferenceForkEnvelope: Types.NativeReferenceForkEnvelope;
+  ReferenceRecoveryBinding: Types.ReferenceRecoveryBinding;
+  ReferenceRecoveryArchive: Types.ReferenceRecoveryArchive;
+  ReferenceRecoveryRecord: Types.ReferenceRecoveryRecord;
+  ReferenceRecoveryEvidence: Types.ReferenceRecoveryEvidence;
+  OfflineReferencePlan: Types.OfflineReferencePlan;
+  EffectiveReference: Types.EffectiveReference;
+  ReferenceConversionEvidence: Types.ReferenceConversionEvidence;
+  ReferenceConversionInspectionProof: Types.ReferenceConversionInspectionProof;
+  ReferenceConversionInspection: Types.ReferenceConversionInspection;
+  NativeReferenceOfflineEnvelope: Types.NativeReferenceOfflineEnvelope;
   SchemaVersion: Types.SchemaVersion;
   StableId: Types.StableId;
   Sha256: Types.Sha256;
@@ -96,7 +113,9 @@ export interface ContractTypes {
   ReferenceJobUsage: Types.ReferenceJobUsage;
   ReferenceJobMetadata: Types.ReferenceJobMetadata;
   ReferenceRecoveryPlan: Types.ReferenceRecoveryPlan;
+  RetainedPublicationCheck: Types.RetainedPublicationCheck;
   RetainedInventoryFailure: Types.RetainedInventoryFailure;
+  ReferenceRecoveryPlanReason: Types.ReferenceRecoveryPlanReason;
   NativeReferenceRecoveryPlanEnvelope: Types.NativeReferenceRecoveryPlanEnvelope;
   NativeReferenceEnvelope: Types.NativeReferenceEnvelope;
   Operation: Types.Operation;
@@ -175,6 +194,23 @@ export interface ContractTypes {
 export type ContractName = keyof ContractTypes;
 
 export const contractNames: readonly ContractName[] = [
+  "ReferenceForkArtifacts",
+  "ReferenceForkConversion",
+  "ReferenceForkResultManifest",
+  "NativeReferenceForkResultEnvelope",
+  "ReferenceForkReservation",
+  "ReferenceForkOrigin",
+  "NativeReferenceForkEnvelope",
+  "ReferenceRecoveryBinding",
+  "ReferenceRecoveryArchive",
+  "ReferenceRecoveryRecord",
+  "ReferenceRecoveryEvidence",
+  "OfflineReferencePlan",
+  "EffectiveReference",
+  "ReferenceConversionEvidence",
+  "ReferenceConversionInspectionProof",
+  "ReferenceConversionInspection",
+  "NativeReferenceOfflineEnvelope",
   "SchemaVersion",
   "StableId",
   "Sha256",
@@ -269,7 +305,9 @@ export const contractNames: readonly ContractName[] = [
   "ReferenceJobUsage",
   "ReferenceJobMetadata",
   "ReferenceRecoveryPlan",
+  "RetainedPublicationCheck",
   "RetainedInventoryFailure",
+  "ReferenceRecoveryPlanReason",
   "NativeReferenceRecoveryPlanEnvelope",
   "NativeReferenceEnvelope",
   "Operation",
