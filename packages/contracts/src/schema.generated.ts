@@ -19,6 +19,76 @@ export const foundationSchema = {
     }
   ],
   "definitions": {
+    "ReferenceForkArtifacts": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 7,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "role",
+          "artifact"
+        ],
+        "properties": {
+          "role": {
+            "enum": [
+              "design",
+              "resources",
+              "source-map",
+              "conversion-evidence",
+              "provenance",
+              "report",
+              "reference"
+            ]
+          },
+          "artifact": {
+            "$ref": "#/definitions/ArtifactReference"
+          }
+        }
+      }
+    },
+    "ReferenceForkConversion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operationId",
+        "origin",
+        "receiptSha256",
+        "outputs",
+        "artifacts",
+        "readiness"
+      ],
+      "properties": {
+        "operationId": {
+          "$ref": "#/definitions/StableId"
+        },
+        "origin": {
+          "$ref": "#/definitions/ArtifactReference"
+        },
+        "receiptSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "outputs": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "$ref": "#/definitions/Artifact"
+          }
+        },
+        "artifacts": {
+          "$ref": "#/definitions/ReferenceForkArtifacts"
+        },
+        "readiness": {
+          "enum": [
+            "blocked",
+            "needs-review"
+          ]
+        }
+      }
+    },
     "ReferenceForkResultManifest": {
       "type": "object",
       "additionalProperties": false,
@@ -44,7 +114,7 @@ export const foundationSchema = {
           "$ref": "#/definitions/ArtifactReference"
         },
         "artifacts": {
-          "$ref": "#/definitions/NativeReferenceForkEnvelope/properties/conversion/properties/artifacts"
+          "$ref": "#/definitions/ReferenceForkArtifacts"
         },
         "readiness": {
           "enum": [
@@ -91,7 +161,7 @@ export const foundationSchema = {
           "$ref": "#/definitions/ContractError"
         },
         "conversion": {
-          "$ref": "#/definitions/NativeReferenceForkEnvelope/properties/conversion"
+          "$ref": "#/definitions/ReferenceForkConversion"
         }
       },
       "allOf": [
@@ -336,71 +406,7 @@ export const foundationSchema = {
           "const": "blocked-no-replay"
         },
         "conversion": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "operationId",
-            "origin",
-            "receiptSha256",
-            "outputs",
-            "artifacts",
-            "readiness"
-          ],
-          "properties": {
-            "operationId": {
-              "$ref": "#/definitions/StableId"
-            },
-            "origin": {
-              "$ref": "#/definitions/ArtifactReference"
-            },
-            "receiptSha256": {
-              "type": "string",
-              "pattern": "^[a-f0-9]{64}$"
-            },
-            "outputs": {
-              "type": "array",
-              "minItems": 1,
-              "maxItems": 16,
-              "items": {
-                "$ref": "#/definitions/Artifact"
-              }
-            },
-            "artifacts": {
-              "type": "array",
-              "minItems": 5,
-              "maxItems": 7,
-              "items": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "role",
-                  "artifact"
-                ],
-                "properties": {
-                  "role": {
-                    "enum": [
-                      "design",
-                      "resources",
-                      "source-map",
-                      "conversion-evidence",
-                      "provenance",
-                      "report",
-                      "reference"
-                    ]
-                  },
-                  "artifact": {
-                    "$ref": "#/definitions/ArtifactReference"
-                  }
-                }
-              }
-            },
-            "readiness": {
-              "enum": [
-                "blocked",
-                "needs-review"
-              ]
-            }
-          }
+          "$ref": "#/definitions/ReferenceForkConversion"
         }
       },
       "allOf": [

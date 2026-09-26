@@ -80,6 +80,8 @@ const publicArtifacts = [
   "NativeReferenceOfflineEnvelope",
   "ReferenceConversionInspection",
   "ReferenceForkOrigin",
+  "ReferenceForkArtifacts",
+  "ReferenceForkConversion",
   "ReferenceForkReservation",
   "ReferenceForkResultManifest",
   "NativeReferenceForkResultEnvelope",

@@ -1,20 +1,13 @@
 /* Generated from schemas/foundation.schema.json. Do not edit. */
 
 /**
- * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "StableId".
- */
-export type StableId = string;
-/**
- * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "Sha256".
- */
-export type Sha256 = string;
-/**
  * @minItems 5
  * @maxItems 7
+ *
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "ReferenceForkArtifacts".
  */
-export type Artifacts =
+export type ReferenceForkArtifacts =
   | [
       {
         role: "design" | "resources" | "source-map" | "conversion-evidence" | "provenance" | "report" | "reference";
@@ -95,6 +88,23 @@ export type Artifacts =
     ];
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "StableId".
+ */
+export type StableId = string;
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "Sha256".
+ */
+export type Sha256 = string;
+/**
+ * Portable bundle-relative slash path, not a host filesystem path. No drives, traversal, empty segments, percent escapes, ADS or Windows reserved basenames. Host confinement/symlink checks are F04.
+ *
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "RelativePath".
+ */
+export type RelativePath = string;
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "NativeReferenceForkResultEnvelope".
  */
 export type NativeReferenceForkResultEnvelope = {
@@ -107,7 +117,7 @@ export type NativeReferenceForkResultEnvelope = {
   status: "complete" | "failed";
   inputAccounting: ReferenceInputAccounting;
   error?: ContractError;
-  conversion?: Conversion;
+  conversion?: ReferenceForkConversion;
 };
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
@@ -190,13 +200,6 @@ export type ErrorCode =
  */
 export type Timestamp = string;
 /**
- * Portable bundle-relative slash path, not a host filesystem path. No drives, traversal, empty segments, percent escapes, ADS or Windows reserved basenames. Host confinement/symlink checks are F04.
- *
- * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "RelativePath".
- */
-export type RelativePath = string;
-/**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "SchemaVersion".
  */
@@ -236,7 +239,7 @@ export type NativeReferenceForkEnvelope = {
   inputAccounting: ReferenceInputAccounting;
   error?: ContractError;
   partialDestination?: "blocked-no-replay";
-  conversion?: Conversion;
+  conversion?: ReferenceForkConversion;
 };
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
@@ -990,6 +993,8 @@ export type ProviderOutcome =
     };
 
 export interface ContractCatalog {
+  ReferenceForkArtifacts: ReferenceForkArtifacts;
+  ReferenceForkConversion: ReferenceForkConversion;
   ReferenceForkResultManifest: ReferenceForkResultManifest;
   NativeReferenceForkResultEnvelope: NativeReferenceForkResultEnvelope;
   ReferenceForkReservation: ReferenceForkReservation;
@@ -1178,18 +1183,6 @@ export interface ContractCatalog {
 }
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "ReferenceForkResultManifest".
- */
-export interface ReferenceForkResultManifest {
-  schemaVersion: "1.0";
-  operationId: StableId;
-  projectId: StableId;
-  origin: ArtifactReference;
-  artifacts: Artifacts;
-  readiness: "blocked" | "needs-review";
-}
-/**
- * This interface was referenced by `ContractCatalog`'s JSON-Schema
  * via the `definition` "ArtifactReference".
  */
 export interface ArtifactReference {
@@ -1198,70 +1191,9 @@ export interface ArtifactReference {
 }
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "ReferenceInputAccounting".
+ * via the `definition` "ReferenceForkConversion".
  */
-export interface ReferenceInputAccounting {
-  limitBytes: number;
-  privateBytes: number;
-  networkBytes: number;
-  phase: "proof" | "history" | "inventory" | "admission" | "acquisition" | "commit" | "inspection";
-  rejected?: {
-    kind: "private" | "network";
-    bytes: number;
-    limit: "aggregate" | "per-read";
-    phase: "proof" | "history" | "inventory" | "admission" | "acquisition" | "commit" | "inspection";
-  };
-}
-/**
- * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "ContractError".
- */
-export interface ContractError {
-  code: ErrorCode;
-  message: string;
-  retryable: boolean;
-  retryAfter?: Timestamp;
-  jobId?: StableId;
-  referenceDiagnostic?: ReferenceDiagnostic;
-  diagnosticIds: StableId[];
-}
-/**
- * Closed nonsecret observations only. Absence on legacy evidence means unknown, never a reconstructed diagnosis. A command diagnostic without a receipt is not durable proof.
- *
- * This interface was referenced by `ContractCatalog`'s JSON-Schema
- * via the `definition` "ReferenceDiagnostic".
- */
-export interface ReferenceDiagnostic {
-  stage: "mime" | "png" | "json" | "worker" | "operation" | "legacy";
-  reason:
-    | "validated"
-    | "mime-missing"
-    | "mime-rejected"
-    | "not-png"
-    | "png-malformed"
-    | "png-unsupported"
-    | "png-interlace"
-    | "png-animation"
-    | "png-critical"
-    | "png-color-unsupported"
-    | "png-color-conflict"
-    | "input-limit"
-    | "output-limit"
-    | "raster-limit"
-    | "node-limit"
-    | "depth-limit"
-    | "intermediate-limit"
-    | "json-malformed"
-    | "worker-protocol"
-    | "worker-unavailable"
-    | "worker-limit"
-    | "cancelled"
-    | "deadline"
-    | "authority"
-    | "legacy-unknown";
-  mimeClass: "not-observed" | "png" | "generic-binary" | "missing" | "other";
-}
-export interface Conversion {
+export interface ReferenceForkConversion {
   operationId: StableId;
   origin: ArtifactReference;
   receiptSha256: string;
@@ -1361,7 +1293,7 @@ export interface Conversion {
         Artifact,
         Artifact,
       ];
-  artifacts: Artifacts;
+  artifacts: ReferenceForkArtifacts;
   readiness: "blocked" | "needs-review";
 }
 /**
@@ -1374,6 +1306,83 @@ export interface Artifact {
   mediaType: string;
   byteLength: number;
   sha256: Sha256;
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "ReferenceForkResultManifest".
+ */
+export interface ReferenceForkResultManifest {
+  schemaVersion: "1.0";
+  operationId: StableId;
+  projectId: StableId;
+  origin: ArtifactReference;
+  artifacts: ReferenceForkArtifacts;
+  readiness: "blocked" | "needs-review";
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "ReferenceInputAccounting".
+ */
+export interface ReferenceInputAccounting {
+  limitBytes: number;
+  privateBytes: number;
+  networkBytes: number;
+  phase: "proof" | "history" | "inventory" | "admission" | "acquisition" | "commit" | "inspection";
+  rejected?: {
+    kind: "private" | "network";
+    bytes: number;
+    limit: "aggregate" | "per-read";
+    phase: "proof" | "history" | "inventory" | "admission" | "acquisition" | "commit" | "inspection";
+  };
+}
+/**
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "ContractError".
+ */
+export interface ContractError {
+  code: ErrorCode;
+  message: string;
+  retryable: boolean;
+  retryAfter?: Timestamp;
+  jobId?: StableId;
+  referenceDiagnostic?: ReferenceDiagnostic;
+  diagnosticIds: StableId[];
+}
+/**
+ * Closed nonsecret observations only. Absence on legacy evidence means unknown, never a reconstructed diagnosis. A command diagnostic without a receipt is not durable proof.
+ *
+ * This interface was referenced by `ContractCatalog`'s JSON-Schema
+ * via the `definition` "ReferenceDiagnostic".
+ */
+export interface ReferenceDiagnostic {
+  stage: "mime" | "png" | "json" | "worker" | "operation" | "legacy";
+  reason:
+    | "validated"
+    | "mime-missing"
+    | "mime-rejected"
+    | "not-png"
+    | "png-malformed"
+    | "png-unsupported"
+    | "png-interlace"
+    | "png-animation"
+    | "png-critical"
+    | "png-color-unsupported"
+    | "png-color-conflict"
+    | "input-limit"
+    | "output-limit"
+    | "raster-limit"
+    | "node-limit"
+    | "depth-limit"
+    | "intermediate-limit"
+    | "json-malformed"
+    | "worker-protocol"
+    | "worker-unavailable"
+    | "worker-limit"
+    | "cancelled"
+    | "deadline"
+    | "authority"
+    | "legacy-unknown";
+  mimeClass: "not-observed" | "png" | "generic-binary" | "missing" | "other";
 }
 /**
  * This interface was referenced by `ContractCatalog`'s JSON-Schema

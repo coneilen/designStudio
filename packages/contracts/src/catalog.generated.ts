@@ -2,6 +2,8 @@
 import type * as Types from "./generated.js";
 
 export interface ContractTypes {
+  ReferenceForkArtifacts: Types.ReferenceForkArtifacts;
+  ReferenceForkConversion: Types.ReferenceForkConversion;
   ReferenceForkResultManifest: Types.ReferenceForkResultManifest;
   NativeReferenceForkResultEnvelope: Types.NativeReferenceForkResultEnvelope;
   ReferenceForkReservation: Types.ReferenceForkReservation;
@@ -192,6 +194,8 @@ export interface ContractTypes {
 export type ContractName = keyof ContractTypes;
 
 export const contractNames: readonly ContractName[] = [
+  "ReferenceForkArtifacts",
+  "ReferenceForkConversion",
   "ReferenceForkResultManifest",
   "NativeReferenceForkResultEnvelope",
   "ReferenceForkReservation",
