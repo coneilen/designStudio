@@ -60,6 +60,11 @@ export interface ProjectFileSystemOptions {
     }>;
   };
   reservedStaging?: {
+    create?(
+      reservation: ReservedStage,
+      bytes: Uint8Array,
+      context: OperationContext,
+    ): Promise<{ dev: number; ino: number }>;
     authorize(
       reservation: ReservedStage,
       context: OperationContext,
@@ -875,7 +880,23 @@ export class ProjectFileSystem implements FileSystemBoundary {
             "ARTIFACT_INTEGRITY",
             "Managed blob path must match the exact bytes hash.",
           );
-        await this.resolve(root, request.path, true);
+        const nativeCreate =
+          reservation && this.options.reservedStaging?.create;
+        let createdIdentity: { dev: number; ino: number } | undefined;
+        if (nativeCreate) {
+          createdIdentity = await nativeCreate(reservation, owned, context);
+          if (!root.staging) {
+            const directory = path.join(
+              root.path,
+              `.host-${reservation.hostId}`,
+            );
+            root.staging = {
+              path: directory,
+              identity: await lstat(directory),
+            };
+          }
+        }
+        await this.resolve(root, request.path, !nativeCreate);
         guard.check();
         if (!root.staging) {
           const directory = path.join(
@@ -908,18 +929,35 @@ export class ProjectFileSystem implements FileSystemBoundary {
             "INVALID_INPUT",
             "Invalid artifact metadata.",
           );
-        const handle = await io(() => open(absolute, "wx", 0o600));
         let identity: Stats;
-        try {
-          await io(() => handle.writeFile(owned));
-          await io(() => handle.sync());
-          identity = await handle.stat();
-        } catch (error) {
+        if (nativeCreate) {
+          identity = await io(() => lstat(absolute));
+          if (
+            !createdIdentity ||
+            identity.dev !== createdIdentity.dev ||
+            identity.ino !== createdIdentity.ino ||
+            !identity.isFile() ||
+            identity.isSymbolicLink() ||
+            identity.nlink !== 1 ||
+            identity.size !== owned.length
+          )
+            throw new HostBoundaryError(
+              "ARTIFACT_INTEGRITY",
+              "Native reserved creation changed file shape.",
+            );
+        } else {
+          const handle = await io(() => open(absolute, "wx", 0o600));
+          try {
+            await io(() => handle.writeFile(owned));
+            await io(() => handle.sync());
+            identity = await handle.stat();
+          } catch (error) {
+            await handle.close();
+            if (!reservation) await io(() => unlink(absolute));
+            throw error;
+          }
           await handle.close();
-          if (!reservation) await io(() => unlink(absolute));
-          throw error;
         }
-        await handle.close();
         const staged = { stagingId, artifact };
         this.pending.set(stagingId, {
           root,

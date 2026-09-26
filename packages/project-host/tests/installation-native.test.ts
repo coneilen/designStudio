@@ -31,6 +31,7 @@ import {
 } from "vitest";
 import { loadNative, type ReadLease } from "../src/native.js";
 import { pinReferenceBackupFile } from "../src/reference-backup.js";
+import { referenceForkCreation } from "../src/reference-fork-creation.js";
 import { pinImmutableReferenceDatabase } from "../src/reference-validation-database.js";
 import { pinRetainedReferenceEntry } from "../src/reference-validation-entry.js";
 import {
@@ -41,6 +42,185 @@ import {
 import { createRetainedOwnerFixture } from "./retained-owner-fixture.js";
 import { retainedSecurityFixture } from "./retained-security-fixture.js";
 import { ownedTest, weakenTestAcl } from "./support.js";
+
+test("reserved fork creation uses current owner at creation and cannot adopt existing children", async () => {
+  await ownedTest(async (root, _own, beforeCleanup) => {
+    const native = await loadNative(),
+      sid = native.principal();
+    const owner = await createRetainedOwnerFixture(root);
+    beforeCleanup(() => owner.close());
+    await owner.declareTree("artifacts");
+    const artifacts = path.join(root, "artifacts");
+    native.createDirectory(artifacts, sid);
+    const creation = referenceForkCreation({
+      root: artifacts,
+      sid,
+      authorize: async () => {},
+    });
+    beforeCleanup(() => creation.close());
+    const ctx = syntheticContext(),
+      bytes = Buffer.alloc(70000, 61);
+    const parent = native.pinRetainedRoot(artifacts, sid);
+    try {
+      expect(() =>
+        native.createRetainedChild({ ...parent }, "blobs", true),
+      ).toThrow(/branded/);
+      expect(() =>
+        native.createRetainedChild(parent, "../escape", true),
+      ).toThrow(/bounded/);
+    } finally {
+      parent.close();
+    }
+    const hash = createHash("sha256").update(bytes).digest("hex");
+    const stage = {
+      hostId: "00000000-0000-4000-8000-000000000001",
+      stagingId: "00000000-0000-4000-8000-000000000002",
+      artifact: {
+        id: `sha256_${hash}`,
+        sha256: hash,
+        path: `blobs/${hash}`,
+        mediaType: "application/octet-stream",
+        byteLength: bytes.length,
+      },
+    };
+    await creation.create(stage, bytes, ctx);
+    const observed = await owner.inspect();
+    expect(observed.every((entry) => entry.owner === sid)).toBe(true);
+    for (const entry of observed.filter((e) => e.relative !== "artifacts")) {
+      expect(entry.control & 0x1004).toBe(4);
+      inheritedAcl(entry.dacl, entry.directory, sid);
+    }
+    const pins = new Set<ReadLease>();
+    const pin = await pinRetainedReferenceEntry({
+      root: artifacts,
+      relative: `.host-${stage.hostId}/${stage.stagingId}`,
+      directory: false,
+      sid,
+      retainedPins: pins,
+      authorize: async () => {},
+    });
+    await pin.check();
+    pin.close();
+    expect(pins.size).toBe(0);
+    await expect(creation.create(stage, bytes, ctx)).rejects.toThrow();
+    expect(await owner.inspect()).toEqual(observed);
+    console.log(
+      JSON.stringify({
+        scope: "native-reserved-fork-owner",
+        currentOwner: true,
+        ownerMutations: 0,
+        inheritedAcl: true,
+        exclusiveExistingRefused: true,
+      }),
+    );
+  });
+});
+for (const boundary of [
+  "before-create",
+  "write",
+  "flush",
+  "close",
+  "cancel",
+  "deadline",
+] as const)
+  test(`reserved fork creation retains and joins native ownership at ${boundary}`, async () => {
+    await ownedTest(async (root, _own, beforeCleanup) => {
+      const native = await loadNative(),
+        sid = native.principal();
+      const artifacts = path.join(root, "artifacts");
+      native.createDirectory(artifacts, sid);
+      let active = true,
+        failed = false,
+        writeCalls = 0,
+        closeCalls = 0;
+      const abort = new AbortController();
+      const ctx = syntheticContext();
+      const now = ctx.clock.now();
+      let elapsed = 0;
+      const context = {
+        ...ctx,
+        signal: abort.signal,
+        clock: { ...ctx.clock, now: () => now + elapsed },
+      };
+      const original = native.createRetainedChild;
+      const spy = vi
+        .spyOn(native, "createRetainedChild")
+        .mockImplementation((parent, name, directory) => {
+          if (!directory && boundary === "before-create" && active) {
+            failed = true;
+            throw new Error("Synthetic before create");
+          }
+          const entry = original(parent, name, directory);
+          if (directory) return entry;
+          return {
+            ...entry,
+            write: (bytes) => {
+              entry.write(bytes);
+              writeCalls++;
+              if (active && boundary === "write") {
+                failed = true;
+                throw new Error("Synthetic after partial write");
+              }
+              if (active && boundary === "cancel") abort.abort();
+              if (active && boundary === "deadline") elapsed = 30001;
+            },
+            flush: () => {
+              entry.flush();
+              if (active && boundary === "flush") {
+                failed = true;
+                throw new Error("Synthetic after flush");
+              }
+            },
+            close: () => {
+              closeCalls++;
+              if (active && boundary === "close") {
+                failed = true;
+                throw new Error("Synthetic native close pending");
+              }
+              entry.close();
+            },
+          };
+        });
+      beforeCleanup(() => spy.mockRestore());
+      const creation = referenceForkCreation({
+        root: artifacts,
+        sid,
+        authorize: async () => {},
+      });
+      beforeCleanup(() => {
+        active = false;
+        creation.close();
+      });
+      const bytes = Buffer.alloc(70000, 41),
+        hash = createHash("sha256").update(bytes).digest("hex");
+      const stage = {
+        hostId: "00000000-0000-4000-8000-000000000003",
+        stagingId: "00000000-0000-4000-8000-000000000004",
+        artifact: {
+          id: `sha256_${hash}`,
+          sha256: hash,
+          path: `blobs/${hash}`,
+          mediaType: "application/octet-stream",
+          byteLength: bytes.length,
+        },
+      };
+      await expect(creation.create(stage, bytes, context)).rejects.toThrow();
+      if (boundary !== "cancel" && boundary !== "deadline")
+        expect(failed).toBe(true);
+      await expect(creation.create(stage, bytes, context)).rejects.toThrow(
+        /cleanup/,
+      );
+      active = false;
+      creation.close();
+      if (boundary !== "before-create") expect(closeCalls).toBeGreaterThan(0);
+      if (
+        boundary === "write" ||
+        boundary === "cancel" ||
+        boundary === "deadline"
+      )
+        expect(writeCalls).toBe(1);
+    });
+  });
 
 describe("pinned v7 conversion compatibility", () => {
   let materialized: {

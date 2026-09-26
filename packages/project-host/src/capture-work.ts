@@ -18,6 +18,7 @@ import {
   snapshotOperationContext,
 } from "@design-studio/host";
 import { OwnedFigmaCredentialAdapter } from "../../host/dist/credential-admin-vault.js";
+import type { ReservedStage } from "../../host/dist/filesystem.js";
 import {
   type NativeCapturePolicy,
   nativeCapturePolicy,
@@ -44,6 +45,7 @@ import {
   type ReferenceBackupPin,
 } from "./reference-backup.js";
 import { REFERENCE_CONVERSION_INSPECTION_POLICY_SHA256 } from "./reference-conversion-inspection-profile.js";
+import { referenceForkCreation } from "./reference-fork-creation.js";
 import { REFERENCE_FORK_POLICY_SHA256 } from "./reference-fork-profile.js";
 import { REFERENCE_OFFLINE_POLICY_SHA256 } from "./reference-offline-profile.js";
 import { pinImmutableReferenceDatabase } from "./reference-validation-database.js";
@@ -51,6 +53,11 @@ import { pinRetainedReferenceEntry } from "./reference-validation-entry.js";
 import { REFERENCE_VALIDATION_POLICY_SHA256 } from "./reference-validation-profile.js";
 
 export interface CaptureWork {
+  createReferenceForkStage?(
+    stage: ReservedStage,
+    bytes: Uint8Array,
+    context: OperationContext,
+  ): Promise<{ dev: number; ino: number }>;
   readonly project: CaptureProject;
   readonly actorId: string;
   readonly permissionScope: string;
@@ -125,6 +132,31 @@ export function acquireCaptureWork(project: CaptureProject): CaptureWork {
   owner.work++;
   const readers = new Set<ScopedCredentialStore>();
   const retainedPins = new Set<ReadLease>();
+  const forkCreation = referenceForkCreation({
+    root: project.paths.artifacts,
+    sid: owner.sid,
+    authorize: async (context) => {
+      await current();
+      assertReferenceForkInstallation(owner.installation);
+      if (
+        context.projectId !== project.projectId ||
+        !/^fork_reference_[a-f0-9]{64}$/.test(context.jobId ?? "") ||
+        context.requestId !== context.jobId ||
+        context.clock !== work.policy.clock
+      )
+        refuse("Fork creation context is not destination-bound.");
+      authorizeOperation(
+        context,
+        {
+          projectId: project.projectId,
+          resourceKind: "artifact",
+          resourceId: project.artifactRootId,
+          operation: "write",
+        },
+        work.policy.verify,
+      );
+    },
+  });
   let closed = false;
   let policy: NativeCapturePolicy | undefined;
   let referenceFork = false;
@@ -191,6 +223,7 @@ export function acquireCaptureWork(project: CaptureProject): CaptureWork {
     };
   };
   const work: CaptureWork = Object.freeze({
+    createReferenceForkStage: forkCreation.create,
     project,
     actorId: project.principal.actorId,
     permissionScope: owner.binding.scope.permissionScope,
@@ -535,6 +568,7 @@ export function acquireCaptureWork(project: CaptureProject): CaptureWork {
     close() {
       if (closed) return;
       if (readers.size) refuse("Original credential work has not quiesced.");
+      forkCreation.close();
       const errors: unknown[] = [];
       for (const pin of [...retainedPins]) {
         try {

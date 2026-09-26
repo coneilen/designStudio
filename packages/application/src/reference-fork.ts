@@ -493,6 +493,8 @@ export function openNativeReferenceFork(
           true,
         );
         const dw = destinationWork;
+        const createStage = dw.createReferenceForkStage?.bind(dw);
+        if (!createStage) throw new ApplicationError("FORBIDDEN");
         destinationFiles = await ProjectFileSystem.create({
           projectId: destination.projectId,
           authority: dw.policy.verify,
@@ -509,6 +511,21 @@ export function openNativeReferenceFork(
             },
           ],
           reservedStaging: {
+            create: async (stage, bytes, context) => {
+              await authorize(dw, context, true);
+              if (
+                !reservation ||
+                reservation.hostId !== stage.hostId ||
+                !reservation.stages.some((s) =>
+                  same(s, {
+                    stagingId: stage.stagingId,
+                    artifact: stage.artifact,
+                  }),
+                )
+              )
+                throw new ApplicationError("FORBIDDEN");
+              return createStage(stage, bytes, context);
+            },
             authorize: async (stage, context) => {
               await authorize(dw, context, true);
               if (

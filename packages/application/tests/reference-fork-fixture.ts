@@ -10,6 +10,8 @@ import { loadNative, type ReadLease } from "../../project-host/dist/native.js";
 import { REFERENCE_FORK_POLICY_SHA256 } from "../../project-host/dist/reference-fork-profile.js";
 import { pinImmutableReferenceDatabase } from "../../project-host/dist/reference-validation-database.js";
 import { pinRetainedReferenceEntry } from "../../project-host/dist/reference-validation-entry.js";
+import { referenceForkCreation } from "../../project-host/src/reference-fork-creation.js";
+import { createRetainedOwnerFixture } from "../../project-host/tests/retained-owner-fixture.js";
 import { NativeCaptureCleanupRequired } from "../src/capture-runtime-internal.js";
 import {
   openNativeReferenceFork,
@@ -36,6 +38,9 @@ export async function runTransferredForkFixture(
   );
   let created = false;
   let handedOff = false;
+  let destinationOwner:
+    | Awaited<ReturnType<typeof createRetainedOwnerFixture>>
+    | undefined;
   const readPaths: string[] = [];
   const corrupt =
     process.env.DESIGN_STUDIO_INSPECTION_FAULT === "fork-source-tamper";
@@ -117,6 +122,7 @@ export async function runTransferredForkFixture(
   let runtime: ReturnType<typeof openNativeReferenceFork> | undefined;
   cleanup(async () => {
     await runtime?.close();
+    destinationOwner?.close();
     openSpy.mockRestore();
     if (!handedOff) await rm(directory, { recursive: true, force: true });
   });
@@ -155,8 +161,10 @@ export async function runTransferredForkFixture(
   runtime = openNativeReferenceFork(sourceWork.project, async () => {
     expect(created).toBe(false);
     created = true;
-    const root = path.join(directory, "destination");
+    const root = path.join(directory, "ds-ph-fork-destination");
     native.createDirectory(root, sid);
+    destinationOwner = await createRetainedOwnerFixture(root);
+    await destinationOwner.declareTree("artifacts");
     for (const child of ["artifacts", "outputs", "db"])
       native.createDirectory(path.join(root, child), sid);
     native.createFile(
@@ -166,6 +174,16 @@ export async function runTransferredForkFixture(
     );
     let live = true;
     let policy: ReturnType<typeof nativeCapturePolicy>;
+    const creation = referenceForkCreation({
+      root: path.join(root, "artifacts"),
+      sid,
+      authorize: async (context) => {
+        expect(context.projectId).toBe("project_fork_synthetic");
+        expect(context.jobId).toMatch(/^fork_reference_/);
+        expect(context.authorization.egress).toBe("deny");
+        if (!live) throw new Error("Synthetic destination owner closed");
+      },
+    });
     const project: CaptureProject = {
       projectId: "project_fork_synthetic",
       artifactRootId: "artifacts_fork_synthetic",
@@ -193,6 +211,7 @@ export async function runTransferredForkFixture(
       },
     };
     const work: CaptureWork = {
+      createReferenceForkStage: creation.create,
       ...sourceWork,
       project,
       permissionScope: "fork-synthetic",
@@ -202,6 +221,7 @@ export async function runTransferredForkFixture(
       current: project.recheck,
       isCurrent: () => live,
       close: () => {
+        creation.close();
         live = false;
         policy.close();
       },
@@ -298,10 +318,64 @@ export async function runTransferredForkFixture(
   const handoff = process.env.DESIGN_STUDIO_V7_HANDOFF;
   if (!handoff || !result.conversion)
     throw new Error("Missing owned cold fork handoff.");
+  if (!destinationOwner)
+    throw new Error("Missing declared destination owner fixture.");
+  const natural = await destinationOwner.inspect();
+  const foreign = natural.filter((entry) => entry.owner !== sid);
+  expect(foreign).toEqual([]);
+  const origin = result.conversion.origin;
+  const originAncestors = natural.filter(
+    (entry) =>
+      entry.relative === "artifacts" ||
+      entry.relative === "artifacts/blobs" ||
+      entry.relative === `artifacts/blobs/${origin.sha256}`,
+  );
+  expect(originAncestors).toHaveLength(3);
+  const pins = new Set<ReadLease>();
+  const admission = pinRetainedReferenceEntry({
+    root: path.join(directory, "ds-ph-fork-destination", "artifacts"),
+    relative: `blobs/${origin.sha256}`,
+    directory: false,
+    sid,
+    retainedPins: pins,
+    authorize: async () => {
+      executionSignal.throwIfAborted();
+    },
+  });
+  if (originAncestors.some((entry) => entry.owner !== sid))
+    await expect(admission).rejects.toThrow(/owner/);
+  else (await admission).close();
+  expect(pins.size).toBe(0);
+  const after = await destinationOwner.inspect();
+  expect(after).toEqual(natural);
+  destinationOwner.close();
+  console.log(
+    JSON.stringify({
+      scope: "synthetic-fork-destination-owner-observation",
+      entries: natural.length,
+      naturalOwnerDenials: foreign.length,
+      originPathHasForeignOwner: originAncestors.some(
+        (entry) => entry.owner !== sid,
+      ),
+      foreignEntryKinds: [
+        ...new Set(
+          foreign.map((entry) =>
+            entry.relative === "artifacts/blobs"
+              ? "blob-directory"
+              : entry.directory
+                ? "stage-directory"
+                : "published-blob",
+          ),
+        ),
+      ],
+      ownerMutations: 0,
+      bytesDaclAndIdentityUnchanged: true,
+    }),
+  );
   await writeFile(
     path.join(path.dirname(handoff), "fork-result-handoff.json"),
     JSON.stringify({
-      root: path.join(directory, "destination"),
+      root: path.join(directory, "ds-ph-fork-destination"),
       receipt: result.conversion.receiptSha256,
       artifacts: result.conversion.artifacts,
       origin: result.conversion.origin,

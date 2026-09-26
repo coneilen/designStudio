@@ -876,7 +876,13 @@ durability, final inspection, and EOF probes. No provider, DNS, PAT, or credenti
 object is instantiated. Original projects are never opened for writes.
 
 Destination schema 6 durably records the host UUID and every stage UUID and
-descriptor before file creation. Stage progress and the final receipt are
+descriptor before file creation. Fork-only native creation sets the current
+principal as owner **at creation**, inheriting the exact parent DACL through
+branded pinned parents. This avoids Administrators-owned descendants from an
+elevated process default owner. Existing files/directories are never adopted,
+normalized or ACL-repaired. Writes use bounded chunks and flush; original native
+handles remain owned after errors until actual closure. Historical staging and
+cold-reader ownership predicates are unchanged. Stage progress and the final receipt are
 recorded separately; a fault can leave reserved partial bytes or published
 outputs, never a claim of completed conversion. Existing schema-6 destinations
 are explicitly blocked from writable reopening/replay. Partial destinations
